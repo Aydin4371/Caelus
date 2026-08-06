@@ -2,8 +2,10 @@
 
 Concordia is a browser-based RDE research application that compares three
 synchronized hot-fire pressure traces with matching CFD virtual probes. It
-turns one paired operating point into a compact, traceable assessment of wave
-behavior, CFD–test mismatch, possible model drivers, and the next useful run.
+opens as an empty case workspace, accepts multiple operating points during a
+browser session, and turns each paired case into a compact, traceable
+assessment of wave behavior, CFD–test mismatch, possible model drivers, and
+the next useful run.
 
 **Caelus** is the company/project identity. **Concordia** is the product: a
 simulation-to-test assurance layer for advanced propulsion.
@@ -39,6 +41,8 @@ It returns:
 ## What is implemented
 
 - Local three-probe CSV import; pressure data remains in the browser session
+- Multiple named operating points with a clear case selector
+- A direct, readable experiment-versus-CFD comparison table
 - Unit-aware parsing for milliseconds, seconds, microseconds, Pa, kPa, and MPa
 - Common-time-base interpolation and bounded sub-cycle alignment
 - Dominant pressure frequency, amplitude, correlation, bias, RMSE, and residual
