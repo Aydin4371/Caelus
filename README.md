@@ -1,10 +1,13 @@
-# Caelus RDE Envelope
+# Concordia by Caelus
 
-Caelus RDE Envelope is a browser-based research application for comparing a
+Concordia is a browser-based research application for comparing a
 rotating detonation engine (RDE) hot-fire pressure trace with a matching CFD
 virtual-probe trace. It aligns the two signals, calculates reproducible
 frequency, amplitude, waveform, bias, and residual metrics, and produces a
 traceable engineering assessment.
+
+**Caelus** is the project/company identity. **Concordia** is the product: a
+simulation-to-test assurance layer for advanced propulsion.
 
 The current release is a research prototype. It does **not** run CFD, establish
 a full engine operating envelope, or replace formal verification, validation,
@@ -35,7 +38,7 @@ docs/methodology.md      Equations, assumptions, thresholds, and limitations
 .openai/hosting.json     Current Sites deployment identity
 ```
 
-The analysis is deliberately separated from the interface. An engineer can
+The analysis is deliberately separated from the Concordia interface. An engineer can
 inspect and test the numerical method without trusting dashboard code or a
 language model.
 
