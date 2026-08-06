@@ -15,7 +15,7 @@ CFD, establish an engine-wide operating envelope, prove the cause of a
 discrepancy, or replace formal verification, validation, and uncertainty
 quantification.
 
-## Version 0.3 product contract
+## Version 0.4 product contract
 
 Concordia requires:
 
@@ -42,7 +42,14 @@ It returns:
 
 - Local three-probe CSV import; pressure data remains in the browser session
 - Multiple named operating points with a clear case selector
-- A direct, readable experiment-versus-CFD comparison table
+- An optional synthetic example that opens from the otherwise empty workspace
+  to explain the comparison format without becoming the default case
+- A direct, large-format experiment-versus-CFD comparison table showing the
+  signed CFD-minus-experiment difference, the current limit, and the outcome
+- A case-level conclusion that identifies exactly how many checks need review
+- Honest waveform reporting: correlation is assessed against its current
+  prototype limit, while normalized RMSE and mean bias remain ungraded until
+  uncertainty propagation is implemented
 - Unit-aware parsing for milliseconds, seconds, microseconds, Pa, kPa, and MPa
 - Common-time-base interpolation and bounded sub-cycle alignment
 - Dominant pressure frequency, amplitude, correlation, bias, RMSE, and residual
@@ -109,9 +116,11 @@ speed, and stability.
 ## Scientific status
 
 The current thresholds are explicit prototype review rules, not universal RDE
-validation criteria. Ranked causes are hypotheses for targeted testing, not
-causal conclusions. Sensor uncertainty is recorded in the report but is not
-yet propagated through every output.
+validation criteria. A result marked **within limit** is not a probability of
+validity or certification claim. Investigation priorities are hypotheses for
+targeted testing, not causal conclusions, and are only ranked when at least one
+comparison exceeds a current limit. Sensor uncertainty is recorded in the
+report but is not yet propagated through every output.
 
 The next research milestone is evaluation against paired published or
 partner-laboratory data, followed by uncertainty propagation and withheld-case

@@ -45,7 +45,7 @@ export type RdeModeResult = {
   phaseFit: number;
 };
 
-export const ANALYSIS_VERSION = "0.3.0";
+export const ANALYSIS_VERSION = "0.4.0";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
