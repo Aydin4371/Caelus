@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Caelus RDE Envelope",
-  description: "A research application for simulation-to-test comparison of RDE pressure signals.",
+  title: "Concordia by Caelus",
+  description: "Simulation-to-test assurance for advanced propulsion research.",
   other: {
     "codex-preview": "development",
   },
