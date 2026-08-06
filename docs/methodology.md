@@ -1,40 +1,41 @@
-# Caelus RDE comparison methodology
+# Concordia RDE methodology
 
 ## Scope
 
-The current method compares one experimental pressure history with one CFD
-virtual-probe pressure history. It answers a narrow question:
+Version 0.3 analyzes one RDE operating point using at least three synchronized
+experimental pressure traces and matching CFD virtual probes. It asks:
 
-> How closely does the simulated pressure signal reproduce the measured signal
-> at this operating point, under explicitly stated prototype metrics?
+> Does the CFD reproduce the measured rotating-wave behavior at this operating
+> point, where does it differ, and what should be tested next?
 
-It does not, by itself, validate an engine, explain every discrepancy, or build
-an operating envelope.
+It does not validate the complete engine or prove that a ranked model
+hypothesis caused the discrepancy.
 
 ## Required assumptions
 
-- Both traces correspond to the same geometry and operating condition.
-- The CFD probe represents the physical sensor location.
-- Pressure is expressed in MPa after import and time in milliseconds.
-- The overlapping interval contains at least 32 usable samples.
-- Large acquisition-time offsets have already been resolved using timestamps or
-  a trigger.
+- Experimental and CFD traces use the same geometry and operating condition.
+- Each virtual probe represents the corresponding physical sensor position.
+- Probe clocks are synchronized and large acquisition-time offsets are already
+  resolved from timestamps or a trigger.
+- Probe angles are measured around the same annulus direction and reference.
+- Annulus geometry is represented by a mean diameter for the current speed
+  calculation.
+- Pressure is converted to MPa and time to milliseconds during import.
 
-## 1. Common time base
+Nonuniform probe positions are preferred. Three equally spaced probes can make
+some combinations of wave count and direction indistinguishable.
 
-The median sample interval is calculated for each trace. Caelus uses the larger
-interval, \(\Delta t\), and linearly interpolates both signals onto a common
-overlapping time base. At most 2,400 native-interval samples are used in the
-current browser implementation.
+## 1. Per-probe common time base
 
-This cap bounds interactive computation. It preserves the native comparison
-interval instead of compressing a long trace and introducing simple
-downsampling aliases.
+For each experimental/CFD probe pair, Concordia finds the median sample
+interval of each trace, uses the larger interval \(\Delta t\), and linearly
+interpolates both signals over their common time interval. At most 2,400 native
+interval samples are used in the interactive comparison.
 
-## 2. Restricted cross-correlation alignment
+## 2. Restricted CFD–test alignment
 
-Let \(p_t[n]\) be the test signal and \(p_c[n]\) the CFD signal. For each
-candidate lag \(\ell\), Caelus calculates the normalized correlation
+Let \(p_t[n]\) be a test signal and \(p_c[n]\) its CFD counterpart. At each
+candidate lag \(\ell\), normalized correlation is
 
 \[
 r(\ell)=
@@ -42,104 +43,121 @@ r(\ell)=
 {\sqrt{\sum_n(p_t[n]-\bar p_t)^2\sum_n(p_c[n+\ell]-\bar p_c)^2}}.
 \]
 
-An RDE trace is strongly periodic, so unrestricted correlation can align the
-wrong detonation cycle. The search is therefore restricted to 45% of the
-preliminary dominant period. The reported phase lag is
+RDE traces are periodic, so an unrestricted search can align the wrong wave
+cycle. Concordia restricts automatic alignment to 45% of the preliminary
+dominant period. Larger shifts require acquisition timestamps.
 
-\[
-\Delta t_{lag}=\ell^*\Delta t,
-\]
+## 3. Frequency, amplitude, and residual mismatch
 
-where \(\ell^*\) maximizes \(r(\ell)\) inside that restricted window.
-
-## 3. Frequency comparison
-
-The mean is removed from each aligned signal and a one-sided direct discrete
-Fourier transform is evaluated. The dominant nonzero bin defines the test and
-CFD frequencies, \(f_t\) and \(f_c\). Relative frequency error is
+A one-sided discrete Fourier transform supplies the dominant comparison
+frequencies \(f_t\) and \(f_c\). Relative frequency error is
 
 \[
 e_f=\frac{|f_c-f_t|}{|f_t|}.
 \]
 
-The prototype review threshold is \(e_f \le 0.05\).
-
-## 4. Pressure-amplitude comparison
-
-For each centered signal, the sinusoidal-equivalent amplitude is
+The sinusoidal-equivalent pressure amplitude is
 
 \[
-A=\sqrt{2}\;\mathrm{RMS}(p-\bar p).
-\]
-
-The relative amplitude error is
-
-\[
+A=\sqrt{2}\,\mathrm{RMS}(p-\bar p),
+\qquad
 e_A=\frac{|A_c-A_t|}{A_t}.
 \]
 
-The prototype review threshold is \(e_A \le 0.15\). This metric is useful for a
-dominant periodic mode but does not replace peak-pressure distributions or
-cycle-to-cycle statistics.
+After alignment, the residual is \(\epsilon[n]=p_t[n]-p_c[n]\). Concordia
+reports correlation, RMSE, normalized RMSE, and mean pressure bias for each
+probe, then displays their case-level averages.
 
-## 5. Residual metrics
+Current review thresholds are correlation \(\ge 0.70\), frequency error
+\(\le 5\%\), and amplitude error \(\le 15\%\). These are prototype rules, not
+community validation standards.
 
-After alignment, the residual is
+## 4. Rotating-mode inference
 
-\[
-\epsilon[n]=p_t[n]-p_c[n].
-\]
+The case frequency used for mode inference is the median rising-mean-crossing
+frequency across the probe traces. At that frequency, Concordia calculates the
+complex Fourier phase \(\phi_i\) at each probe position \(\theta_i\).
 
-Caelus reports:
-
-- pressure bias: \(\bar p_c-\bar p_t\);
-- root-mean-square error: \(\sqrt{\overline{\epsilon^2}}\);
-- normalized RMSE: RMSE divided by the RMS of the centered test signal; and
-- aligned waveform correlation, with a prototype review threshold of 0.70.
-
-## 6. Prototype agreement index
-
-For quick ranking in the interface, Caelus calculates
+For candidate wave count \(m\in\{1,2,3,4\}\) and direction sign
+\(s\in\{-1,+1\}\), the predicted relative phase is
 
 \[
-S=0.6\max(0,r)+0.2e^{-4e_f}+0.2e^{-3e_A},
+\Delta\phi_i^{pred}=s\,m\,(\theta_i-\theta_1).
 \]
 
-clipped to \([0,1]\). This weighting is explicit and testable, but it is not
-calibrated as a validation probability. The individual metrics and residual
-should be inspected instead of treating \(S\) as a pass/fail authority.
+Concordia selects the candidate with the smallest mean wrapped angular error
+between measured and predicted relative phase. A normalized phase-fit score is
+reported internally. This is a compact mode estimator; ambiguous sensor
+layouts or multimode operation require a more advanced method.
 
-## 7. Rule-based recommendation
+## 5. Wave speed
 
-The current recommendation logic checks evidence in this order:
+For annulus mean diameter \(D\), detected temporal frequency \(f\), and wave
+count \(m\), circumferential wave speed is
 
-1. correlation below 0.70: verify timing, probe location, and matched windows;
-2. frequency error above 5%: investigate operating-condition sensitivity;
-3. amplitude error above 15%: investigate amplitude drivers such as physical
-   model assumptions, wall losses, and sensor response;
-4. otherwise: evaluate a nearby operating point.
+\[
+c=\frac{\pi D f}{m}.
+\]
 
-These statements are investigation priorities, not automated diagnoses. They
-must be revised and validated with domain experts and real datasets.
+With \(D\) in millimetres and \(f\) in kilohertz, the numerical result is in
+metres per second.
+
+## 6. Prototype stability classification
+
+Each trace is divided into two time windows and a crossing frequency is
+estimated in each. Concordia combines the maximum cross-window frequency drift
+with the circumferential phase fit:
+
+- **Stable:** drift \(\le 3\%\) and phase fit \(\ge 0.90\)
+- **Transitional:** drift \(\le 8\%\) and phase fit \(\ge 0.75\)
+- **Unstable:** otherwise
+
+This classification does not yet capture intermittent mode switching,
+cycle-to-cycle statistics, or broadband combustion instability.
+
+## 7. Ranked investigation hypotheses
+
+Concordia ranks three transparent hypothesis families by discrepancy severity:
+
+1. chemistry or wall-loss treatment, scaled by amplitude error;
+2. inlet boundary specification, scaled by frequency error; and
+3. probe mapping or temporal resolution, scaled by waveform disagreement.
+
+The displayed text includes the corresponding operating or model-card values.
+These rankings prioritize sensitivity runs; they are not causal inference.
+
+## 8. Recommended next action and traceable report
+
+The current decision order is:
+
+1. low correlation: verify timestamps, probe mapping, and matched windows;
+2. frequency error above 5%: sweep inlet temperature and mass flow;
+3. amplitude error above 15%: test chemistry, wall-loss, and sensor-response
+   sensitivity; or
+4. otherwise: add a nearby operating point.
+
+The downloadable JSON report records the input metadata, source filenames,
+units, per-probe comparisons, inferred modes, ranked hypotheses, recommendation,
+analysis version, methods, and limitations.
 
 ## Known limitations
 
+- Sensor uncertainty is recorded but not yet propagated through every output.
 - No sensor transfer-function correction is applied.
-- Measurement, discretization, parameter, and model-form uncertainties are not
-  propagated.
+- Numerical, parameter, and model-form uncertainties are not propagated.
 - The spectral estimator does not yet use windowing, Welch averaging, or
   confidence intervals.
-- Only one sensor pair is compared at a time.
-- Mode count, wave speed, heat flux, thrust, and optical diagnostics are not yet
-  included.
-- No causal claim is made from a discrepancy metric.
-- An operating envelope requires multiple paired operating points and is
-  intentionally locked in the current interface.
+- Mode inference assumes one dominant rotating mode and synchronized probes.
+- The current hypothesis ranking is rule-based and requires validation against
+  real cases and expert assessments.
+- Heat flux, thrust, optical diagnostics, and whole-field CFD comparisons are
+  outside version 0.3.
+- One operating point cannot establish an operating envelope.
 
-## Evidence needed for a research release
+## Evidence required for a research release
 
-A stronger evaluation should pre-register tolerances, use paired public or
+A stronger release should pre-register tolerances, use paired public or
 partner-laboratory data, withhold operating points from method development, and
-compare Caelus outputs with expert assessments. Results should report both
-successful and failed comparisons and should quantify sensitivity to sample
-rate, window length, noise, missing samples, timing error, and sensor response.
+compare Concordia outputs with expert assessments. It should report sensitivity
+to sample rate, window length, noise, missing samples, timing error, probe
+placement, sensor response, and mesh/time-step uncertainty.

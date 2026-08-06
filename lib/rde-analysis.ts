@@ -35,7 +35,17 @@ export type Recommendation = {
   evidence: string;
 };
 
-export const ANALYSIS_VERSION = "0.2.0";
+export type RdeModeResult = {
+  waveFrequencyKHz: number;
+  waveSpeedMps: number;
+  waveCount: number;
+  direction: "Clockwise" | "Counter-clockwise";
+  stability: "Stable" | "Transitional" | "Unstable";
+  frequencyDrift: number;
+  phaseFit: number;
+};
+
+export const ANALYSIS_VERSION = "0.3.0";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
@@ -288,6 +298,154 @@ export function makeDemoSignals() {
   };
 }
 
+/**
+ * Creates a complete, non-sensitive three-probe RDE case for interface and
+ * numerical demonstrations. Probe angles are deliberately nonuniform so that
+ * wave count and direction are not aliased by equal angular spacing.
+ */
+export function makeDemoProbeSignals() {
+  const count = 1600;
+  const dt = 0.0025;
+  const time = Array.from({ length: count }, (_, index) => index * dt);
+  const positionsDeg = [0, 110, 245];
+  const makeSet = (kind: "test" | "cfd") =>
+    positionsDeg.map((positionDeg, probeIndex) => {
+      const angle = (positionDeg * Math.PI) / 180;
+      const frequency = kind === "test" ? 8.42 : 8.35;
+      const amplitude = kind === "test" ? 1.08 : 1.01;
+      const shift = kind === "test" ? 0 : 0.005;
+      const pressure = time.map((value, sampleIndex) =>
+        0.16 +
+        amplitude * Math.sin(2 * Math.PI * frequency * (value + shift) - angle) +
+        (kind === "test" ? 0.18 : 0.13) * Math.sin(4 * Math.PI * frequency * value - 2 * angle + 0.3) +
+        (kind === "test" ? 0.025 * Math.sin(sampleIndex * (1.41 + probeIndex * 0.13)) : 0),
+      );
+      return {
+        name: `${kind === "test" ? "Hot-fire sensor" : "CFD virtual probe"} P${probeIndex + 1}`,
+        time,
+        pressure,
+      };
+    });
+
+  return {
+    positionsDeg,
+    test: makeSet("test"),
+    cfd: makeSet("cfd"),
+  };
+}
+
+function wrapAngle(value: number) {
+  return Math.atan2(Math.sin(value), Math.cos(value));
+}
+
+function phaseAtFrequency(signal: Signal, frequencyKHz: number) {
+  const signalMean = mean(signal.pressure);
+  let real = 0;
+  let imaginary = 0;
+  for (let index = 0; index < signal.time.length; index += 1) {
+    const angle = 2 * Math.PI * frequencyKHz * signal.time[index];
+    const value = signal.pressure[index] - signalMean;
+    real += value * Math.cos(angle);
+    imaginary -= value * Math.sin(angle);
+  }
+  return Math.atan2(imaginary, real);
+}
+
+function crossingFrequency(signal: Signal, startIndex: number, endIndex: number) {
+  const values = signal.pressure.slice(startIndex, endIndex);
+  const baseline = mean(values);
+  const crossings: number[] = [];
+  for (let index = Math.max(1, startIndex); index < endIndex; index += 1) {
+    const before = signal.pressure[index - 1] - baseline;
+    const after = signal.pressure[index] - baseline;
+    if (before <= 0 && after > 0) {
+      const fraction = -before / Math.max(after - before, 1e-12);
+      crossings.push(
+        signal.time[index - 1] + fraction * (signal.time[index] - signal.time[index - 1]),
+      );
+    }
+  }
+  if (crossings.length < 2) return 0;
+  const periods = crossings.slice(1).map((time, index) => time - crossings[index]);
+  return 1 / Math.max(median(periods), 1e-12);
+}
+
+/**
+ * Infers a dominant rotating mode from three or more circumferential probes.
+ * Frequency is in kHz, geometry in mm, and the returned wave speed is m/s.
+ */
+export function analyzeRdeProbeSet(
+  signals: Signal[],
+  positionsDeg: number[],
+  annulusMeanDiameterMm: number,
+): RdeModeResult {
+  if (signals.length < 3 || signals.length !== positionsDeg.length) {
+    throw new Error("Wave mode analysis requires at least three signals with matching probe positions.");
+  }
+  if (!Number.isFinite(annulusMeanDiameterMm) || annulusMeanDiameterMm <= 0) {
+    throw new Error("Annulus mean diameter must be a positive number in millimetres.");
+  }
+  signals.forEach(validateSignal);
+  if (positionsDeg.some((value) => !Number.isFinite(value))) {
+    throw new Error("Every probe position must be a finite angle in degrees.");
+  }
+
+  const frequencies = signals.map((signal) =>
+    crossingFrequency(signal, 0, signal.time.length),
+  );
+  const waveFrequencyKHz = median(frequencies);
+  const phases = signals.map((signal) => phaseAtFrequency(signal, waveFrequencyKHz));
+  const relativePhases = phases.map((phase) => wrapAngle(phase - phases[0]));
+  const relativePositions = positionsDeg.map(
+    (position) => ((position - positionsDeg[0]) * Math.PI) / 180,
+  );
+
+  let best: { waveCount: number; direction: RdeModeResult["direction"]; error: number } = {
+    waveCount: 1,
+    direction: "Counter-clockwise",
+    error: Infinity,
+  };
+  for (let waveCount = 1; waveCount <= 4; waveCount += 1) {
+    for (const direction of ["Counter-clockwise", "Clockwise"] as const) {
+      const sign = direction === "Counter-clockwise" ? -1 : 1;
+      const error = relativePhases
+        .slice(1)
+        .reduce(
+          (sum, phase, index) =>
+            sum + Math.abs(wrapAngle(phase - sign * waveCount * relativePositions[index + 1])),
+          0,
+        ) / (signals.length - 1);
+      if (error < best.error) best = { waveCount, direction, error };
+    }
+  }
+
+  const halfFrequencies = signals.flatMap((signal) => {
+    const half = Math.floor(signal.time.length / 2);
+    return [crossingFrequency(signal, 0, half), crossingFrequency(signal, half, signal.time.length)];
+  }).filter((value) => value > 0);
+  const minimumFrequency = Math.min(...halfFrequencies);
+  const maximumFrequency = Math.max(...halfFrequencies);
+  const frequencyDrift = (maximumFrequency - minimumFrequency) / Math.max(waveFrequencyKHz, 1e-12);
+  const phaseFit = Math.max(0, 1 - best.error / Math.PI);
+  const stability = frequencyDrift <= 0.03 && phaseFit >= 0.9
+    ? "Stable"
+    : frequencyDrift <= 0.08 && phaseFit >= 0.75
+      ? "Transitional"
+      : "Unstable";
+  const circumferenceMm = Math.PI * annulusMeanDiameterMm;
+  const waveSpeedMps = (circumferenceMm * waveFrequencyKHz) / best.waveCount;
+
+  return {
+    waveFrequencyKHz,
+    waveSpeedMps,
+    waveCount: best.waveCount,
+    direction: best.direction,
+    stability,
+    frequencyDrift,
+    phaseFit,
+  };
+}
+
 type ColumnDefinition = {
   aliases: string[];
   factor: number;
@@ -355,6 +513,70 @@ export function parseSignalCsv(text: string, name: string): Signal {
   };
   validateSignal(signal);
   return signal;
+}
+
+/**
+ * Parses one three-probe export. Required columns are time plus P1, P2, and P3
+ * pressure columns with units, for example time_ms, p1_MPa, p2_MPa, p3_MPa.
+ */
+export function parseProbeCsv(text: string, name: string): Signal[] {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 33) {
+    throw new Error("The file needs a header and at least 32 data rows.");
+  }
+
+  const delimiter = lines[0].includes("\t") ? "\t" : lines[0].includes(";") ? ";" : ",";
+  const headers = lines[0].split(delimiter).map(normalizeHeader);
+  const timeColumn = findColumn(headers, TIME_COLUMNS);
+  if (!timeColumn) {
+    throw new Error("Use a named time column with units, such as time_ms.");
+  }
+
+  const probes = [1, 2, 3].map((probe) => {
+    const unitOptions = [
+      { suffix: "mpa", factor: 1 },
+      { suffix: "kpa", factor: 0.001 },
+      { suffix: "pa", factor: 0.000001 },
+    ];
+    for (const option of unitOptions) {
+      const aliases = [
+        `p${probe}_${option.suffix}`,
+        `pressure_p${probe}_${option.suffix}`,
+        `probe${probe}_${option.suffix}`,
+        `sensor${probe}_${option.suffix}`,
+      ];
+      const index = headers.findIndex((header) => aliases.includes(header));
+      if (index >= 0) return { index, factor: option.factor };
+    }
+    return null;
+  });
+
+  if (probes.some((probe) => !probe)) {
+    throw new Error("Include P1, P2, and P3 pressure columns with units, such as p1_MPa.");
+  }
+
+  const rows = lines
+    .slice(1)
+    .map((line) => line.split(delimiter).map((value) => Number(value.trim())))
+    .filter((row) =>
+      Number.isFinite(row[timeColumn.index]) &&
+      probes.every((probe) => probe && Number.isFinite(row[probe.index])),
+    )
+    .map((row) => ({
+      time: row[timeColumn.index] * timeColumn.factor,
+      pressure: probes.map((probe) => row[probe!.index] * probe!.factor),
+    }))
+    .sort((a, b) => a.time - b.time);
+
+  return [0, 1, 2].map((probeIndex) => {
+    const signal = {
+      name: `${name} · P${probeIndex + 1}`,
+      time: rows.map((row) => row.time),
+      pressure: rows.map((row) => row.pressure[probeIndex]),
+    };
+    validateSignal(signal);
+    return signal;
+  });
 }
 
 export function recommendationFor(result: Comparison): Recommendation {
