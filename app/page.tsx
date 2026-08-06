@@ -13,9 +13,9 @@ import {
   recommendationFor,
 } from "@/lib/rde-analysis";
 
-const TEST_COLOR = "#54cfc1";
-const CFD_COLOR = "#7188f4";
-const RESIDUAL_COLOR = "#eab064";
+const TEST_COLOR = "#2588a2";
+const CFD_COLOR = "#6679bd";
+const RESIDUAL_COLOR = "#c8873d";
 
 type CaseMetadata = {
   name: string;
