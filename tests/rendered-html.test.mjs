@@ -29,5 +29,9 @@ test("renders development preview metadata", async () => {
     response.headers.get("content-type") ?? "",
     /^text\/html\b/i,
   );
-  assert.match(await response.text(), developmentPreviewMeta);
+  const html = await response.text();
+  assert.match(html, developmentPreviewMeta);
+  assert.match(html, /No cases loaded/);
+  assert.match(html, /Add first case/);
+  assert.doesNotMatch(html, /Synthetic RDE operating point/);
 });
