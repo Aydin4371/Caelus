@@ -1,46 +1,61 @@
 # Concordia by Caelus
 
-Concordia is a browser-based research application for comparing a
-rotating detonation engine (RDE) hot-fire pressure trace with a matching CFD
-virtual-probe trace. It aligns the two signals, calculates reproducible
-frequency, amplitude, waveform, bias, and residual metrics, and produces a
-traceable engineering assessment.
+Concordia is a browser-based RDE research application that compares three
+synchronized hot-fire pressure traces with matching CFD virtual probes. It
+turns one paired operating point into a compact, traceable assessment of wave
+behavior, CFD–test mismatch, possible model drivers, and the next useful run.
 
-**Caelus** is the project/company identity. **Concordia** is the product: a
+**Caelus** is the company/project identity. **Concordia** is the product: a
 simulation-to-test assurance layer for advanced propulsion.
 
-The current release is a research prototype. It does **not** run CFD, establish
-a full engine operating envelope, or replace formal verification, validation,
-and uncertainty-quantification work.
+The current release is a deterministic research prototype. It does not run
+CFD, establish an engine-wide operating envelope, prove the cause of a
+discrepancy, or replace formal verification, validation, and uncertainty
+quantification.
+
+## Version 0.3 product contract
+
+Concordia requires:
+
+1. Annulus geometry
+2. Three or more physical-sensor and virtual-probe positions
+3. At least three synchronized experimental pressure traces
+4. Matching CFD pressure traces
+5. Operating conditions
+6. A basic CFD model card
+7. Sensor uncertainty
+
+It returns:
+
+1. Dominant wave frequency
+2. Circumferential wave speed
+3. Wave count and direction
+4. Mode stability
+5. Pressure and waveform mismatch
+6. Ranked model hypotheses to investigate
+7. A recommended next simulation or measurement
+8. A versioned, traceable JSON report
 
 ## What is implemented
 
-- Local CSV/TSV import; uploaded signals remain in the browser session
-- Unit-aware parsing for seconds, milliseconds, microseconds, Pa, kPa, and MPa
-- Common-time-base interpolation
-- Sub-cycle cross-correlation alignment for periodic RDE pressure signals
-- One-sided pressure spectra and dominant-frequency comparison
-- Pressure-amplitude error, phase lag, waveform correlation, RMSE, normalized
-  RMSE, and pressure bias
-- Transparent prototype agreement index and evidence-based review flags
-- Downloadable, versioned JSON comparison report
-- Deterministic synthetic demonstration data
-- Automated tests using signals with known frequency, amplitude, and phase
-  differences
+- Local three-probe CSV import; pressure data remains in the browser session
+- Unit-aware parsing for milliseconds, seconds, microseconds, Pa, kPa, and MPa
+- Common-time-base interpolation and bounded sub-cycle alignment
+- Dominant pressure frequency, amplitude, correlation, bias, RMSE, and residual
+  comparison at each probe
+- Three-probe phase fitting for one-to-four-wave mode count and direction
+- Wave speed derived from mean annulus diameter, frequency, and wave count
+- Prototype stability classification from phase fit and sub-window frequency
+  drift
+- Model-card-aware ranking of investigation hypotheses
+- Downloadable case report containing inputs, sources, methods, outputs, and
+  claim limitations
+- Deterministic synthetic three-probe demonstration data
+- Automated numerical and rendered-application tests
 
-## Repository structure
-
-```text
-app/                     React interface and styles
-lib/rde-analysis.ts      Deterministic engineering analysis engine
-tests/                   Numerical and rendered-application tests
-docs/methodology.md      Equations, assumptions, thresholds, and limitations
-.openai/hosting.json     Current Sites deployment identity
-```
-
-The analysis is deliberately separated from the Concordia interface. An engineer can
-inspect and test the numerical method without trusting dashboard code or a
-language model.
+The analysis is deliberately separated from the interface in
+`lib/rde-analysis.ts`. An engineer can inspect and test the method without
+trusting dashboard code or a language model.
 
 ## Run locally
 
@@ -51,69 +66,56 @@ npm ci
 npm run dev
 ```
 
-Then open the local address printed by the development server.
+Open the local address printed by the development server.
 
-## Input format
+## Pressure-file format
 
-Each file must contain at least 32 samples and a header naming one time column
-and one pressure column. The preferred schema is:
+Upload one experimental file and one CFD file. Each file contains the shared
+time base and three pressure columns:
 
 ```csv
-time_ms,pressure_MPa
-0.000000,0.152100
-0.002500,0.301244
+time_ms,p1_MPa,p2_MPa,p3_MPa
+0.000000,0.152100,-0.447921,0.809342
+0.002500,0.301244,-0.282409,0.915071
 ```
 
-Supported time headers: `time_ms`, `time_s`, `time_us`, `t_ms`, `t_s`, `t_us`.
-Supported pressure headers: `pressure_MPa`, `pressure_kPa`, `pressure_Pa`, and
-their `p_*` equivalents. Bare `time`/`t` and `pressure`/`p` are interpreted as
-milliseconds and MPa.
+Each file needs at least 32 rows. Supported time units are `ms`, `s`, and `us`;
+supported pressure units are `MPa`, `kPa`, and `Pa`. Probe aliases include
+`p1_MPa`, `pressure_p1_MPa`, `probe1_MPa`, and `sensor1_MPa`, repeated for P2
+and P3.
 
-The two files should represent the same operating condition, sensor location,
-and acquisition window. Larger timing offsets should be resolved from test and
-simulation timestamps rather than inferred from a periodic waveform.
+The two files must represent the same geometry, probe positions, operating
+condition, and acquisition window. Nonuniform probe spacing is strongly
+preferred because some equally spaced layouts alias wave count and direction.
 
 ## Verification
 
-Run the standalone numerical tests:
-
 ```bash
 npm run test:analysis
-```
-
-Run type checking, linting, numerical tests, a production build, and the
-rendered-app test:
-
-```bash
 npm run typecheck
 npm run lint
 npm test
 ```
 
-The tests verify exact agreement, recovery of a known sub-cycle lag, detection
-of a known amplitude mismatch, unit conversion, ambiguous-column rejection,
-and report provenance.
+The numerical tests cover exact CFD–test agreement, recovery of a known timing
+and amplitude difference, unit conversion, malformed input rejection,
+three-probe parsing, and recovery of a known rotating mode, direction, wave
+speed, and stability.
 
 ## Scientific status
 
-The current thresholds are prototype review rules, not universally accepted RDE
-validation criteria. The composite agreement index is a transparent ranking
-metric—not a probability that the CFD model is valid. A scientifically stronger
-release will add sensor uncertainty, numerical uncertainty, model-form
-uncertainty, operating-condition metadata, and evaluation against published or
-partner-laboratory data.
+The current thresholds are explicit prototype review rules, not universal RDE
+validation criteria. Ranked causes are hypotheses for targeted testing, not
+causal conclusions. Sensor uncertainty is recorded in the report but is not
+yet propagated through every output.
 
-See [docs/methodology.md](docs/methodology.md) for the equations and claim
-boundaries.
+The next research milestone is evaluation against paired published or
+partner-laboratory data, followed by uncertainty propagation and withheld-case
+testing. An operating envelope should be added only after multiple defensible
+operating points exist.
 
-## Near-term research roadmap
-
-1. Evaluate the method on paired public or laboratory RDE pressure data.
-2. Add measurement and CFD uncertainty to each discrepancy metric.
-3. Compare multiple probe locations and phase-averaged fields.
-4. Add campaign-level operating points and withhold runs for evaluation.
-5. Generate an uncertainty-bounded operability map only after sufficient paired
-   runs exist.
+See [docs/methodology.md](docs/methodology.md) for equations, assumptions, and
+claim boundaries.
 
 This software is for research and demonstration. It is not approved for design
 certification, safety-critical decisions, or operational use.
