@@ -36,6 +36,7 @@ type CaseMetadata = {
 
 type AnalysisCase = {
   id: string;
+  source: "uploaded" | "demo";
   metadata: CaseMetadata;
   testSignals: Signal[];
   cfdSignals: Signal[];
@@ -64,6 +65,11 @@ function cloneMetadata(metadata: CaseMetadata): CaseMetadata {
 
 function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
+}
+
+function signed(value: number, digits: number) {
+  if (Math.abs(value) < 0.5 * 10 ** -digits) return (0).toFixed(digits);
+  return `${value > 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
 }
 
 function polylinePoints(
@@ -209,17 +215,17 @@ function rankedCauses(comparisons: Comparison[], metadata: CaseMetadata) {
   return [
     {
       score: amplitudeError / REVIEW_THRESHOLDS.maximumAmplitudeError,
-      title: `Chemistry or wall-loss treatment`,
+      title: `Check chemistry and wall-loss assumptions`,
       detail: `${metadata.chemistryModel} with ${metadata.turbulenceModel}; pressure-amplitude error is ${(amplitudeError * 100).toFixed(1)}%.`,
     },
     {
       score: frequencyError / REVIEW_THRESHOLDS.maximumFrequencyError,
-      title: "Inlet boundary specification",
+      title: "Check the inlet boundary specification",
       detail: `${metadata.inletPressureBar.toFixed(1)} bar, ${metadata.inletTemperatureK.toFixed(0)} K, φ ${metadata.equivalenceRatio.toFixed(2)}; frequency error is ${(frequencyError * 100).toFixed(1)}%.`,
     },
     {
       score: (1 - correlation) / (1 - REVIEW_THRESHOLDS.minimumCorrelation),
-      title: "Probe mapping or temporal resolution",
+      title: "Check probe mapping and temporal resolution",
       detail: `Probe positions and ${metadata.timeStepUs.toFixed(2)} µs CFD time step; aligned correlation is ${correlation.toFixed(3)}.`,
     },
   ].sort((a, b) => b.score - a.score).slice(0, 2);
@@ -237,6 +243,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [activeView, setActiveView] = useState<"signals" | "spectrum" | "residual">("signals");
   const [activeProbe, setActiveProbe] = useState(0);
+  const [workspaceView, setWorkspaceView] = useState<"case" | "compare">("case");
 
   const activeCase = cases.find((item) => item.id === activeCaseId) ?? null;
 
@@ -263,14 +270,31 @@ export default function Home() {
   const amplitudeError = comparisons.length ? average(comparisons.map((item) => item.amplitudeError)) : 0;
   const correlation = comparisons.length ? average(comparisons.map((item) => item.correlation)) : 0;
   const rmse = comparisons.length ? average(comparisons.map((item) => item.rmse)) : 0;
+  const nrmse = comparisons.length ? average(comparisons.map((item) => item.nrmse)) : 0;
+  const pressureBias = comparisons.length ? average(comparisons.map((item) => item.pressureBias)) : 0;
   const testAmplitude = comparisons.length ? average(comparisons.map((item) => item.testAmplitude)) : 0;
   const cfdAmplitude = comparisons.length ? average(comparisons.map((item) => item.cfdAmplitude)) : 0;
-  const modeMatches = Boolean(testMode && cfdMode && testMode.waveCount === cfdMode.waveCount && testMode.direction === cfdMode.direction);
   const causes = activeCase ? rankedCauses(comparisons, activeCase.metadata) : [];
   const worstProbe = comparisons.length
     ? comparisons.reduce((worst, comparison, index) => comparison.nrmse > comparisons[worst].nrmse ? index : worst, 0)
     : 0;
   const recommendation = comparisons.length ? recommendationFor(comparisons[worstProbe]) : null;
+
+  const caseSummaries = useMemo(() => cases.map((item) => {
+    const itemComparisons = item.testSignals.map((signal, index) => compareSignals(signal, item.cfdSignals[index]));
+    const experiment = analyzeRdeProbeSet(item.testSignals, item.metadata.probePositionsDeg, item.metadata.annulusMeanDiameterMm);
+    const simulation = analyzeRdeProbeSet(item.cfdSignals, item.metadata.probePositionsDeg, item.metadata.annulusMeanDiameterMm);
+    const frequencyMismatch = average(itemComparisons.map((comparison) => comparison.frequencyError));
+    const amplitudeMismatch = average(itemComparisons.map((comparison) => comparison.amplitudeError));
+    const waveformCorrelation = average(itemComparisons.map((comparison) => comparison.correlation));
+    const needsReview = frequencyMismatch > REVIEW_THRESHOLDS.maximumFrequencyError
+      || amplitudeMismatch > REVIEW_THRESHOLDS.maximumAmplitudeError
+      || waveformCorrelation < REVIEW_THRESHOLDS.minimumCorrelation
+      || experiment.waveCount !== simulation.waveCount
+      || experiment.direction !== simulation.direction
+      || experiment.stability !== simulation.stability;
+    return { item, experiment, frequencyMismatch, amplitudeMismatch, waveformCorrelation, needsReview };
+  }), [cases]);
 
   const inputRows = activeCase ? [
     ["Annulus geometry", `Mean diameter ${activeCase.metadata.annulusMeanDiameterMm.toFixed(1)} mm`],
@@ -286,43 +310,79 @@ export default function Home() {
     ? Math.abs(cfdMode.waveSpeedMps - testMode.waveSpeedMps) / Math.max(testMode.waveSpeedMps, 1e-12)
     : 0;
 
+  const frequencyDelta = testMode && cfdMode ? cfdMode.waveFrequencyKHz - testMode.waveFrequencyKHz : 0;
+  const frequencyDeltaPct = testMode && cfdMode ? 100 * frequencyDelta / Math.max(testMode.waveFrequencyKHz, 1e-12) : 0;
+  const speedDelta = testMode && cfdMode ? cfdMode.waveSpeedMps - testMode.waveSpeedMps : 0;
+  const speedDeltaPct = testMode && cfdMode ? 100 * speedDelta / Math.max(testMode.waveSpeedMps, 1e-12) : 0;
+  const amplitudeDelta = cfdAmplitude - testAmplitude;
+  const amplitudeDeltaPct = testAmplitude ? 100 * amplitudeDelta / testAmplitude : 0;
+
   const comparisonRows = testMode && cfdMode ? [
     {
       metric: "Wave frequency",
+      purpose: "Rotational event rate",
       experiment: `${testMode.waveFrequencyKHz.toFixed(2)} kHz`,
       cfd: `${cfdMode.waveFrequencyKHz.toFixed(2)} kHz`,
-      difference: `${(frequencyError * 100).toFixed(1)}% difference`,
+      difference: `${signed(frequencyDelta, 2)} kHz (${signed(frequencyDeltaPct, 1)}%)`,
+      criterion: "Within ±5%",
       tone: frequencyError <= REVIEW_THRESHOLDS.maximumFrequencyError ? "pass" : "review",
+      status: frequencyError <= REVIEW_THRESHOLDS.maximumFrequencyError ? "Within limit" : "Review",
     },
     {
       metric: "Wave speed",
+      purpose: "Circumferential propagation",
       experiment: `${testMode.waveSpeedMps.toFixed(0)} m/s`,
       cfd: `${cfdMode.waveSpeedMps.toFixed(0)} m/s`,
-      difference: `${(waveSpeedError * 100).toFixed(1)}% difference`,
+      difference: `${signed(speedDelta, 0)} m/s (${signed(speedDeltaPct, 1)}%)`,
+      criterion: "Within ±5%",
       tone: waveSpeedError <= REVIEW_THRESHOLDS.maximumFrequencyError ? "pass" : "review",
+      status: waveSpeedError <= REVIEW_THRESHOLDS.maximumFrequencyError ? "Within limit" : "Review",
     },
     {
-      metric: "Wave count + direction",
-      experiment: `${testMode.waveCount} · ${testMode.direction}`,
-      cfd: `${cfdMode.waveCount} · ${cfdMode.direction}`,
-      difference: modeMatches ? "Match" : "Different mode",
-      tone: modeMatches ? "pass" : "review",
+      metric: "Wave count",
+      purpose: "Number of rotating waves",
+      experiment: `${testMode.waveCount} wave${testMode.waveCount === 1 ? "" : "s"}`,
+      cfd: `${cfdMode.waveCount} wave${cfdMode.waveCount === 1 ? "" : "s"}`,
+      difference: testMode.waveCount === cfdMode.waveCount ? "No difference" : `${signed(cfdMode.waveCount - testMode.waveCount, 0)} wave`,
+      criterion: "Exact match",
+      tone: testMode.waveCount === cfdMode.waveCount ? "pass" : "review",
+      status: testMode.waveCount === cfdMode.waveCount ? "Match" : "Review",
+    },
+    {
+      metric: "Direction",
+      purpose: "Direction of rotation",
+      experiment: testMode.direction,
+      cfd: cfdMode.direction,
+      difference: testMode.direction === cfdMode.direction ? "Same direction" : "Opposite direction",
+      criterion: "Exact match",
+      tone: testMode.direction === cfdMode.direction ? "pass" : "review",
+      status: testMode.direction === cfdMode.direction ? "Match" : "Review",
     },
     {
       metric: "Mode stability",
+      purpose: "Classification over the sample window",
       experiment: testMode.stability,
       cfd: cfdMode.stability,
-      difference: testMode.stability === cfdMode.stability ? "Match" : "Different classification",
+      difference: testMode.stability === cfdMode.stability ? "Same classification" : "Different classification",
+      criterion: "Exact match",
       tone: testMode.stability === cfdMode.stability ? "pass" : "review",
+      status: testMode.stability === cfdMode.stability ? "Match" : "Review",
     },
     {
       metric: "Pressure amplitude",
+      purpose: "Mean oscillation amplitude across probes",
       experiment: `${testAmplitude.toFixed(3)} MPa`,
       cfd: `${cfdAmplitude.toFixed(3)} MPa`,
-      difference: `${(amplitudeError * 100).toFixed(1)}% difference`,
+      difference: `${signed(amplitudeDelta, 3)} MPa (${signed(amplitudeDeltaPct, 1)}%)`,
+      criterion: "Within ±15%",
       tone: amplitudeError <= REVIEW_THRESHOLDS.maximumAmplitudeError ? "pass" : "review",
+      status: amplitudeError <= REVIEW_THRESHOLDS.maximumAmplitudeError ? "Within limit" : "Review",
     },
   ] : [];
+
+  const waveformWithinLimit = correlation >= REVIEW_THRESHOLDS.minimumCorrelation;
+  const reviewCount = comparisonRows.filter((row) => row.tone === "review").length + (waveformWithinLimit ? 0 : 1);
+  const assessedCount = comparisonRows.length + 1;
 
   async function readProbeFile(event: ChangeEvent<HTMLInputElement>, kind: "test" | "cfd") {
     const file = event.target.files?.[0];
@@ -376,6 +436,7 @@ export default function Home() {
       const id = editingCaseId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       const nextCase: AnalysisCase = {
         id,
+        source: editingCase?.source ?? "uploaded",
         metadata: cloneMetadata(draft),
         testSignals: nextTest,
         cfdSignals: nextCfd,
@@ -384,12 +445,43 @@ export default function Home() {
         ? current.map((item) => item.id === editingCaseId ? nextCase : item)
         : [...current, nextCase]);
       setActiveCaseId(id);
+      setWorkspaceView("case");
       setActiveProbe(0);
       setShowLoader(false);
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The two datasets could not be compared.");
     }
+  }
+
+  function loadExampleCase() {
+    const id = `demo-${Date.now().toString(36)}`;
+    const example: AnalysisCase = {
+      id,
+      source: "demo",
+      metadata: {
+        name: "Synthetic RDE example",
+        annulusMeanDiameterMm: 82,
+        probePositionsDeg: [...demo.positionsDeg],
+        inletPressureBar: 8,
+        inletTemperatureK: 300,
+        equivalenceRatio: 1,
+        massFlowKgS: 0.62,
+        solver: "Research CFD solver",
+        turbulenceModel: "SST k-ω",
+        chemistryModel: "Finite-rate, 9 species",
+        meshCells: 2_500_000,
+        timeStepUs: 0.25,
+        pressureUncertaintyPct: 1.5,
+        timingUncertaintyUs: 0.5,
+      },
+      testSignals: demo.test,
+      cfdSignals: demo.cfd,
+    };
+    setCases((current) => [...current, example]);
+    setActiveCaseId(id);
+    setWorkspaceView("case");
+    setActiveProbe(0);
   }
 
   function downloadExample() {
@@ -422,7 +514,7 @@ export default function Home() {
       outputs: {
         experiment: testMode,
         simulation: cfdMode,
-        mismatch: { frequencyError, amplitudeError, waveformCorrelation: correlation, rmseMpa: rmse },
+        mismatch: { frequencyError, amplitudeError, waveformCorrelation: correlation, rmseMpa: rmse, normalizedRmse: nrmse, pressureBiasMpa: pressureBias },
         rankedCauses: causes,
         recommendedNextAction: recommendation,
       },
@@ -468,7 +560,7 @@ export default function Home() {
             <p>Add an RDE operating point to compare three experimental pressure traces with the matching CFD virtual probes.</p>
             <div className="empty-actions">
               <button className="button primary" onClick={openNewCase}>Add first case →</button>
-              <button className="button secondary" onClick={downloadExample}>Download example CSV</button>
+              <button className="button secondary" onClick={loadExampleCase}>Load synthetic example</button>
             </div>
             <div className="empty-requirements">
               <span><b>1</b> Experiment + CFD pressure files</span>
@@ -482,21 +574,57 @@ export default function Home() {
               <div className="case-switcher-label"><span>Cases</span><b>{cases.length}</b></div>
               <div className="case-tabs-list">
                 {cases.map((item, index) => (
-                  <button key={item.id} className={item.id === activeCase.id ? "active" : ""} onClick={() => { setActiveCaseId(item.id); setActiveProbe(0); }}>
+                  <button key={item.id} className={workspaceView === "case" && item.id === activeCase.id ? "active" : ""} onClick={() => { setActiveCaseId(item.id); setActiveProbe(0); setWorkspaceView("case"); }}>
                     <span>{String(index + 1).padStart(2, "0")}</span>
                     <strong>{item.metadata.name}</strong>
                     <small>φ {item.metadata.equivalenceRatio.toFixed(2)} · {item.metadata.inletPressureBar.toFixed(1)} bar</small>
                   </button>
                 ))}
               </div>
-              <button className="add-case-button" onClick={openNewCase}>+ Add case</button>
+              <div className="case-actions">
+                {cases.length > 1 && <button className={`compare-cases-button ${workspaceView === "compare" ? "active" : ""}`} onClick={() => setWorkspaceView("compare")}>Compare cases</button>}
+                <button className="add-case-button" onClick={openNewCase}>+ Add case</button>
+              </div>
             </section>
 
+            {workspaceView === "compare" ? (
+              <section className="campaign-comparison" aria-label="Operating point comparison">
+                <div className="campaign-heading">
+                  <div><span className="empty-kicker">OPERATING-POINT COMPARISON</span><h1>Compare loaded cases</h1><p>Experimental behavior and CFD agreement are shown separately so a favorable engine change is not confused with a better simulation match.</p></div>
+                  <strong>{cases.length} CASES</strong>
+                </div>
+                <div className="campaign-table-wrap">
+                  <table className="campaign-table">
+                    <thead><tr><th>Case</th><th>Conditions</th><th>Experimental mode</th><th>Experimental wave</th><th>CFD mismatch</th><th>Assessment</th></tr></thead>
+                    <tbody>{caseSummaries.map(({ item, experiment, frequencyMismatch, amplitudeMismatch, waveformCorrelation, needsReview }) => (
+                      <tr key={item.id}>
+                        <th scope="row"><button onClick={() => { setActiveCaseId(item.id); setActiveProbe(0); setWorkspaceView("case"); }}>{item.metadata.name}<span>Open analysis →</span></button></th>
+                        <td><strong>φ {item.metadata.equivalenceRatio.toFixed(2)}</strong><span>{item.metadata.inletPressureBar.toFixed(1)} bar · {item.metadata.inletTemperatureK.toFixed(0)} K</span><span>{item.metadata.massFlowKgS.toFixed(2)} kg/s</span></td>
+                        <td><strong>{experiment.waveCount} wave · {experiment.direction}</strong><span>{experiment.stability}</span></td>
+                        <td><strong>{experiment.waveFrequencyKHz.toFixed(2)} kHz</strong><span>{experiment.waveSpeedMps.toFixed(0)} m/s</span></td>
+                        <td><strong>Frequency {(frequencyMismatch * 100).toFixed(1)}%</strong><span>Amplitude {(amplitudeMismatch * 100).toFixed(1)}%</span><span>Correlation {waveformCorrelation.toFixed(3)}</span></td>
+                        <td><span className={`comparison-status ${needsReview ? "review" : "pass"}`}>{needsReview ? "Review" : "Within limits"}</span></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+                <p className="campaign-note"><strong>How to read this:</strong> “Experimental mode” and “Experimental wave” compare physical behavior across operating points. “CFD mismatch” shows how accurately the simulation reproduced each experiment. Lower mismatch is better; it does not necessarily mean the engine itself performed better.</p>
+              </section>
+            ) : (<>
             <div className="case-heading">
-              <div><span className="source-dot" /><span>Uploaded case</span></div>
+              <div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div>
               <h1>{activeCase.metadata.name}</h1>
               <p>Operating point {cases.findIndex((item) => item.id === activeCase.id) + 1} of {cases.length} · calculated locally</p>
             </div>
+
+            <section className={`assessment-banner ${reviewCount ? "review" : "pass"}`} aria-label="Comparison conclusion">
+              <div>
+                <span>COMPARISON CONCLUSION</span>
+                <h2>{reviewCount ? `${reviewCount} of ${assessedCount} checks require review` : `All ${assessedCount} checks are within the current limits`}</h2>
+                <p>{reviewCount ? "The CFD does not reproduce every selected experimental quantity within the prototype limits. Start with the highlighted rows below." : "For this operating point, the CFD reproduces the selected wave and pressure quantities within the prototype limits."}</p>
+              </div>
+              <strong>{reviewCount ? "REVIEW" : "WITHIN LIMITS"}</strong>
+            </section>
 
             <section className="workflow" aria-label="Concordia inputs and outputs">
           <article className="inputs-panel">
@@ -518,19 +646,20 @@ export default function Home() {
 
           <article className="outputs-panel">
             <div className="panel-heading">
-              <div><span className="step-number">02</span><div><h2>Experiment vs CFD</h2><p>Direct comparison for this operating point</p></div></div>
+              <div><span className="step-number">02</span><div><h2>Experiment vs CFD</h2><p>CFD minus experiment, evaluated against explicit prototype limits</p></div></div>
             </div>
 
             <div className="comparison-table-wrap">
               <table className="comparison-table">
-                <thead><tr><th>Quantity</th><th>Experiment</th><th>CFD</th><th>Comparison</th></tr></thead>
+                <thead><tr><th>Quantity</th><th>Experiment</th><th>CFD</th><th>CFD − experiment</th><th>Current limit</th></tr></thead>
                 <tbody>
                   {comparisonRows.map((row) => (
-                    <tr key={row.metric}>
-                      <th scope="row">{row.metric}</th>
+                    <tr key={row.metric} className={row.tone === "review" ? "comparison-row-review" : ""}>
+                      <th scope="row"><strong>{row.metric}</strong><small>{row.purpose}</small></th>
                       <td>{row.experiment}</td>
                       <td>{row.cfd}</td>
-                      <td><span className={`comparison-status ${row.tone}`}>{row.difference}</span></td>
+                      <td className="difference-cell">{row.difference}</td>
+                      <td><span className={`comparison-status ${row.tone}`}>{row.status}</span><small className="criterion">{row.criterion}</small></td>
                     </tr>
                   ))}
                 </tbody>
@@ -538,30 +667,31 @@ export default function Home() {
             </div>
 
             <section className="result-block mismatch-block">
-              <div><span className="result-index">05</span><h3>Waveform mismatch</h3></div>
+              <div><span className="result-index">07</span><h3>Waveform agreement</h3></div>
               <div className="comparison-metrics">
-                <div><span>Waveform correlation</span><strong>{correlation.toFixed(3)}</strong><small>{correlation >= REVIEW_THRESHOLDS.minimumCorrelation ? "Within prototype threshold" : "Requires review"}</small></div>
-                <div><span>Pressure RMSE</span><strong>{rmse.toFixed(3)} <i>MPa</i></strong><small>Mean across the three aligned probes</small></div>
-                <div><span>Amplitude difference</span><strong>{(amplitudeError * 100).toFixed(1)}%</strong><small>{amplitudeError <= REVIEW_THRESHOLDS.maximumAmplitudeError ? "Within prototype threshold" : "Requires review"}</small></div>
+                <div className={waveformWithinLimit ? "metric-pass" : "metric-review"}><span>Aligned correlation</span><strong>{correlation.toFixed(3)}</strong><small>{waveformWithinLimit ? "Within limit · target ≥ 0.700" : "Review · target ≥ 0.700"}</small></div>
+                <div><span>Normalized RMSE</span><strong>{(nrmse * 100).toFixed(1)}<i>%</i></strong><small>Residual size relative to experimental oscillation RMS</small></div>
+                <div><span>Mean pressure bias</span><strong>{signed(pressureBias, 3)} <i>MPa</i></strong><small>Positive means CFD predicts higher mean pressure</small></div>
               </div>
+              <p className="metric-note">Only correlation has a current review limit. NRMSE and pressure bias are reported without a pass/fail claim until uncertainty propagation is implemented.</p>
             </section>
 
             <section className="result-block causes-block">
-              <div><span className="result-index">06</span><h3>Ranked causes to investigate</h3></div>
-              <ol>
-                {causes.map((cause) => <li key={cause.title}><b>{cause.title}</b><span>{cause.detail}</span></li>)}
-              </ol>
-              <small>These are testable hypotheses, not causal proof.</small>
+              <div><span className="result-index">08</span><h3>Investigation priorities</h3></div>
+              {reviewCount ? <>
+                <ol>{causes.map((cause) => <li key={cause.title}><b>{cause.title}</b><span>{cause.detail}</span></li>)}</ol>
+                <small>Ranked from the observed mismatch. These are testable hypotheses, not causal proof.</small>
+              </> : <p className="no-causes">No discrepancy is large enough to rank a cause under the current limits.</p>}
             </section>
 
             <section className="result-block action-block">
-              <div><span className="result-index">07</span><h3>Recommended next simulation or measurement</h3></div>
+              <div><span className="result-index">09</span><h3>Recommended next simulation or measurement</h3></div>
               <strong>{recommendation.title}</strong>
               <p>{recommendation.detail}</p>
             </section>
 
             <button className="report-button" onClick={downloadReport}>
-              <span><b>08</b><strong>Download traceable report</strong><small>Inputs, methods, results, sources, and limitations</small></span>
+              <span><b>10</b><strong>Download traceable report</strong><small>Inputs, methods, results, sources, and limitations</small></span>
               <i>↓</i>
             </button>
           </article>
@@ -594,6 +724,7 @@ export default function Home() {
               <span>Concordia v{ANALYSIS_VERSION} · deterministic analysis</span>
               <span>{cases.length} case{cases.length === 1 ? "" : "s"} in this browser session · not certification evidence</span>
             </footer>
+            </>)}
           </>
         )}
       </section>
