@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  analyzeRdeProbeSet,
   compareSignals,
+  makeDemoProbeSignals,
+  parseProbeCsv,
   parseSignalCsv,
   recommendationFor,
   serializeReport,
@@ -86,6 +89,31 @@ test("CSV parser rejects unnamed engineering columns", () => {
     () => parseSignalCsv(rows.join("\n"), "ambiguous.csv"),
     /named time and pressure columns/i,
   );
+});
+
+test("three-probe parser reads synchronized pressure columns", () => {
+  const rows = ["time_ms,p1_MPa,p2_kPa,p3_Pa"];
+  for (let index = 0; index < 40; index += 1) {
+    rows.push(`${index * 0.01},${1 + index * 0.01},${2000 + index},${3_000_000 + index}`);
+  }
+
+  const signals = parseProbeCsv(rows.join("\n"), "three-probe.csv");
+  assert.equal(signals.length, 3);
+  close(signals[0].pressure[0], 1, 1e-12, "P1 pressure");
+  close(signals[1].pressure[0], 2, 1e-12, "P2 pressure");
+  close(signals[2].pressure[0], 3, 1e-12, "P3 pressure");
+});
+
+test("three nonuniform probes recover wave count, direction, speed, and stability", () => {
+  const demo = makeDemoProbeSignals();
+  const result = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
+
+  assert.equal(result.waveCount, 1);
+  assert.equal(result.direction, "Counter-clockwise");
+  assert.equal(result.stability, "Stable");
+  close(result.waveFrequencyKHz, 8.42, 0.08, "wave frequency");
+  close(result.waveSpeedMps, Math.PI * 82 * 8.42, 22, "wave speed");
+  assert.ok(result.phaseFit > 0.95, "probe phase should fit the inferred rotating mode");
 });
 
 test("serialized report exposes metrics, provenance, and limitations", () => {
