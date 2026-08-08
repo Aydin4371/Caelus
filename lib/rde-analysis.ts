@@ -2,6 +2,8 @@ export type Signal = {
   name: string;
   time: number[];
   pressure: number[];
+  sourceRows?: number;
+  droppedRows?: number;
 };
 
 export type Spectrum = {
@@ -26,7 +28,37 @@ export type Comparison = {
   rmse: number;
   nrmse: number;
   pressureBias: number;
-  score: number;
+  testMetrics: PressureMetrics;
+  cfdMetrics: PressureMetrics;
+  testQuality: DataQualityResult;
+  cfdQuality: DataQualityResult;
+};
+
+export type PressureMetrics = {
+  meanPressure: number;
+  peakPressure: number;
+  minimumPressure: number;
+  rmsPressure: number;
+  oscillationAmplitude: number;
+  impulsePerCycleMpaMs: number;
+  riseTimeUs: number;
+  secondHarmonicRatio: number;
+  cycleVariabilityPct: number;
+  cycleCount: number;
+};
+
+export type DataQualityResult = {
+  sampleCount: number;
+  durationMs: number;
+  sampleRateKHz: number;
+  samplesPerCycle: number;
+  capturedCycles: number;
+  intervalJitterPct: number;
+  detectedGaps: number;
+  droppedRows: number;
+  clippingDetected: boolean;
+  status: "Ready" | "Review";
+  findings: string[];
 };
 
 export type Recommendation = {
@@ -43,14 +75,21 @@ export type RdeModeResult = {
   stability: "Stable" | "Transitional" | "Unstable";
   frequencyDrift: number;
   phaseFit: number;
+  modeConfidence: number;
+  alternativeWaveCount: number;
+  alternativeDirection: "Clockwise" | "Counter-clockwise";
 };
 
-export const ANALYSIS_VERSION = "0.3.0";
+export const ANALYSIS_VERSION = "0.5.0";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
   maximumFrequencyError: 0.05,
   maximumAmplitudeError: 0.15,
+  maximumPeakPressureError: 0.15,
+  maximumRiseTimeError: 0.25,
+  maximumHarmonicRatioError: 0.3,
+  maximumCycleVariabilityDifferencePct: 10,
 } as const;
 
 function mean(values: number[]) {
@@ -59,6 +98,11 @@ function mean(values: number[]) {
 
 function rms(values: number[]) {
   return Math.sqrt(values.reduce((sum, value) => sum + value * value, 0) / Math.max(values.length, 1));
+}
+
+function standardDeviation(values: number[]) {
+  const center = mean(values);
+  return Math.sqrt(mean(values.map((value) => (value - center) ** 2)));
 }
 
 function median(values: number[]) {
@@ -134,13 +178,161 @@ export function spectrum(values: number[], dtMs: number): Spectrum {
   return { frequency, amplitude };
 }
 
-function dominantFrequency(result: Spectrum) {
+export function dominantFrequency(result: Spectrum) {
   if (!result.amplitude.length) return 0;
   let best = 0;
   for (let index = 1; index < result.amplitude.length; index += 1) {
     if (result.amplitude[index] > result.amplitude[best]) best = index;
   }
   return result.frequency[best];
+}
+
+function upwardCrossings(time: number[], values: number[], baseline = mean(values)) {
+  const crossings: number[] = [];
+  const indices: number[] = [];
+  for (let index = 1; index < values.length; index += 1) {
+    const before = values[index - 1] - baseline;
+    const after = values[index] - baseline;
+    if (before <= 0 && after > 0) {
+      const fraction = -before / Math.max(after - before, 1e-12);
+      crossings.push(time[index - 1] + fraction * (time[index] - time[index - 1]));
+      indices.push(index);
+    }
+  }
+  return { crossings, indices };
+}
+
+function harmonicAmplitude(result: Spectrum, targetFrequency: number) {
+  if (!result.frequency.length || targetFrequency <= 0) return 0;
+  let best = 0;
+  for (let index = 1; index < result.frequency.length; index += 1) {
+    if (Math.abs(result.frequency[index] - targetFrequency) < Math.abs(result.frequency[best] - targetFrequency)) best = index;
+  }
+  return result.amplitude[best] ?? 0;
+}
+
+export function calculatePressureMetrics(
+  time: number[],
+  pressure: number[],
+  resultSpectrum: Spectrum,
+  frequencyKHz: number,
+): PressureMetrics {
+  const meanPressure = mean(pressure);
+  const centered = pressure.map((value) => value - meanPressure);
+  const { indices } = upwardCrossings(time, pressure, meanPressure);
+  const cyclePeaks: number[] = [];
+  const cycleRanges: number[] = [];
+  const cycleImpulses: number[] = [];
+  const riseTimesUs: number[] = [];
+
+  for (let cycle = 0; cycle < indices.length - 1; cycle += 1) {
+    const start = indices[cycle];
+    const end = indices[cycle + 1];
+    if (end - start < 4) continue;
+    const values = pressure.slice(start, end + 1);
+    const minimum = Math.min(...values);
+    const maximum = Math.max(...values);
+    const range = Math.max(maximum - minimum, 1e-12);
+    cyclePeaks.push(maximum);
+    cycleRanges.push(range);
+
+    let impulse = 0;
+    for (let index = start + 1; index <= end; index += 1) {
+      const before = Math.max(pressure[index - 1] - meanPressure, 0);
+      const after = Math.max(pressure[index] - meanPressure, 0);
+      impulse += 0.5 * (before + after) * (time[index] - time[index - 1]);
+    }
+    cycleImpulses.push(impulse);
+
+    const periodSamples = end - start;
+    const riseStart = Math.max(0, start - Math.floor(periodSamples / 2));
+    const riseEnd = Math.min(pressure.length - 1, start + Math.ceil(periodSamples / 2));
+    const riseWindow = pressure.slice(riseStart, riseEnd + 1);
+    const riseMinimum = Math.min(...riseWindow);
+    const riseMaximum = Math.max(...riseWindow);
+    const riseRange = Math.max(riseMaximum - riseMinimum, 1e-12);
+    const low = riseMinimum + 0.1 * riseRange;
+    const high = riseMinimum + 0.9 * riseRange;
+    let lowTime: number | null = null;
+    let highTime: number | null = null;
+    for (let index = riseStart + 1; index <= riseEnd; index += 1) {
+      if (lowTime === null && pressure[index - 1] <= low && pressure[index] > low) {
+        const fraction = (low - pressure[index - 1]) / Math.max(pressure[index] - pressure[index - 1], 1e-12);
+        lowTime = time[index - 1] + fraction * (time[index] - time[index - 1]);
+      }
+      if (lowTime !== null && pressure[index - 1] <= high && pressure[index] > high) {
+        const fraction = (high - pressure[index - 1]) / Math.max(pressure[index] - pressure[index - 1], 1e-12);
+        highTime = time[index - 1] + fraction * (time[index] - time[index - 1]);
+        break;
+      }
+    }
+    if (lowTime !== null && highTime !== null && highTime >= lowTime) riseTimesUs.push((highTime - lowTime) * 1000);
+  }
+
+  const fundamental = harmonicAmplitude(resultSpectrum, frequencyKHz);
+  const secondHarmonic = harmonicAmplitude(resultSpectrum, 2 * frequencyKHz);
+  const averageRange = mean(cycleRanges);
+
+  return {
+    meanPressure,
+    peakPressure: cyclePeaks.length ? mean(cyclePeaks) : Math.max(...pressure),
+    minimumPressure: Math.min(...pressure),
+    rmsPressure: rms(pressure),
+    oscillationAmplitude: Math.SQRT2 * rms(centered),
+    impulsePerCycleMpaMs: cycleImpulses.length ? mean(cycleImpulses) : Number.NaN,
+    riseTimeUs: riseTimesUs.length ? median(riseTimesUs) : Number.NaN,
+    secondHarmonicRatio: fundamental > 0 ? secondHarmonic / fundamental : Number.NaN,
+    cycleVariabilityPct: cycleRanges.length > 1 ? 100 * standardDeviation(cycleRanges) / Math.max(averageRange, 1e-12) : Number.NaN,
+    cycleCount: Math.max(0, indices.length - 1),
+  };
+}
+
+export function assessSignalQuality(signal: Signal, frequencyKHz?: number): DataQualityResult {
+  validateSignal(signal);
+  const intervals = signal.time.slice(1).map((time, index) => time - signal.time[index]);
+  const dt = median(intervals);
+  const durationMs = (signal.time.at(-1) ?? signal.time[0]) - signal.time[0];
+  const inferredFrequency = frequencyKHz ?? dominantFrequency(spectrum(signal.pressure, dt));
+  const intervalJitterPct = 100 * Math.max(...intervals.map((value) => Math.abs(value - dt))) / Math.max(dt, 1e-12);
+  const detectedGaps = intervals.filter((value) => value > 1.5 * dt).length;
+  const tolerance = Math.max(1e-12, (Math.max(...signal.pressure) - Math.min(...signal.pressure)) * 1e-10);
+  let clippedRun = 0;
+  let longestClippedRun = 0;
+  for (let index = 1; index < signal.pressure.length; index += 1) {
+    if (Math.abs(signal.pressure[index] - signal.pressure[index - 1]) <= tolerance) {
+      clippedRun += 1;
+      longestClippedRun = Math.max(longestClippedRun, clippedRun);
+    } else {
+      clippedRun = 0;
+    }
+  }
+  const clippingDetected = longestClippedRun >= 3;
+  const sampleRateKHz = 1 / Math.max(dt, 1e-12);
+  const samplesPerCycle = sampleRateKHz / Math.max(inferredFrequency, 1e-12);
+  const capturedCycles = durationMs * inferredFrequency;
+  const droppedRows = signal.droppedRows ?? 0;
+  const findings: string[] = [];
+  if (capturedCycles < 5) findings.push(`Only ${capturedCycles.toFixed(1)} cycles captured; use at least five for stable statistics.`);
+  if (samplesPerCycle < 20) findings.push(`Only ${samplesPerCycle.toFixed(0)} samples per cycle; front-rise metrics may be under-resolved.`);
+  if (intervalJitterPct > 1) findings.push(`Sample-interval variation reaches ${intervalJitterPct.toFixed(1)}%.`);
+  if (detectedGaps) findings.push(`${detectedGaps} acquisition gap${detectedGaps === 1 ? "" : "s"} detected.`);
+  if (droppedRows) findings.push(`${droppedRows} non-numeric source row${droppedRows === 1 ? " was" : "s were"} omitted during import.`);
+  if (clippingDetected) findings.push("Repeated identical samples suggest possible clipping or quantization plateaus.");
+  if (!findings.length) findings.push("Sampling, duration, continuity, and clipping checks are ready for analysis.");
+
+  return {
+    sampleCount: signal.time.length,
+    durationMs,
+    sampleRateKHz,
+    samplesPerCycle,
+    capturedCycles,
+    intervalJitterPct,
+    detectedGaps,
+    droppedRows,
+    clippingDetected,
+    status: findings.length === 1 && findings[0].startsWith("Sampling") ? "Ready" : "Review",
+    findings,
+  };
 }
 
 function normalizedCorrelation(a: number[], b: number[]) {
@@ -240,18 +432,10 @@ export function compareSignals(testSignal: Signal, cfdSignal: Signal): Compariso
   const testFrequency = dominantFrequency(testSpectrum);
   const cfdFrequency = dominantFrequency(cfdSpectrum);
   const frequencyError = Math.abs(cfdFrequency - testFrequency) / Math.max(testFrequency, 1e-9);
-
-  // This transparent composite is a prototype ranking index, not a validation
-  // probability. Waveform agreement receives the largest weight.
-  const score = Math.max(
-    0,
-    Math.min(
-      1,
-      0.6 * Math.max(0, bestCorrelation) +
-        0.2 * Math.exp(-4 * frequencyError) +
-        0.2 * Math.exp(-3 * amplitudeError),
-    ),
-  );
+  const testMetrics = calculatePressureMetrics(alignedTime, alignedTest, testSpectrum, testFrequency);
+  const cfdMetrics = calculatePressureMetrics(alignedTime, alignedCfd, cfdSpectrum, cfdFrequency);
+  const testQuality = assessSignalQuality(testSignal, testFrequency);
+  const cfdQuality = assessSignalQuality(cfdSignal, cfdFrequency);
 
   return {
     time: alignedTime,
@@ -270,7 +454,10 @@ export function compareSignals(testSignal: Signal, cfdSignal: Signal): Compariso
     rmse,
     nrmse,
     pressureBias: cfdMean - testMean,
-    score,
+    testMetrics,
+    cfdMetrics,
+    testQuality,
+    cfdQuality,
   };
 }
 
@@ -280,14 +467,14 @@ export function makeDemoSignals() {
   const time = Array.from({ length: count }, (_, index) => index * dt);
   const test = time.map(
     (value, index) =>
-      0.16 +
+      1.6 +
       1.08 * Math.sin(2 * Math.PI * 8.42 * value) +
       0.19 * Math.sin(2 * Math.PI * 16.84 * value + 0.35) +
       0.045 * Math.sin(index * 1.731),
   );
   const cfd = time.map(
     (value) =>
-      0.12 +
+      1.58 +
       1.03 * Math.sin(2 * Math.PI * 8.38 * (value + 0.006)) +
       0.14 * Math.sin(2 * Math.PI * 16.76 * value + 0.24),
   );
@@ -315,7 +502,7 @@ export function makeDemoProbeSignals() {
       const amplitude = kind === "test" ? 1.08 : 1.01;
       const shift = kind === "test" ? 0 : 0.005;
       const pressure = time.map((value, sampleIndex) =>
-        0.16 +
+        (kind === "test" ? 1.6 : 1.58) +
         amplitude * Math.sin(2 * Math.PI * frequency * (value + shift) - angle) +
         (kind === "test" ? 0.18 : 0.13) * Math.sin(4 * Math.PI * frequency * value - 2 * angle + 0.3) +
         (kind === "test" ? 0.025 * Math.sin(sampleIndex * (1.41 + probeIndex * 0.13)) : 0),
@@ -400,11 +587,7 @@ export function analyzeRdeProbeSet(
     (position) => ((position - positionsDeg[0]) * Math.PI) / 180,
   );
 
-  let best: { waveCount: number; direction: RdeModeResult["direction"]; error: number } = {
-    waveCount: 1,
-    direction: "Counter-clockwise",
-    error: Infinity,
-  };
+  const candidates: { waveCount: number; direction: RdeModeResult["direction"]; error: number }[] = [];
   for (let waveCount = 1; waveCount <= 4; waveCount += 1) {
     for (const direction of ["Counter-clockwise", "Clockwise"] as const) {
       const sign = direction === "Counter-clockwise" ? -1 : 1;
@@ -415,9 +598,12 @@ export function analyzeRdeProbeSet(
             sum + Math.abs(wrapAngle(phase - sign * waveCount * relativePositions[index + 1])),
           0,
         ) / (signals.length - 1);
-      if (error < best.error) best = { waveCount, direction, error };
+      candidates.push({ waveCount, direction, error });
     }
   }
+  candidates.sort((a, b) => a.error - b.error);
+  const best = candidates[0];
+  const alternative = candidates[1];
 
   const halfFrequencies = signals.flatMap((signal) => {
     const half = Math.floor(signal.time.length / 2);
@@ -427,6 +613,7 @@ export function analyzeRdeProbeSet(
   const maximumFrequency = Math.max(...halfFrequencies);
   const frequencyDrift = (maximumFrequency - minimumFrequency) / Math.max(waveFrequencyKHz, 1e-12);
   const phaseFit = Math.max(0, 1 - best.error / Math.PI);
+  const modeConfidence = Math.max(0, Math.min(1, (alternative.error - best.error) / Math.PI + 0.5 * phaseFit));
   const stability = frequencyDrift <= 0.03 && phaseFit >= 0.9
     ? "Stable"
     : frequencyDrift <= 0.08 && phaseFit >= 0.75
@@ -443,6 +630,9 @@ export function analyzeRdeProbeSet(
     stability,
     frequencyDrift,
     phaseFit,
+    modeConfidence,
+    alternativeWaveCount: alternative.waveCount,
+    alternativeDirection: alternative.direction,
   };
 }
 
@@ -493,8 +683,8 @@ export function parseSignalCsv(text: string, name: string): Signal {
     );
   }
 
-  const rows = lines
-    .slice(1)
+  const sourceRows = lines.slice(1);
+  const rows = sourceRows
     .map((line) => line.split(delimiter).map((value) => Number(value.trim())))
     .filter(
       (row) =>
@@ -510,6 +700,8 @@ export function parseSignalCsv(text: string, name: string): Signal {
     name,
     time: rows.map((row) => row.time),
     pressure: rows.map((row) => row.pressure),
+    sourceRows: sourceRows.length,
+    droppedRows: sourceRows.length - rows.length,
   };
   validateSignal(signal);
   return signal;
@@ -555,8 +747,8 @@ export function parseProbeCsv(text: string, name: string): Signal[] {
     throw new Error("Include P1, P2, and P3 pressure columns with units, such as p1_MPa.");
   }
 
-  const rows = lines
-    .slice(1)
+  const sourceRows = lines.slice(1);
+  const rows = sourceRows
     .map((line) => line.split(delimiter).map((value) => Number(value.trim())))
     .filter((row) =>
       Number.isFinite(row[timeColumn.index]) &&
@@ -573,6 +765,8 @@ export function parseProbeCsv(text: string, name: string): Signal[] {
       name: `${name} · P${probeIndex + 1}`,
       time: rows.map((row) => row.time),
       pressure: rows.map((row) => row.pressure[probeIndex]),
+      sourceRows: sourceRows.length,
+      droppedRows: sourceRows.length - rows.length,
     };
     validateSignal(signal);
     return signal;
@@ -615,7 +809,7 @@ export function recommendationFor(result: Comparison): Recommendation {
 export function serializeReport(result: Comparison, sources: { test: string; cfd: string }) {
   return JSON.stringify(
     {
-      schema: "caelus-rde-comparison-report",
+      schema: "caevera-rde-comparison-report",
       analysisVersion: ANALYSIS_VERSION,
       generatedAt: new Date().toISOString(),
       sources,
@@ -632,13 +826,17 @@ export function serializeReport(result: Comparison, sources: { test: string; cfd
         rmse: result.rmse,
         normalizedRmse: result.nrmse,
         pressureBias: result.pressureBias,
-        prototypeAgreementIndex: result.score,
+        pressureCycleMetrics: {
+          experiment: result.testMetrics,
+          cfd: result.cfdMetrics,
+        },
       },
+      dataQuality: { experiment: result.testQuality, cfd: result.cfdQuality },
       recommendation: recommendationFor(result),
       limitations: [
-        "The agreement index is not a validation probability.",
+        "Uncertainty statements use root-sum-square one-standard-uncertainty estimates, not certification tolerances.",
         "This report compares one pressure-signal pair and does not establish an operating envelope.",
-        "Measurement and model-form uncertainty are not yet propagated.",
+        "Model-form uncertainty and sensor transfer-function corrections are not included.",
       ],
     },
     null,
