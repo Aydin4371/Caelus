@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { buildCampaignDelta, summarizeCampaignCase } from "../lib/campaign-analysis.ts";
+import type { AnalysisCase, CaseMetadata } from "../lib/caevera-types.ts";
+import { buildCaseAssessment } from "../lib/diagnostics.ts";
 import {
   analyzeRdeProbeSet,
+  assessSignalQuality,
   compareSignals,
   makeDemoProbeSignals,
   parseProbeCsv,
@@ -11,11 +15,12 @@ import {
   serializeReport,
   type Signal,
 } from "../lib/rde-analysis.ts";
+import { assessResolvedDifference } from "../lib/uncertainty.ts";
 
 function sineSignal({
   name,
   amplitude = 1,
-  bias = 0,
+  bias = 1.5,
   frequency = 8,
   shiftMs = 0,
 }: {
@@ -31,32 +36,70 @@ function sineSignal({
   return {
     name,
     time,
-    pressure: time.map(
-      (value) => bias + amplitude * Math.sin(2 * Math.PI * frequency * (value + shiftMs)),
-    ),
+    pressure: time.map((value) => bias + amplitude * Math.sin(2 * Math.PI * frequency * (value + shiftMs))),
   };
 }
 
 function close(actual: number, expected: number, tolerance: number, label: string) {
-  assert.ok(
-    Math.abs(actual - expected) <= tolerance,
-    `${label}: expected ${expected} ± ${tolerance}, received ${actual}`,
-  );
+  assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: expected ${expected} ± ${tolerance}, received ${actual}`);
 }
 
-test("identical signals produce unit agreement and zero residual", () => {
+const DEMO_METADATA: CaseMetadata = {
+  name: "Synthetic test",
+  annulusMeanDiameterMm: 82,
+  probePositionsDeg: [0, 110, 245],
+  inletPressureBar: 8,
+  inletTemperatureK: 300,
+  equivalenceRatio: 1,
+  massFlowKgS: 0.62,
+  comparisonMatchConfirmed: true,
+  solver: "Research solver",
+  solverVersion: "2026.1",
+  dimensionality: "3D",
+  spatialScheme: "MUSCL",
+  spatialOrder: 2,
+  numericalFlux: "HLLC",
+  limiterFilter: "Venkatakrishnan limiter",
+  temporalScheme: "SSPRK3",
+  temporalOrder: 3,
+  cfl: 0.35,
+  turbulenceModel: "SST k-omega",
+  combustionModel: "Finite-rate",
+  chemistryModel: "Hydrogen reduced mechanism",
+  chemistrySpecies: 9,
+  chemistryReactions: 19,
+  chemistryIntegrator: "Implicit BDF",
+  meshCells: 2_500_000,
+  minimumCellSizeMm: 0.25,
+  cellsPerInductionLength: 8,
+  nearWallCellSizeMm: 0.1,
+  timeStepUs: 0.25,
+  wallBoundaryCondition: "Isothermal 450 K",
+  inletBoundaryCondition: "Measured total state + mass flow",
+  outletBoundaryCondition: "Non-reflecting pressure outlet",
+  initializationMethod: "Single-point ignition kernel",
+  meshConvergencePct: 4.8,
+  timeStepConvergencePct: 1.2,
+  pressureUncertaintyPct: 1.5,
+  timingUncertaintyUs: 0.5,
+  cfdPressureUncertaintyPct: 2,
+  cfdTimingUncertaintyUs: 0.25,
+};
+
+test("identical signals produce exact waveform agreement and cycle metrics", () => {
   const testSignal = sineSignal({ name: "test" });
   const result = compareSignals(testSignal, { ...testSignal, name: "cfd" });
 
-  // The aligned window is cropped by the lag search, so its DFT bins do not
-  // land exactly on 8 kHz. The recovered value should remain within 0.625%.
   close(result.testFrequency, 8, 0.05, "test frequency");
   close(result.cfdFrequency, 8, 0.05, "CFD frequency");
   close(result.correlation, 1, 1e-12, "correlation");
   close(result.amplitudeError, 0, 1e-12, "amplitude error");
   close(result.phaseLagUs, 0, 1e-12, "phase lag");
   close(result.rmse, 0, 1e-12, "RMSE");
-  close(result.score, 1, 1e-12, "agreement index");
+  assert.ok(result.testMetrics.cycleCount > 20);
+  assert.ok(Number.isFinite(result.testMetrics.riseTimeUs));
+  assert.equal(result.testQuality.status, "Ready");
+  assert.ok(!("score" in result), "the arbitrary composite agreement score should be removed");
 });
 
 test("recovers a known sub-cycle lag and amplitude mismatch", () => {
@@ -66,37 +109,38 @@ test("recovers a known sub-cycle lag and amplitude mismatch", () => {
 
   close(Math.abs(result.phaseLagUs), 10, 0.01, "absolute phase lag");
   close(result.amplitudeError, 0.2, 0.005, "amplitude error");
-  assert.ok(result.correlation > 0.999, "aligned waveform correlation should be near one");
+  assert.ok(result.correlation > 0.999);
   assert.equal(recommendationFor(result).title, "Test pressure-amplitude drivers");
 });
 
-test("CSV parser converts SI units to milliseconds and MPa", () => {
-  const rows = ["time_s,pressure_kPa"];
-  for (let index = 0; index < 40; index += 1) {
-    rows.push(`${index * 0.0001},${1000 + index}`);
-  }
+test("data-quality assessment detects a missing sample interval", () => {
+  const signal = sineSignal({ name: "gapped" });
+  signal.time = signal.time.map((value, index) => index > 700 ? value + 0.01 : value);
+  const quality = assessSignalQuality(signal, 8);
+  assert.equal(quality.status, "Review");
+  assert.equal(quality.detectedGaps, 1);
+  assert.match(quality.findings.join(" "), /acquisition gap/i);
+});
 
+test("CSV parser converts SI units and records dropped source rows", () => {
+  const rows = ["time_s,pressure_kPa"];
+  for (let index = 0; index < 40; index += 1) rows.push(`${index * 0.0001},${1000 + index}`);
+  rows.splice(20, 0, "bad,row");
   const signal = parseSignalCsv(rows.join("\n"), "unit-conversion.csv");
   close(signal.time[1], 0.1, 1e-12, "converted time");
   close(signal.pressure[0], 1, 1e-12, "converted pressure");
-  close(signal.pressure[10], 1.01, 1e-12, "converted pressure sample");
+  assert.equal(signal.droppedRows, 1);
 });
 
 test("CSV parser rejects unnamed engineering columns", () => {
   const rows = ["column_a,column_b"];
   for (let index = 0; index < 40; index += 1) rows.push(`${index},${index + 1}`);
-  assert.throws(
-    () => parseSignalCsv(rows.join("\n"), "ambiguous.csv"),
-    /named time and pressure columns/i,
-  );
+  assert.throws(() => parseSignalCsv(rows.join("\n"), "ambiguous.csv"), /named time and pressure columns/i);
 });
 
 test("three-probe parser reads synchronized pressure columns", () => {
   const rows = ["time_ms,p1_MPa,p2_kPa,p3_Pa"];
-  for (let index = 0; index < 40; index += 1) {
-    rows.push(`${index * 0.01},${1 + index * 0.01},${2000 + index},${3_000_000 + index}`);
-  }
-
+  for (let index = 0; index < 40; index += 1) rows.push(`${index * 0.01},${1 + index * 0.01},${2000 + index},${3_000_000 + index}`);
   const signals = parseProbeCsv(rows.join("\n"), "three-probe.csv");
   assert.equal(signals.length, 3);
   close(signals[0].pressure[0], 1, 1e-12, "P1 pressure");
@@ -104,28 +148,76 @@ test("three-probe parser reads synchronized pressure columns", () => {
   close(signals[2].pressure[0], 3, 1e-12, "P3 pressure");
 });
 
-test("three nonuniform probes recover wave count, direction, speed, and stability", () => {
+test("three nonuniform probes recover wave mode with confidence and alternative", () => {
   const demo = makeDemoProbeSignals();
   const result = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
-
   assert.equal(result.waveCount, 1);
   assert.equal(result.direction, "Counter-clockwise");
   assert.equal(result.stability, "Stable");
   close(result.waveFrequencyKHz, 8.42, 0.08, "wave frequency");
   close(result.waveSpeedMps, Math.PI * 82 * 8.42, 22, "wave speed");
-  assert.ok(result.phaseFit > 0.95, "probe phase should fit the inferred rotating mode");
+  assert.ok(result.phaseFit > 0.95);
+  assert.ok(result.modeConfidence > 0.6);
+  assert.ok(result.alternativeWaveCount >= 1);
 });
 
-test("serialized report exposes metrics, provenance, and limitations", () => {
-  const result = compareSignals(
-    sineSignal({ name: "test" }),
-    sineSignal({ name: "cfd", bias: 0.05 }),
-  );
-  const report = JSON.parse(serializeReport(result, { test: "test.csv", cfd: "cfd.csv" }));
+test("uncertainty distinguishes unresolved and resolved differences", () => {
+  assert.equal(assessResolvedDifference(0.05, 0.04, 0.04).status, "within-uncertainty");
+  assert.equal(assessResolvedDifference(0.1, 0.02, 0.02).status, "resolved-mismatch");
+  assert.equal(assessResolvedDifference(0.1, Number.NaN, 0.02).status, "inconclusive");
+});
 
-  assert.equal(report.schema, "caelus-rde-comparison-report");
+test("case assessment connects validity, uncertainty, model inputs, and next run", () => {
+  const demo = makeDemoProbeSignals();
+  const comparisons = demo.test.map((signal, index) => compareSignals(signal, demo.cfd[index]));
+  const experiment = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
+  const simulation = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
+  const result = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation);
+
+  assert.equal(result.validity.status, "Valid");
+  assert.equal(result.dataQuality.status, "Ready");
+  assert.equal(result.metrics.length, 12);
+  assert.ok(result.metrics.some((metric) => metric.assessment.status === "resolved-mismatch"));
+  assert.ok(result.hypotheses[0].modelInputs.length > 0);
+  assert.ok(result.nextRun.holdFixed.length >= 4);
+  assert.match(result.nextRun.confirmationCriterion, /%|cycles|uncertainty/i);
+  assert.ok(result.coverage.some((item) => item.module === "Thermal" && item.status === "Not assessed"));
+});
+
+test("case assessment blocks recommendations when the physical pairing is unconfirmed", () => {
+  const demo = makeDemoProbeSignals();
+  const comparisons = demo.test.map((signal, index) => compareSignals(signal, demo.cfd[index]));
+  const experiment = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
+  const simulation = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
+  const result = buildCaseAssessment({ ...DEMO_METADATA, comparisonMatchConfirmed: false }, comparisons, experiment, simulation);
+  assert.equal(result.validity.status, "Blocked");
+  assert.match(result.nextRun.title, /verify/i);
+});
+
+test("campaign comparison calculates direct physical and CFD-error deltas", () => {
+  const demo = makeDemoProbeSignals();
+  const baseline: AnalysisCase = { id: "a", source: "demo", metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
+  const candidate: AnalysisCase = {
+    id: "b",
+    source: "demo",
+    metadata: { ...DEMO_METADATA, name: "Candidate", equivalenceRatio: 1.05 },
+    testSignals: demo.test.map((signal) => ({ ...signal, pressure: signal.pressure.map((value) => value * 1.05) })),
+    cfdSignals: demo.cfd.map((signal) => ({ ...signal, pressure: signal.pressure.map((value) => value * 1.05) })),
+  };
+  const delta = buildCampaignDelta(summarizeCampaignCase(baseline), summarizeCampaignCase(candidate));
+  close(delta.condition.equivalenceRatio, 0.05, 1e-12, "equivalence-ratio delta");
+  assert.ok(delta.experiment.peakPressureMpa > 0);
+  assert.ok(Number.isFinite(delta.cfdAgreement.amplitudeErrorPointChange));
+});
+
+test("serialized report exposes cycle metrics, data quality, provenance, and limitations", () => {
+  const result = compareSignals(sineSignal({ name: "test" }), sineSignal({ name: "cfd", bias: 1.55 }));
+  const report = JSON.parse(serializeReport(result, { test: "test.csv", cfd: "cfd.csv" }));
+  assert.equal(report.schema, "caevera-rde-comparison-report");
   assert.equal(report.sources.test, "test.csv");
   assert.equal(report.units.pressure, "MPa");
   close(report.metrics.pressureBias, 0.05, 1e-12, "pressure bias");
+  assert.ok(report.metrics.pressureCycleMetrics.experiment.cycleCount > 20);
+  assert.equal(report.dataQuality.experiment.status, "Ready");
   assert.ok(report.limitations.length >= 3);
 });
