@@ -31,7 +31,9 @@ test("renders development preview metadata", async () => {
   );
   const html = await response.text();
   assert.match(html, developmentPreviewMeta);
+  assert.match(html, /CAEVERA/);
   assert.match(html, /No cases loaded/);
   assert.match(html, /Add first case/);
-  assert.doesNotMatch(html, /Synthetic RDE operating point/);
+  assert.match(html, /Load synthetic campaign/);
+  assert.doesNotMatch(html, /Synthetic baseline/);
 });

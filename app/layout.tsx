@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Concordia by Caelus",
-  description: "Simulation-to-test assurance for advanced propulsion research.",
+  title: "Caevera by Caelus",
+  description: "Simulation-to-test intelligence for advanced propulsion research.",
   other: {
     "codex-preview": "development",
   },

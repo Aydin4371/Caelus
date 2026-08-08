@@ -1,65 +1,89 @@
-# Concordia by Caelus
+# Caevera by Caelus
 
-Concordia is a browser-based RDE research application that compares three
-synchronized hot-fire pressure traces with matching CFD virtual probes. It
-opens as an empty case workspace, accepts multiple operating points during a
-browser session, and turns each paired case into a compact, traceable
-assessment of wave behavior, CFD–test mismatch, possible model drivers, and
-the next useful run.
+Caevera is a browser-based RDE simulation-to-test research application. It
+compares three synchronized experimental pressure traces with matching CFD
+virtual probes, determines whether differences are resolved beyond the stated
+uncertainty, ranks traceable diagnostic hypotheses, and recommends one
+controlled next simulation.
 
-**Caelus** is the company/project identity. **Concordia** is the product: a
-simulation-to-test assurance layer for advanced propulsion.
+The application starts as an empty case workspace and accepts multiple
+operating points. It does not run CFD. Uploaded data and deterministic analysis
+remain in the browser session.
 
-The current release is a deterministic research prototype. It does not run
-CFD, establish an engine-wide operating envelope, prove the cause of a
-discrepancy, or replace formal verification, validation, and uncertainty
-quantification.
+The current release is a research prototype. It does not certify a model,
+establish an engine-wide operating envelope, or prove the cause of a
+discrepancy.
 
-## Version 0.3 product contract
+## Version 0.5 product contract
 
-Concordia requires:
+Each case requires:
 
-1. Annulus geometry
-2. Three or more physical-sensor and virtual-probe positions
-3. At least three synchronized experimental pressure traces
-4. Matching CFD pressure traces
-5. Operating conditions
-6. A basic CFD model card
-7. Sensor uncertainty
+1. Annulus mean diameter and three nonuniform probe positions
+2. Three synchronized experimental pressure traces
+3. Matching CFD virtual-probe traces
+4. Operating conditions
+5. A detailed CFD model card
+6. Experimental and numerical pressure/timing uncertainties
+7. Confirmation that geometry, operating point, probes, and comparison window
+   match
 
-It returns:
+Caevera returns:
 
-1. Dominant wave frequency
-2. Circumferential wave speed
-3. Wave count and direction
-4. Mode stability
-5. Pressure and waveform mismatch
-6. Ranked model hypotheses to investigate
-7. A recommended next simulation or measurement
-8. A versioned, traceable JSON report
+1. Comparison validity and data-quality findings
+2. Wave frequency, speed, count, direction, stability, and mode confidence
+3. Pressure amplitude, cycle peaks, mean pressure, impulse, rise time,
+   harmonic ratio, and cycle variability
+4. Signed CFD-minus-experiment differences
+5. Combined uncertainty and a resolved/unresolved assessment where supported
+6. Ranked diagnostic hypotheses tied to calculated evidence and model inputs
+7. One controlled next run with hold-fixed variables, expected outcome, and
+   confirmation/rejection criteria
+8. Direct Case B − Case A changes using a selectable campaign baseline
+9. A traceable JSON report
 
-## What is implemented
+## v0.4 changes implemented
 
-- Local three-probe CSV import; pressure data remains in the browser session
-- Multiple named operating points with a clear case selector
-- A direct, readable experiment-versus-CFD comparison table
-- Unit-aware parsing for milliseconds, seconds, microseconds, Pa, kPa, and MPa
-- Common-time-base interpolation and bounded sub-cycle alignment
-- Dominant pressure frequency, amplitude, correlation, bias, RMSE, and residual
-  comparison at each probe
-- Three-probe phase fitting for one-to-four-wave mode count and direction
-- Wave speed derived from mean annulus diameter, frequency, and wave count
-- Prototype stability classification from phase fit and sub-window frequency
-  drift
-- Model-card-aware ranking of investigation hypotheses
-- Downloadable case report containing inputs, sources, methods, outputs, and
-  claim limitations
-- Deterministic synthetic three-probe demonstration data
-- Automated numerical and rendered-application tests
+- Data-quality checks for sample rate, duration, gaps, dropped rows, and
+  clipping plateaus
+- Comparison-validity checks for physical case matching, probe-layout alias
+  risk, common evidence windows, and mode identifiability
+- Cycle-resolved peak pressure, impulse, 10–90% rise time, second harmonic,
+  and variability metrics
+- Root-sum-square experiment/CFD uncertainty resolution for supported scalar
+  outputs
+- Separate statuses for within uncertainty, resolved mismatch, inconclusive,
+  exact match, and prototype method-limit review
+- Detailed solver, scheme, resolution, chemistry, boundary, initialization,
+  and convergence inputs
+- Removal of the previous opaque composite agreement score
 
-The analysis is deliberately separated from the interface in
-`lib/rde-analysis.ts`. An engineer can inspect and test the method without
-trusting dashboard code or a language model.
+## v0.5 changes implemented
+
+- A deterministic diagnostic engine separated from the interface
+- Ranked hypotheses that cite calculated discrepancies and the model-card
+  settings that motivated them
+- One-variable next-run plans with hold-fixed variables, expected behavior,
+  confirmation criteria, rejection criteria, alternatives, and evidence
+  strength
+- Direct case-to-case physical and CFD-error deltas relative to a user-selected
+  baseline
+- A validation-coverage matrix that explicitly marks thermal and performance
+  modules as not assessed when those measurements are absent
+- Caevera branding throughout the interface and reports
+
+No LLM is used in v0.5. A later grounded language layer may explain these
+structured results, but it should not invent conclusions from raw signals.
+
+## Code structure
+
+- `lib/rde-analysis.ts`: signal parsing, alignment, pressure-cycle metrics,
+  spectra, data quality, and rotating-mode inference
+- `lib/uncertainty.ts`: uncertainty combination and resolved-difference states
+- `lib/diagnostics.ts`: validity, metric assessments, hypotheses, and next-run
+  plans
+- `lib/campaign-analysis.ts`: direct multi-case summaries and baseline deltas
+- `lib/caevera-types.ts`: case and model-card schemas
+- `app/page.tsx`: interaction and presentation
 
 ## Run locally
 
@@ -74,23 +98,19 @@ Open the local address printed by the development server.
 
 ## Pressure-file format
 
-Upload one experimental file and one CFD file. Each file contains the shared
-time base and three pressure columns:
+Upload one experimental file and one CFD file. Each contains a shared time base
+and three pressure columns:
 
 ```csv
 time_ms,p1_MPa,p2_MPa,p3_MPa
-0.000000,0.152100,-0.447921,0.809342
-0.002500,0.301244,-0.282409,0.915071
+0.000000,1.602100,1.052079,2.259342
+0.002500,1.751244,1.217591,2.365071
 ```
 
-Each file needs at least 32 rows. Supported time units are `ms`, `s`, and `us`;
-supported pressure units are `MPa`, `kPa`, and `Pa`. Probe aliases include
-`p1_MPa`, `pressure_p1_MPa`, `probe1_MPa`, and `sensor1_MPa`, repeated for P2
-and P3.
-
-The two files must represent the same geometry, probe positions, operating
-condition, and acquisition window. Nonuniform probe spacing is strongly
-preferred because some equally spaced layouts alias wave count and direction.
+Each file needs at least 32 valid rows. Supported time units are `ms`, `s`, and
+`us`; supported pressure units are `MPa`, `kPa`, and `Pa`. Nonuniform probe
+spacing is strongly preferred because equally spaced layouts can alias some
+wave-count and direction combinations.
 
 ## Verification
 
@@ -101,25 +121,22 @@ npm run lint
 npm test
 ```
 
-The numerical tests cover exact CFD–test agreement, recovery of a known timing
-and amplitude difference, unit conversion, malformed input rejection,
-three-probe parsing, and recovery of a known rotating mode, direction, wave
-speed, and stability.
+The numerical suite covers exact agreement, known timing/amplitude mismatch,
+data-quality failures, unit conversion, dropped-row provenance, three-probe
+mode recovery, uncertainty classification, structured diagnostics, blocked
+case matching, direct campaign deltas, and report content.
 
 ## Scientific status
 
-The current thresholds are explicit prototype review rules, not universal RDE
-validation criteria. Ranked causes are hypotheses for targeted testing, not
-causal conclusions. Sensor uncertainty is recorded in the report but is not
-yet propagated through every output.
+Uncertainty statuses use a root-sum-square one-standard-uncertainty estimate
+(`k = 1`) from the inputs supplied by the user. This is not a certification
+tolerance. Harmonic and cycle-variability checks still use clearly labeled
+prototype method limits because estimator/repeatability uncertainty is not yet
+available.
 
-The next research milestone is evaluation against paired published or
-partner-laboratory data, followed by uncertainty propagation and withheld-case
-testing. An operating envelope should be added only after multiple defensible
-operating points exist.
+Diagnostic hypotheses prioritize controlled sensitivity studies; they are not
+causal proof. Thermal, performance, species, optical, and whole-field
+comparisons remain outside this release.
 
 See [docs/methodology.md](docs/methodology.md) for equations, assumptions, and
 claim boundaries.
-
-This software is for research and demonstration. It is not approved for design
-certification, safety-critical decisions, or operational use.
