@@ -2,6 +2,14 @@ import type { Signal } from "./rde-analysis.ts";
 
 export type Dimensionality = "2D" | "3D" | "";
 
+export type SensitivityVariable = "mesh" | "time-step" | "chemistry" | "inlet" | "wall" | "initialization" | "other";
+
+export type CaseRelationship = {
+  baselineCaseId: string;
+  changedVariable: SensitivityVariable;
+  description: string;
+};
+
 export type CaseMetadata = {
   name: string;
   annulusMeanDiameterMm: number;
@@ -47,6 +55,7 @@ export type CaseMetadata = {
 export type AnalysisCase = {
   id: string;
   source: "uploaded" | "demo";
+  relationship?: CaseRelationship | null;
   metadata: CaseMetadata;
   testSignals: Signal[];
   cfdSignals: Signal[];
