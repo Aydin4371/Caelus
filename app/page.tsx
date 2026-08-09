@@ -411,11 +411,28 @@ export default function Home() {
                 <div><span>Mean pressure bias</span><strong>{signed(pressureBias, 3)} <i>MPa</i></strong><small>Its significance is assessed in the mean-pressure row above</small></div>
               </div><p className="metric-note">Correlation and harmonic/variability checks use explicit prototype method limits. Pressure, frequency, speed, impulse, and rise-time rows use the supplied experiment/CFD uncertainties. {inconclusiveMetrics ? `${inconclusiveMetrics} metric${inconclusiveMetrics === 1 ? " is" : "s are"} inconclusive.` : ""}</p></section>
 
-              <section className="result-block causes-block"><div><span className="result-index">06</span><h3>Ranked diagnostic hypotheses</h3></div><ol>{assessment.hypotheses.map((hypothesis, index) => <li key={hypothesis.title}><b>{index + 1}. {hypothesis.title}</b><span>{hypothesis.evidence.join(" ")}</span><small>Model inputs: {hypothesis.modelInputs.filter(Boolean).join(" · ")}</small></li>)}</ol><small>These are transparent sensitivity-test priorities, not causal proof.</small></section>
+              <section className="decision-block" aria-labelledby="next-action-title">
+                <div className="decision-heading">
+                  <div><span className="result-index">06</span><div><h3 id="next-action-title">CFD recommendation</h3><p>What is likely wrong, what to change, and why</p></div></div>
+                </div>
 
-              <section className="result-block action-block"><div><span className="result-index">07</span><h3>Controlled next-run plan</h3></div><div className="next-run-header"><strong>{assessment.nextRun.title}</strong><span>{assessment.nextRun.evidenceStrength} evidence</span></div><p className="next-change"><b>Change one thing:</b> {assessment.nextRun.change}</p><div className="next-run-grid"><div><span>Why this run</span><p>{assessment.nextRun.reason}</p></div><div><span>Hold fixed</span><p>{assessment.nextRun.holdFixed.join(" · ")}</p></div><div><span>Expected result</span><p>{assessment.nextRun.expectedOutcome}</p></div><div><span>Confirm / reject</span><p><b>Confirm:</b> {assessment.nextRun.confirmationCriterion}<br /><b>Reject:</b> {assessment.nextRun.rejectionCriterion}</p></div></div><p className="alternative"><b>Alternative hypothesis:</b> {assessment.nextRun.alternativeHypothesis}</p></section>
+                <div className="recommendation-list">
+                  <article className="recommendation-item">
+                    <span>LIKELY ISSUE</span>
+                    <div><h4>{assessment.hypotheses[0].title}</h4></div>
+                  </article>
+                  <article className="recommendation-item recommended-run">
+                    <span>RECOMMENDED NEXT RUN</span>
+                    <div><h4>{assessment.nextRun.title}</h4><p>{assessment.nextRun.change}</p></div>
+                  </article>
+                  <article className="recommendation-item">
+                    <span>WHY</span>
+                    <div><p>{assessment.nextRun.reason}</p></div>
+                  </article>
+                </div>
 
-              <button className="report-button" onClick={downloadReport}><span><b>08</b><strong>Download traceable report</strong><small>Inputs, validity, uncertainty, metrics, hypotheses, and controlled next run</small></span><i>↓</i></button>
+                <div className="decision-footer"><button className="compact-report-button" onClick={downloadReport}>Download technical report <span aria-hidden="true">↓</span></button></div>
+              </section>
             </article>
           </section>
 
