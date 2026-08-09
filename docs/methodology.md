@@ -192,17 +192,28 @@ motivated it. The highest-ranked candidate becomes a structured next-run plan:
 
 The result prioritizes a sensitivity experiment. It is not causal inference.
 
-## 9. Direct campaign comparison
+## 9. Evidence-state diagnosis and case history
 
-The user selects one loaded case as a baseline. For every other case, Caevera
-calculates direct deltas in inlet pressure, temperature, equivalence ratio,
-mass flow, experimental frequency, wave speed, amplitude, peak pressure, and
-cycle variability.
+Caevera does not assign a numeric confidence or cause score. Each diagnostic
+observation is recorded as `supports`, `weakens`, `unknown`, or
+`cannot-assess`, with a strength and basis (`case`, `case-history`, or
+`literature`). Hypotheses are ordered deterministically: validity gates first,
+then controlled-rerun support, net supporting evidence, strong evidence, and
+finally unresolved evidence.
 
-Separately, it reports how absolute CFD percentage error changed for frequency,
-peak pressure, and amplitude. A negative CFD-error delta means agreement
-improved. This prevents a favorable physical engine change from being confused
-with better model accuracy.
+Every uploaded item is a case. A case may optionally identify an existing case
+as its baseline and record one changed CFD variable group. The relationship is
+used as diagnostic evidence only when Caevera verifies the same geometry,
+operating point, probe layout, experimental trace fingerprint, and exactly one
+changed CFD group. Otherwise the item remains a comparison only.
+
+Primary literature provides traceable applicability context and identifies
+physically defensible sensitivity directions. It never proves that a paper's
+reported mechanism caused the discrepancy in the loaded case. That claim
+requires a controlled rerun whose result supports or weakens the hypothesis.
+Sources are mapped only to the mechanisms they directly studied. A diagnostic
+branch with no directly applicable reviewed source remains an uncited prototype
+heuristic; Caevera does not borrow a citation from an adjacent topic.
 
 ## 10. Coverage and traceable report
 
@@ -215,14 +226,14 @@ plan, methods, and limitations.
 ## Known limitations
 
 - The method has not yet been validated against a paired public RDE benchmark
-  campaign or withheld laboratory cases.
+  case history or withheld laboratory cases.
 - Sensor dynamic response and transfer-function correction are not applied.
 - Geometry, parameter, and model-form uncertainty are not fully propagated.
 - Harmonic and repeatability uncertainty are not estimated.
 - Mode inference assumes synchronized probes and one dominant rotating mode.
 - Diagnostic ranking is rule-based and needs comparison with expert decisions.
 - Heat flux, wall temperature, thrust, optical diagnostics, species, and full
-  spatial fields are outside version 0.5.
+  spatial fields are outside version 0.6.
 - One operating point cannot establish a validation envelope.
 
 ## Evidence required for a research release
