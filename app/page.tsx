@@ -1,15 +1,18 @@
 "use client";
 
 import { ChangeEvent, useMemo, useState } from "react";
-import { buildCampaignDelta, summarizeCampaignCase } from "@/lib/campaign-analysis";
+import { buildCaseDelta, buildCaseHistoryEvidence, summarizeCase } from "@/lib/case-history";
 import {
   EMPTY_METADATA,
   cloneMetadata,
   type AnalysisCase,
+  type CaseRelationship,
   type CaseMetadata,
   type Dimensionality,
+  type SensitivityVariable,
 } from "@/lib/caevera-types";
 import { buildCaseAssessment, type MetricAssessment } from "@/lib/diagnostics";
+import { KNOWLEDGE_BASE_VERSION, sourcesFor } from "@/lib/diagnostic-knowledge";
 import {
   ANALYSIS_VERSION,
   REVIEW_THRESHOLDS,
@@ -156,9 +159,10 @@ export default function Home() {
   const demo = useMemo(() => makeDemoProbeSignals(), []);
   const [cases, setCases] = useState<AnalysisCase[]>([]);
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
-  const [campaignBaselineId, setCampaignBaselineId] = useState<string | null>(null);
+  const [caseBaselineId, setCaseBaselineId] = useState<string | null>(null);
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CaseMetadata>(() => cloneMetadata(EMPTY_METADATA));
+  const [draftRelationship, setDraftRelationship] = useState<CaseRelationship | null>(null);
   const [testPending, setTestPending] = useState<Signal[] | null>(null);
   const [cfdPending, setCfdPending] = useState<Signal[] | null>(null);
   const [showLoader, setShowLoader] = useState(false);
@@ -171,14 +175,15 @@ export default function Home() {
   const comparisons = useMemo(() => activeCase ? activeCase.testSignals.map((signal, index) => compareSignals(signal, activeCase.cfdSignals[index])) : [], [activeCase]);
   const testMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.testSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm) : null, [activeCase]);
   const cfdMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.cfdSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm) : null, [activeCase]);
-  const assessment = useMemo(() => activeCase && testMode && cfdMode ? buildCaseAssessment(activeCase.metadata, comparisons, testMode, cfdMode) : null, [activeCase, comparisons, testMode, cfdMode]);
+  const caseHistoryEvidence = useMemo(() => activeCase ? buildCaseHistoryEvidence(cases, activeCase.id) : [], [cases, activeCase]);
+  const assessment = useMemo(() => activeCase && testMode && cfdMode ? buildCaseAssessment(activeCase.metadata, comparisons, testMode, cfdMode, caseHistoryEvidence) : null, [activeCase, comparisons, testMode, cfdMode, caseHistoryEvidence]);
   const activeComparison = comparisons[activeProbe];
   const correlation = comparisons.length ? average(comparisons.map((item) => item.correlation)) : Number.NaN;
   const nrmse = comparisons.length ? average(comparisons.map((item) => item.nrmse)) : Number.NaN;
   const pressureBias = comparisons.length ? average(comparisons.map((item) => item.pressureBias)) : Number.NaN;
   const waveformWithinLimit = correlation >= REVIEW_THRESHOLDS.minimumCorrelation;
-  const campaignSummaries = useMemo(() => cases.map(summarizeCampaignCase), [cases]);
-  const baselineSummary = campaignSummaries.find((summary) => summary.item.id === campaignBaselineId) ?? campaignSummaries[0] ?? null;
+  const caseSummaries = useMemo(() => cases.map(summarizeCase), [cases]);
+  const baselineSummary = caseSummaries.find((summary) => summary.item.id === caseBaselineId) ?? caseSummaries[0] ?? null;
 
   const inputRows = activeCase ? [
     ["Geometry + probes", `${activeCase.metadata.annulusMeanDiameterMm.toFixed(1)} mm mean diameter · ${activeCase.metadata.probePositionsDeg.map((angle, index) => `P${index + 1} ${angle}°`).join(" · ")}`],
@@ -194,6 +199,10 @@ export default function Home() {
   const reviewMetrics = assessment?.metrics.filter((metric) => metric.tone === "review").length ?? 0;
   const inconclusiveMetrics = assessment?.metrics.filter((metric) => metric.tone === "neutral").length ?? 0;
   const totalReview = reviewMetrics + (waveformWithinLimit ? 0 : 1) + (assessment?.validity.status === "Valid" ? 0 : 1);
+  const likelyHypothesis = assessment?.hypotheses[0] ?? null;
+  const likelyEvidence = likelyHypothesis?.evidence.filter((item) => item.state === "supports").map((item) => item.observation) ?? [];
+  const likelySources = likelyHypothesis ? sourcesFor(likelyHypothesis.sourceIds) : [];
+  const showDetailedEvidence = false;
 
   async function readProbeFile(event: ChangeEvent<HTMLInputElement>, kind: "test" | "cfd") {
     const file = event.target.files?.[0];
@@ -210,6 +219,7 @@ export default function Home() {
   function openNewCase() {
     setEditingCaseId(null);
     setDraft(cloneMetadata(EMPTY_METADATA));
+    setDraftRelationship(null);
     setTestPending(null); setCfdPending(null); setError(""); setShowLoader(true);
   }
 
@@ -217,6 +227,7 @@ export default function Home() {
     if (!activeCase) return;
     setEditingCaseId(activeCase.id);
     setDraft(cloneMetadata(activeCase.metadata));
+    setDraftRelationship(activeCase.relationship ?? null);
     setTestPending(null); setCfdPending(null); setError(""); setShowLoader(true);
   }
 
@@ -241,34 +252,27 @@ export default function Home() {
       analyzeRdeProbeSet(nextTest, draft.probePositionsDeg, draft.annulusMeanDiameterMm);
       analyzeRdeProbeSet(nextCfd, draft.probePositionsDeg, draft.annulusMeanDiameterMm);
       const id = editingCaseId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      const nextCase: AnalysisCase = { id, source: editingCase?.source ?? "uploaded", metadata: cloneMetadata(draft), testSignals: nextTest, cfdSignals: nextCfd };
+      if (draftRelationship?.baselineCaseId === id) return setError("A case cannot be its own baseline.");
+      const nextCase: AnalysisCase = { id, source: editingCase?.source ?? "uploaded", relationship: draftRelationship, metadata: cloneMetadata(draft), testSignals: nextTest, cfdSignals: nextCfd };
       setCases((current) => editingCaseId ? current.map((item) => item.id === editingCaseId ? nextCase : item) : [...current, nextCase]);
-      if (!campaignBaselineId) setCampaignBaselineId(id);
+      if (!caseBaselineId) setCaseBaselineId(id);
       setActiveCaseId(id); setWorkspaceView("case"); setActiveProbe(0); setShowLoader(false); setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The two datasets could not be compared.");
     }
   }
 
-  function loadExampleCampaign() {
+  function loadExampleCaseHistory() {
     const stamp = Date.now().toString(36);
-    const variants = [
-      { name: "Synthetic baseline", testScale: 1, cfdScale: 1, pressure: 8, temperature: 300, phi: 1, massFlow: 0.62, meshChange: 4.8 },
-      { name: "Synthetic elevated load", testScale: 1.06, cfdScale: 1.03, pressure: 8.4, temperature: 310, phi: 1.05, massFlow: 0.66, meshChange: 3.1 },
-      { name: "Synthetic lean condition", testScale: 0.94, cfdScale: 0.97, pressure: 7.6, temperature: 295, phi: 0.92, massFlow: 0.58, meshChange: 2.2 },
-    ];
-    const scaleSet = (signals: Signal[], factor: number) => signals.map((signal) => ({ ...signal, pressure: signal.pressure.map((value) => value * factor) }));
-    const examples: AnalysisCase[] = variants.map((variant, index) => ({
-      id: `demo-${stamp}-${index}`,
-      source: "demo",
-      metadata: {
-        name: variant.name,
+    const baselineId = `demo-${stamp}-baseline`;
+    const baseMetadata: CaseMetadata = {
+        name: "Synthetic baseline",
         annulusMeanDiameterMm: 82,
         probePositionsDeg: [...demo.positionsDeg],
-        inletPressureBar: variant.pressure,
-        inletTemperatureK: variant.temperature,
-        equivalenceRatio: variant.phi,
-        massFlowKgS: variant.massFlow,
+        inletPressureBar: 8,
+        inletTemperatureK: 300,
+        equivalenceRatio: 1,
+        massFlowKgS: 0.62,
         comparisonMatchConfirmed: true,
         solver: "Research CFD solver",
         solverVersion: "2026.1",
@@ -295,18 +299,32 @@ export default function Home() {
         inletBoundaryCondition: "Measured total state + mass flow",
         outletBoundaryCondition: "Non-reflecting pressure outlet",
         initializationMethod: "Single-point ignition kernel",
-        meshConvergencePct: variant.meshChange,
+        meshConvergencePct: 4.8,
         timeStepConvergencePct: 1.2,
         pressureUncertaintyPct: 1.5,
         timingUncertaintyUs: 0.5,
         cfdPressureUncertaintyPct: 2,
         cfdTimingUncertaintyUs: 0.25,
+    };
+    const cloneSignals = (signals: Signal[]) => signals.map((signal) => ({ ...signal, time: [...signal.time], pressure: [...signal.pressure] }));
+    const blendTowardExperiment = (factor: number) => demo.cfd.map((signal, probe) => ({ ...signal, pressure: signal.pressure.map((value, index) => value + factor * (demo.test[probe].pressure[index] - value)) }));
+    const examples: AnalysisCase[] = [
+      { id: baselineId, source: "demo", relationship: null, metadata: baseMetadata, testSignals: cloneSignals(demo.test), cfdSignals: cloneSignals(demo.cfd) },
+      {
+        id: `demo-${stamp}-mesh`, source: "demo",
+        relationship: { baselineCaseId: baselineId, changedVariable: "mesh", description: "50% front-region cell-size refinement" },
+        metadata: { ...cloneMetadata(baseMetadata), name: "Synthetic mesh refinement", meshCells: 5_000_000, minimumCellSizeMm: 0.125, cellsPerInductionLength: 16, nearWallCellSizeMm: 0.05, meshConvergencePct: 1.7 },
+        testSignals: cloneSignals(demo.test), cfdSignals: blendTowardExperiment(0.95),
       },
-      testSignals: scaleSet(demo.test, variant.testScale),
-      cfdSignals: scaleSet(demo.cfd, variant.cfdScale),
-    }));
+      {
+        id: `demo-${stamp}-wall`, source: "demo",
+        relationship: { baselineCaseId: baselineId, changedVariable: "wall", description: "Adjacent wall thermal boundary" },
+        metadata: { ...cloneMetadata(baseMetadata), name: "Synthetic wall sensitivity", wallBoundaryCondition: "Adiabatic" },
+        testSignals: cloneSignals(demo.test), cfdSignals: blendTowardExperiment(0.03),
+      },
+    ];
     setCases((current) => [...current, ...examples]);
-    setCampaignBaselineId(examples[0].id);
+    setCaseBaselineId(examples[0].id);
     setActiveCaseId(examples[0].id); setWorkspaceView("case"); setActiveProbe(0);
   }
 
@@ -321,9 +339,11 @@ export default function Home() {
     const report = {
       schema: "caevera-rde-case-report",
       analysisVersion: ANALYSIS_VERSION,
+      knowledgeBaseVersion: KNOWLEDGE_BASE_VERSION,
       generatedAt: new Date().toISOString(),
-      inputs: { metadata: activeCase.metadata, experimentalSources: activeCase.testSignals.map((signal) => signal.name), cfdSources: activeCase.cfdSignals.map((signal) => signal.name), units: { time: "ms", pressure: "MPa", frequency: "kHz", waveSpeed: "m/s" } },
-      outputs: { experimentMode: testMode, cfdMode, validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, controlledNextRun: assessment.nextRun, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias } },
+      inputs: { metadata: activeCase.metadata, relationship: activeCase.relationship ?? null, experimentalSources: activeCase.testSignals.map((signal) => signal.name), cfdSources: activeCase.cfdSignals.map((signal) => signal.name), units: { time: "ms", pressure: "MPa", frequency: "kHz", waveSpeed: "m/s" } },
+      outputs: { experimentMode: testMode, cfdMode, validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, controlledNextRun: assessment.nextRun, caseHistoryEvidence, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias } },
+      citedSources: sourcesFor([...new Set(assessment.hypotheses.flatMap((hypothesis) => hypothesis.sourceIds))]),
       perProbe: comparisons,
       methods: ["bounded cross-correlation", "windowed pressure spectrum", "cycle detection", "uncertainty resolution by RSS", "circumferential phase fit", "structured diagnostic rules"],
       limitations: ["Hypotheses prioritize controlled sensitivity runs; they do not prove causality.", "Pressure and timing uncertainty are propagated only into supported scalar outputs.", "Mode inference assumes synchronized probes and one dominant rotating mode.", "Thermal, performance, combustion, and flowfield agreement are not assessed without those measurements."],
@@ -347,36 +367,45 @@ export default function Home() {
       {!activeCase || !testMode || !cfdMode || !activeComparison || !assessment ? <section className="empty-workspace">
         <span className="empty-kicker">CASE WORKSPACE</span><h1>No cases loaded</h1>
         <p>Add an RDE operating point to assess whether CFD reproduces experimental wave and pressure behavior—and identify the next controlled simulation.</p>
-        <div className="empty-actions"><button className="button primary" onClick={openNewCase}>Add first case →</button><button className="button secondary" onClick={loadExampleCampaign}>Load synthetic campaign</button></div>
+        <div className="empty-actions"><button className="button primary" onClick={openNewCase}>Add first case →</button><button className="button secondary" onClick={loadExampleCaseHistory}>Load synthetic case history</button></div>
         <div className="empty-requirements"><span><b>1</b> Matched experiment + CFD traces</span><span><b>2</b> Full numerical model card + uncertainty</span><span><b>3</b> Evidence-based next-run plan</span></div>
       </section> : <>
         <section className="case-switcher" aria-label="Loaded cases">
           <div className="case-switcher-label"><span>Cases</span><b>{cases.length}</b></div>
           <div className="case-tabs-list">{cases.map((item, index) => <button key={item.id} className={workspaceView === "case" && item.id === activeCase.id ? "active" : ""} onClick={() => { setActiveCaseId(item.id); setActiveProbe(0); setWorkspaceView("case"); }}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item.metadata.name}</strong><small>φ {item.metadata.equivalenceRatio.toFixed(2)} · {item.metadata.inletPressureBar.toFixed(1)} bar</small></button>)}</div>
-          <div className="case-actions">{cases.length > 1 && <button className={`compare-cases-button ${workspaceView === "compare" ? "active" : ""}`} onClick={() => setWorkspaceView("compare")}>Compare cases</button>}<button className="add-case-button" onClick={openNewCase}>+ Add case</button></div>
+          <div className="case-actions">{cases.length > 1 && <button className={`compare-cases-button ${workspaceView === "compare" ? "active" : ""}`} onClick={() => setWorkspaceView("compare")}>Case history</button>}<button className="add-case-button" onClick={openNewCase}>+ Add case</button></div>
         </section>
 
-        {workspaceView === "compare" && baselineSummary ? <section className="campaign-comparison" aria-label="Operating point comparison">
-          <div className="campaign-heading"><div><span className="empty-kicker">DIRECT CASE COMPARISON</span><h1>Changes relative to a baseline</h1><p>Physical experiment changes and CFD-agreement changes are separated. Negative agreement deltas mean the simulation error improved.</p></div><label className="baseline-select"><span>Baseline case</span><select value={baselineSummary.item.id} onChange={(event) => setCampaignBaselineId(event.target.value)}>{campaignSummaries.map((summary) => <option key={summary.item.id} value={summary.item.id}>{summary.item.metadata.name}</option>)}</select></label></div>
-          <div className="campaign-table-wrap"><table className="campaign-table direct-delta-table">
+        {workspaceView === "compare" && baselineSummary ? <section className="case-history-comparison" aria-label="Case history">
+          <div className="case-history-heading"><div><span className="empty-kicker">CASE HISTORY</span><h1>Related reruns for one case</h1><p>A rerun becomes diagnostic evidence only when the experiment and operating point are unchanged and exactly one recorded CFD variable group changes.</p></div><label className="baseline-select"><span>Baseline case</span><select value={baselineSummary.item.id} onChange={(event) => setCaseBaselineId(event.target.value)}>{caseSummaries.map((summary) => <option key={summary.item.id} value={summary.item.id}>{summary.item.metadata.name}</option>)}</select></label></div>
+          <div className="case-history-table-wrap"><table className="case-history-table direct-delta-table">
             <thead><tr><th>Case</th><th>Operating change vs baseline</th><th>Experimental change</th><th>CFD error change</th><th>Case status</th></tr></thead>
-            <tbody>{campaignSummaries.map((summary) => {
-              const delta = buildCampaignDelta(baselineSummary, summary);
+            <tbody>{caseSummaries.map((summary) => {
+              const delta = buildCaseDelta(baselineSummary, summary);
               const isBaseline = summary.item.id === baselineSummary.item.id;
+              const relationEvidence = buildCaseHistoryEvidence(cases, baselineSummary.item.id).find((item) => item.caseId === summary.item.id);
               const caseReviews = summary.assessment.metrics.filter((metric) => metric.tone === "review").length;
               return <tr key={summary.item.id} className={isBaseline ? "baseline-row" : ""}>
                 <th scope="row"><button onClick={() => { setActiveCaseId(summary.item.id); setActiveProbe(0); setWorkspaceView("case"); }}>{summary.item.metadata.name}<span>{isBaseline ? "Selected baseline" : "Open analysis →"}</span></button></th>
                 <td>{isBaseline ? <strong>Reference condition</strong> : <><strong>φ {signed(delta.condition.equivalenceRatio, 2)} · pressure {signed(delta.condition.inletPressureBar, 1)} bar</strong><span>Temperature {signed(delta.condition.inletTemperatureK, 0)} K</span><span>Mass flow {signed(delta.condition.massFlowKgS, 2)} kg/s</span></>}</td>
                 <td>{isBaseline ? <strong>Reference behavior</strong> : <><strong>Frequency {signed(delta.experiment.frequencyKHz, 2)} kHz</strong><span>Peak pressure {signed(delta.experiment.peakPressureMpa, 3)} MPa</span><span>Amplitude {signed(delta.experiment.pressureAmplitudeMpa, 3)} MPa · variability {signed(delta.experiment.cycleVariabilityPoints, 1)} pt</span></>}</td>
                 <td>{isBaseline ? <strong>Reference error</strong> : <><strong>Frequency error {signed(delta.cfdAgreement.frequencyErrorPointChange, 1)} pt</strong><span>Peak error {signed(delta.cfdAgreement.peakPressureErrorPointChange, 1)} pt</span><span>Amplitude error {signed(delta.cfdAgreement.amplitudeErrorPointChange, 1)} pt</span></>}</td>
-                <td><span className={`comparison-status ${summary.assessment.validity.status === "Blocked" || caseReviews ? "review" : "pass"}`}>{summary.assessment.validity.status === "Blocked" ? "Blocked" : caseReviews ? `${caseReviews} check${caseReviews === 1 ? "" : "s"} require review` : "No review findings"}</span></td>
+                <td><span className={`comparison-status ${relationEvidence?.controlled ? "pass" : summary.assessment.validity.status === "Blocked" || caseReviews ? "review" : "neutral"}`}>{isBaseline ? "Baseline case" : relationEvidence?.controlled ? `Used as evidence · ${relationEvidence.state}` : "Comparison only"}</span></td>
               </tr>;
             })}</tbody>
           </table></div>
-          <p className="campaign-note"><strong>How to read this:</strong> Experiment columns show how the physical operating point changed. CFD columns show whether the simulation-to-test error became larger or smaller. These are different engineering questions.</p>
+          <p className="case-history-note"><strong>How this works:</strong> this view keeps a baseline and its related controlled reruns together. Unrelated operating points remain comparisons and do not alter the diagnosis.</p>
         </section> : <>
           <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div><h1>{activeCase.metadata.name}</h1><p>Operating point {cases.findIndex((item) => item.id === activeCase.id) + 1} of {cases.length} · deterministic local analysis</p></div>
 
+          <section className="decision-card" aria-label="Diagnostic recommendation">
+            <article><span>LIKELY ISSUE</span><h2>{likelyHypothesis?.title ?? "Cannot assess"}</h2></article>
+            <article><span>RECOMMENDED NEXT RUN</span><h2>{assessment.nextRun.title}</h2><p>{assessment.nextRun.change}</p></article>
+            <article><span>WHY</span><p>{likelyEvidence.length ? likelyEvidence.join(" ") : "The loaded evidence does not support a more specific diagnosis."}</p>{likelySources.length > 0 && <div className="source-links" aria-label="Diagnostic sources">{likelySources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>}</article>
+            <div className="decision-actions"><button className="button secondary" onClick={downloadReport}>Download evidence report</button>{cases.length > 1 && <button className="button secondary" onClick={() => setWorkspaceView("compare")}>View case history</button>}</div>
+          </section>
+
+          {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
             <div><span>COMPARISON CONCLUSION</span><h2>{assessment.validity.status === "Blocked" ? "Assessment blocked until case matching is confirmed" : totalReview ? `${totalReview} evidence check${totalReview === 1 ? "" : "s"} require review` : "No selected mismatch is resolved beyond current uncertainty"}</h2><p>{assessment.validity.status === "Blocked" ? "Do not tune the CFD from this pairing yet." : totalReview ? "The highlighted evidence drives the ranked hypotheses and one-variable next-run plan below." : "This does not prove the CFD is universally valid; it means this pressure case does not expose a resolved discrepancy."}</p></div>
             <strong>{assessment.validity.status === "Blocked" ? "BLOCKED" : totalReview ? "REVIEW" : "UNRESOLVED"}</strong>
@@ -411,32 +440,16 @@ export default function Home() {
                 <div><span>Mean pressure bias</span><strong>{signed(pressureBias, 3)} <i>MPa</i></strong><small>Its significance is assessed in the mean-pressure row above</small></div>
               </div><p className="metric-note">Correlation and harmonic/variability checks use explicit prototype method limits. Pressure, frequency, speed, impulse, and rise-time rows use the supplied experiment/CFD uncertainties. {inconclusiveMetrics ? `${inconclusiveMetrics} metric${inconclusiveMetrics === 1 ? " is" : "s are"} inconclusive.` : ""}</p></section>
 
-              <section className="decision-block" aria-labelledby="next-action-title">
-                <div className="decision-heading">
-                  <div><span className="result-index">06</span><div><h3 id="next-action-title">CFD recommendation</h3><p>What is likely wrong, what to change, and why</p></div></div>
-                </div>
+              <section className="result-block causes-block"><div><span className="result-index">06</span><h3>Ranked diagnostic hypotheses</h3></div><ol>{assessment.hypotheses.map((hypothesis, index) => <li key={hypothesis.title}><b>{index + 1}. {hypothesis.title}</b><span>{hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`).join(" ")}</span><small>Model inputs: {hypothesis.modelInputs.filter(Boolean).join(" · ")}</small></li>)}</ol><small>These are transparent sensitivity-test priorities, not causal proof.</small></section>
 
-                <div className="recommendation-list">
-                  <article className="recommendation-item">
-                    <span>LIKELY ISSUE</span>
-                    <div><h4>{assessment.hypotheses[0].title}</h4></div>
-                  </article>
-                  <article className="recommendation-item recommended-run">
-                    <span>RECOMMENDED NEXT RUN</span>
-                    <div><h4>{assessment.nextRun.title}</h4><p>{assessment.nextRun.change}</p></div>
-                  </article>
-                  <article className="recommendation-item">
-                    <span>WHY</span>
-                    <div><p>{assessment.nextRun.reason}</p></div>
-                  </article>
-                </div>
+              <section className="result-block action-block"><div><span className="result-index">07</span><h3>Controlled next-run plan</h3></div><div className="next-run-header"><strong>{assessment.nextRun.title}</strong><span>{assessment.nextRun.evidenceStrength} evidence</span></div><p className="next-change"><b>Change one thing:</b> {assessment.nextRun.change}</p><div className="next-run-grid"><div><span>Why this run</span><p>{assessment.nextRun.reason}</p></div><div><span>Hold fixed</span><p>{assessment.nextRun.holdFixed.join(" · ")}</p></div><div><span>Expected result</span><p>{assessment.nextRun.expectedOutcome}</p></div><div><span>Confirm / reject</span><p><b>Confirm:</b> {assessment.nextRun.confirmationCriterion}<br /><b>Reject:</b> {assessment.nextRun.rejectionCriterion}</p></div></div><p className="alternative"><b>Alternative hypothesis:</b> {assessment.nextRun.alternativeHypothesis}</p></section>
 
-                <div className="decision-footer"><button className="compact-report-button" onClick={downloadReport}>Download technical report <span aria-hidden="true">↓</span></button></div>
-              </section>
+              <button className="report-button" onClick={downloadReport}><span><b>08</b><strong>Download traceable report</strong><small>Inputs, validity, uncertainty, metrics, hypotheses, and controlled next run</small></span><i>↓</i></button>
             </article>
           </section>
 
           <section className="evidence-panel"><div className="evidence-heading"><div><h2>Signal evidence</h2><p>Inspect the pressure, spectrum, and residual behind the assessment.</p></div><div className="control-group"><div className="probe-tabs" aria-label="Probe selection">{[0, 1, 2].map((probe) => <button key={probe} className={activeProbe === probe ? "active" : ""} onClick={() => setActiveProbe(probe)}>P{probe + 1}</button>)}</div><div className="view-tabs" aria-label="Evidence view"><button className={activeView === "signals" ? "active" : ""} onClick={() => setActiveView("signals")}>Pressure</button><button className={activeView === "spectrum" ? "active" : ""} onClick={() => setActiveView("spectrum")}>Frequency</button><button className={activeView === "residual" ? "active" : ""} onClick={() => setActiveView("residual")}>Residual</button></div></div></div><div className="chart-heading"><span>Probe P{activeProbe + 1} · {activeCase.metadata.probePositionsDeg[activeProbe]}°</span><Legend residual={activeView === "residual"} /></div>{activeView === "signals" && <SignalChart comparison={activeComparison} />}{activeView === "spectrum" && <SpectrumChart comparison={activeComparison} />}{activeView === "residual" && <ResidualChart comparison={activeComparison} />}</section>
+          </>}
           <footer><span>Caevera v{ANALYSIS_VERSION} · deterministic analysis</span><span>{cases.length} case{cases.length === 1 ? "" : "s"} in this browser session · not certification evidence</span></footer>
         </>}
       </>}
@@ -446,6 +459,8 @@ export default function Home() {
       <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close case loader">×</button><span className="modal-kicker">RDE CASE INPUTS</span><h2 id="loader-title">{editingCaseId ? "Edit operating point" : "Add operating point"}</h2><p>Required fields feed a calculation, validity check, uncertainty assessment, or diagnostic rule. Optional convergence results strengthen the recommendation when available.</p>
 
       <div className="form-section"><h3>Case + geometry</h3><div className="form-grid three"><label><span>Case name</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label><label><span>Mean diameter (mm)</span><input type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label><label><span>Probe angles (deg)</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input key={index} type="number" aria-label={`Probe ${index + 1} angle`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}</div></label></div><label className="confirmation-check"><input type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label></div>
+
+      {cases.length > 0 && <div className="form-section"><h3>Related rerun · optional</h3><p className="form-help">Use this only when this is a controlled rerun of an existing case. Caevera verifies the relationship before using it as diagnostic evidence.</p><div className="form-grid three"><label><span>Baseline case</span><select value={draftRelationship?.baselineCaseId ?? ""} onChange={(event) => setDraftRelationship(event.target.value ? { baselineCaseId: event.target.value, changedVariable: draftRelationship?.changedVariable ?? "other", description: draftRelationship?.description ?? "" } : null)}><option value="">Not a related rerun</option>{cases.filter((item) => item.id !== editingCaseId).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label><label><span>Single CFD change</span><select disabled={!draftRelationship} value={draftRelationship?.changedVariable ?? "other"} onChange={(event) => setDraftRelationship((current) => current ? { ...current, changedVariable: event.target.value as SensitivityVariable } : null)}><option value="mesh">Mesh / spatial method</option><option value="time-step">Time step / temporal method</option><option value="chemistry">Chemistry model</option><option value="inlet">Inlet treatment</option><option value="wall">Wall treatment</option><option value="initialization">Initialization</option><option value="other">Other / comparison only</option></select></label><label><span>Change description</span><input disabled={!draftRelationship} value={draftRelationship?.description ?? ""} onChange={(event) => setDraftRelationship((current) => current ? { ...current, description: event.target.value } : null)} placeholder="e.g. 50% front-cell refinement" /></label></div></div>}
 
       <div className="form-section"><div className="form-section-heading"><h3>Three synchronized pressure traces</h3><button onClick={downloadExample}>Download example CSV</button></div><div className="upload-grid"><label className={`upload-box ${testPending ? "loaded" : ""}`}><span>EXPERIMENT</span><strong>{testPending?.[0].name.split(" · ")[0] ?? (editingCaseId ? "Keep current file or choose replacement" : "Choose three-probe CSV")}</strong><small>time_ms, p1_MPa, p2_MPa, p3_MPa</small><input type="file" accept=".csv,.txt" onChange={(event) => readProbeFile(event, "test")} hidden /></label><label className={`upload-box ${cfdPending ? "loaded" : ""}`}><span>CFD</span><strong>{cfdPending?.[0].name.split(" · ")[0] ?? (editingCaseId ? "Keep current file or choose replacement" : "Choose matching CFD CSV")}</strong><small>Same probes, positions, and operating point</small><input type="file" accept=".csv,.txt" onChange={(event) => readProbeFile(event, "cfd")} hidden /></label></div></div>
 
