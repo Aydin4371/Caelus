@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildCampaignDelta, summarizeCampaignCase } from "../lib/campaign-analysis.ts";
+import { buildCaseDelta, buildCaseHistoryEvidence, summarizeCase } from "../lib/case-history.ts";
 import type { AnalysisCase, CaseMetadata } from "../lib/caevera-types.ts";
 import { buildCaseAssessment } from "../lib/diagnostics.ts";
+import { DIAGNOSTIC_SOURCES, SOURCE_IDS_BY_CAUSE } from "../lib/diagnostic-knowledge.ts";
 import {
   analyzeRdeProbeSet,
   assessSignalQuality,
@@ -179,6 +180,9 @@ test("case assessment connects validity, uncertainty, model inputs, and next run
   assert.equal(result.metrics.length, 12);
   assert.ok(result.metrics.some((metric) => metric.assessment.status === "resolved-mismatch"));
   assert.ok(result.hypotheses[0].modelInputs.length > 0);
+  assert.ok(!("score" in result.hypotheses[0]), "diagnostic ranking must not expose an arbitrary score");
+  assert.ok(result.hypotheses[0].evidence.every((item) => ["supports", "weakens", "unknown", "cannot-assess"].includes(item.state)));
+  assert.ok(result.hypotheses[0].sourceIds.length > 0);
   assert.ok(result.nextRun.holdFixed.length >= 4);
   assert.match(result.nextRun.confirmationCriterion, /%|cycles|uncertainty/i);
   assert.ok(result.coverage.some((item) => item.module === "Thermal" && item.status === "Not assessed"));
@@ -194,7 +198,7 @@ test("case assessment blocks recommendations when the physical pairing is unconf
   assert.match(result.nextRun.title, /verify/i);
 });
 
-test("campaign comparison calculates direct physical and CFD-error deltas", () => {
+test("case-history comparison calculates direct physical and CFD-error deltas", () => {
   const demo = makeDemoProbeSignals();
   const baseline: AnalysisCase = { id: "a", source: "demo", metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
   const candidate: AnalysisCase = {
@@ -204,10 +208,64 @@ test("campaign comparison calculates direct physical and CFD-error deltas", () =
     testSignals: demo.test.map((signal) => ({ ...signal, pressure: signal.pressure.map((value) => value * 1.05) })),
     cfdSignals: demo.cfd.map((signal) => ({ ...signal, pressure: signal.pressure.map((value) => value * 1.05) })),
   };
-  const delta = buildCampaignDelta(summarizeCampaignCase(baseline), summarizeCampaignCase(candidate));
+  const delta = buildCaseDelta(summarizeCase(baseline), summarizeCase(candidate));
   close(delta.condition.equivalenceRatio, 0.05, 1e-12, "equivalence-ratio delta");
   assert.ok(delta.experiment.peakPressureMpa > 0);
   assert.ok(Number.isFinite(delta.cfdAgreement.amplitudeErrorPointChange));
+});
+
+test("controlled mesh rerun becomes strong case-history evidence", () => {
+  const demo = makeDemoProbeSignals();
+  const baseline: AnalysisCase = { id: "base", source: "demo", relationship: null, metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
+  const refined: AnalysisCase = {
+    id: "fine",
+    source: "demo",
+    relationship: { baselineCaseId: "base", changedVariable: "mesh", description: "50% front-cell refinement" },
+    metadata: { ...DEMO_METADATA, name: "Fine mesh", meshCells: 5_000_000, minimumCellSizeMm: 0.125, cellsPerInductionLength: 16, nearWallCellSizeMm: 0.05, meshConvergencePct: 1.7 },
+    testSignals: demo.test,
+    cfdSignals: demo.cfd.map((signal, probe) => ({ ...signal, pressure: signal.pressure.map((value, index) => value + 0.95 * (demo.test[probe].pressure[index] - value)) })),
+  };
+  const history = buildCaseHistoryEvidence([baseline, refined], baseline.id);
+  assert.equal(history.length, 1);
+  assert.equal(history[0].controlled, true);
+  assert.equal(history[0].causeId, "spatial-resolution");
+  assert.equal(history[0].state, "supports");
+  assert.equal(history[0].strength, "strong");
+
+  const comparisons = demo.test.map((signal, index) => compareSignals(signal, demo.cfd[index]));
+  const result = buildCaseAssessment(DEMO_METADATA, comparisons, analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82), analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82), history);
+  assert.equal(result.hypotheses[0].id, "spatial-resolution");
+  assert.match(result.nextRun.title, /mesh-convergence/i);
+});
+
+test("diagnostic source records are complete and mapped", () => {
+  assert.ok(DIAGNOSTIC_SOURCES.length >= 8);
+  const expectedCitations = new Map([
+    ["strakey-ferguson-2022", ["10.2514/6.2022-1113", "Validation of a Computational Fluid Dynamics Model of a Methane-Oxygen Rotating Detonation Engine"]],
+    ["tobias-agrawal-paxson-2022", ["10.2514/6.2022-1879", "Experimental and Computational Analysis of a Rotating Detonation Combustor"]],
+    ["batista-et-al-2026", ["10.2514/6.2026-2419", "Spatiotemporal Sensitivity in Rotating Detonation Rocket Engine Large Eddy Simulations"]],
+    ["dille-et-al-2024", ["10.1063/5.0195465", "Rotating detonation combustor performance informed through a novel megahertz-rate stagnation pressure measurement"]],
+    ["yan-teng-ng-2021", ["10.1016/j.actaastro.2021.02.010", "Effects of slot injection on detonation wavelet characteristics in a rotating detonation engine"]],
+    ["paxson-miki-2022", ["10.2514/6.2022-1263", "Computational Assessment of Inlet Backflow Effects on Rotating Detonation Engine Performance and Operability"]],
+    ["yao-wang-2016", ["10.1016/j.applthermaleng.2016.07.166", "Multiple ignitions and the stability of rotating detonation waves"]],
+    ["nist-ir-8298", ["10.6028/NIST.IR.8298", "A Summary of Industrial Verification, Validation, and Uncertainty Quantification Procedures in Computational Fluid Dynamics"]],
+  ]);
+  assert.equal(DIAGNOSTIC_SOURCES.length, expectedCitations.size);
+  assert.equal(new Set(DIAGNOSTIC_SOURCES.map((source) => source.id)).size, DIAGNOSTIC_SOURCES.length);
+  for (const source of DIAGNOSTIC_SOURCES) {
+    assert.match(source.url, /^https:\/\//);
+    assert.ok(source.doi.length > 5);
+    assert.ok(source.finding.length > 20);
+    assert.ok(source.limitation.length > 20);
+    assert.deepEqual([source.doi, source.title], expectedCitations.get(source.id), `citation drift for ${source.id}`);
+  }
+  const sourceIds = new Set(DIAGNOSTIC_SOURCES.map((source) => source.id));
+  for (const mappedIds of Object.values(SOURCE_IDS_BY_CAUSE)) {
+    for (const id of mappedIds) assert.ok(sourceIds.has(id), `unknown mapped source ${id}`);
+  }
+  assert.ok(SOURCE_IDS_BY_CAUSE["spatial-resolution"].length >= 2);
+  assert.deepEqual(SOURCE_IDS_BY_CAUSE["initialization-mode"], ["yao-wang-2016"]);
+  assert.deepEqual(SOURCE_IDS_BY_CAUSE["missing-unsteadiness"], []);
 });
 
 test("serialized report exposes cycle metrics, data quality, provenance, and limitations", () => {
