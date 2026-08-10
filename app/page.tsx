@@ -13,6 +13,7 @@ import {
 } from "@/lib/caevera-types";
 import { buildCaseAssessment, type MetricAssessment } from "@/lib/diagnostics";
 import { KNOWLEDGE_BASE_VERSION, sourcesFor } from "@/lib/diagnostic-knowledge";
+import { CASE_INPUT_HELP } from "@/lib/case-input-help";
 import {
   ANALYSIS_VERSION,
   REVIEW_THRESHOLDS,
@@ -156,7 +157,6 @@ function Legend({ residual = false }: { residual?: boolean }) {
 }
 
 export default function Home() {
-  const demo = useMemo(() => makeDemoProbeSignals(), []);
   const [cases, setCases] = useState<AnalysisCase[]>([]);
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
   const [caseBaselineId, setCaseBaselineId] = useState<string | null>(null);
@@ -166,6 +166,7 @@ export default function Home() {
   const [testPending, setTestPending] = useState<Signal[] | null>(null);
   const [cfdPending, setCfdPending] = useState<Signal[] | null>(null);
   const [showLoader, setShowLoader] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [error, setError] = useState("");
   const [activeView, setActiveView] = useState<"signals" | "spectrum" | "residual">("signals");
   const [activeProbe, setActiveProbe] = useState(0);
@@ -199,6 +200,7 @@ export default function Home() {
   const reviewMetrics = assessment?.metrics.filter((metric) => metric.tone === "review").length ?? 0;
   const inconclusiveMetrics = assessment?.metrics.filter((metric) => metric.tone === "neutral").length ?? 0;
   const totalReview = reviewMetrics + (waveformWithinLimit ? 0 : 1) + (assessment?.validity.status === "Valid" ? 0 : 1);
+
   const likelyHypothesis = assessment?.hypotheses[0] ?? null;
   const likelyEvidence = likelyHypothesis?.evidence.filter((item) => item.state === "supports").map((item) => item.observation) ?? [];
   const likelySources = likelyHypothesis ? sourcesFor(likelyHypothesis.sourceIds) : [];
@@ -263,6 +265,7 @@ export default function Home() {
   }
 
   function loadExampleCaseHistory() {
+    const demo = makeDemoProbeSignals();
     const stamp = Date.now().toString(36);
     const baselineId = `demo-${stamp}-baseline`;
     const baseMetadata: CaseMetadata = {
@@ -329,6 +332,7 @@ export default function Home() {
   }
 
   function downloadExample() {
+    const demo = makeDemoProbeSignals();
     const rows = ["time_ms,p1_MPa,p2_MPa,p3_MPa", ...demo.test[0].time.slice(0, 800).map((time, index) => [time, ...demo.test.map((signal) => signal.pressure[index])].map((value) => value.toFixed(6)).join(","))];
     const url = URL.createObjectURL(new Blob([rows.join("\n")], { type: "text/csv" }));
     const link = document.createElement("a"); link.href = url; link.download = "caevera-three-probe-example.csv"; link.click(); URL.revokeObjectURL(url);
@@ -356,11 +360,16 @@ export default function Home() {
   const updateText = (key: keyof CaseMetadata, value: string) => setDraft((current) => ({ ...current, [key]: value }));
   const numberValue = (value: number) => Number.isFinite(value) ? value : "";
 
+  function returnToCaseWorkspace() {
+    setWorkspaceView("case");
+    requestAnimationFrame(() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
+
   return <main className="app-shell">
     <header className="product-header">
-      <a className="brand" href="#top" aria-label="Caevera by Caelus home"><span className="brand-mark">C</span><span><strong>CAEVERA</strong><small>BY CAELUS</small></span></a>
+      <a className="brand" href="#top" aria-label="Return to case workspace" onClick={(event) => { event.preventDefault(); returnToCaseWorkspace(); }}><span className="brand-mark">C</span><span><strong>CAEVERA</strong><small>BY CAELUS</small></span></a>
       <p>RDE simulation-to-test intelligence</p>
-      <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><button className="button primary" onClick={openNewCase}>+ Add case</button></div>
+      <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Add case</button></div>
     </header>
 
     <section className="content" id="top">
@@ -402,7 +411,7 @@ export default function Home() {
             <article><span>LIKELY ISSUE</span><h2>{likelyHypothesis?.title ?? "Cannot assess"}</h2></article>
             <article><span>RECOMMENDED NEXT RUN</span><h2>{assessment.nextRun.title}</h2><p>{assessment.nextRun.change}</p></article>
             <article><span>WHY</span><p>{likelyEvidence.length ? likelyEvidence.join(" ") : "The loaded evidence does not support a more specific diagnosis."}</p>{likelySources.length > 0 && <div className="source-links" aria-label="Diagnostic sources">{likelySources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>}</article>
-            <div className="decision-actions"><button className="button secondary" onClick={downloadReport}>Download evidence report</button>{cases.length > 1 && <button className="button secondary" onClick={() => setWorkspaceView("compare")}>View case history</button>}</div>
+            <div className="decision-actions"><button className="button secondary" onClick={openCaseEditor}>Edit case</button><button className="button secondary" onClick={downloadReport}>Download evidence report</button>{cases.length > 1 && <button className="button secondary" onClick={() => setWorkspaceView("compare")}>View case history</button>}</div>
           </section>
 
           {showDetailedEvidence && <>
@@ -448,15 +457,16 @@ export default function Home() {
             </article>
           </section>
 
-          <section className="evidence-panel"><div className="evidence-heading"><div><h2>Signal evidence</h2><p>Inspect the pressure, spectrum, and residual behind the assessment.</p></div><div className="control-group"><div className="probe-tabs" aria-label="Probe selection">{[0, 1, 2].map((probe) => <button key={probe} className={activeProbe === probe ? "active" : ""} onClick={() => setActiveProbe(probe)}>P{probe + 1}</button>)}</div><div className="view-tabs" aria-label="Evidence view"><button className={activeView === "signals" ? "active" : ""} onClick={() => setActiveView("signals")}>Pressure</button><button className={activeView === "spectrum" ? "active" : ""} onClick={() => setActiveView("spectrum")}>Frequency</button><button className={activeView === "residual" ? "active" : ""} onClick={() => setActiveView("residual")}>Residual</button></div></div></div><div className="chart-heading"><span>Probe P{activeProbe + 1} · {activeCase.metadata.probePositionsDeg[activeProbe]}°</span><Legend residual={activeView === "residual"} /></div>{activeView === "signals" && <SignalChart comparison={activeComparison} />}{activeView === "spectrum" && <SpectrumChart comparison={activeComparison} />}{activeView === "residual" && <ResidualChart comparison={activeComparison} />}</section>
           </>}
+
+          <section className="evidence-panel" aria-label="Calculated signal evidence"><div className="evidence-heading"><div><span className="calculated-label">CALCULATED AFTER CASE ANALYSIS</span><h2>Signal evidence</h2><p>Pressure, frequency content, and residual calculated from the active experiment and CFD traces.</p></div><div className="control-group"><div className="probe-tabs" aria-label="Probe selection">{[0, 1, 2].map((probe) => <button key={probe} className={activeProbe === probe ? "active" : ""} onClick={() => setActiveProbe(probe)}>P{probe + 1}</button>)}</div><div className="view-tabs" aria-label="Evidence view"><button className={activeView === "signals" ? "active" : ""} onClick={() => setActiveView("signals")}>Pressure</button><button className={activeView === "spectrum" ? "active" : ""} onClick={() => setActiveView("spectrum")}>Frequency</button><button className={activeView === "residual" ? "active" : ""} onClick={() => setActiveView("residual")}>Residual</button></div></div></div><div className="chart-heading"><span>Probe P{activeProbe + 1} · {activeCase.metadata.probePositionsDeg[activeProbe]}° · {activeComparison.time.length.toLocaleString()} aligned samples</span><Legend residual={activeView === "residual"} /></div>{activeView === "signals" && <SignalChart comparison={activeComparison} />}{activeView === "spectrum" && <SpectrumChart comparison={activeComparison} />}{activeView === "residual" && <ResidualChart comparison={activeComparison} />}</section>
           <footer><span>Caevera v{ANALYSIS_VERSION} · deterministic analysis</span><span>{cases.length} case{cases.length === 1 ? "" : "s"} in this browser session · not certification evidence</span></footer>
         </>}
       </>}
     </section>
 
     {showLoader && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowLoader(false)}><section className="loader-modal" role="dialog" aria-modal="true" aria-labelledby="loader-title" onMouseDown={(event) => event.stopPropagation()}>
-      <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close case loader">×</button><span className="modal-kicker">RDE CASE INPUTS</span><h2 id="loader-title">{editingCaseId ? "Edit operating point" : "Add operating point"}</h2><p>Required fields feed a calculation, validity check, uncertainty assessment, or diagnostic rule. Optional convergence results strengthen the recommendation when available.</p>
+      <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close case loader">×</button><div className="loader-intro"><div><span className="modal-kicker">RDE CASE INPUTS</span><h2 id="loader-title">{editingCaseId ? "Edit operating point" : "Add operating point"}</h2></div><button className="input-help-button" onClick={() => setShowHelp(true)}>What does each input mean?</button></div><p>Required fields feed a calculation, validity check, uncertainty assessment, or diagnostic rule. Optional convergence results strengthen the recommendation when available.</p>
 
       <div className="form-section"><h3>Case + geometry</h3><div className="form-grid three"><label><span>Case name</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label><label><span>Mean diameter (mm)</span><input type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label><label><span>Probe angles (deg)</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input key={index} type="number" aria-label={`Probe ${index + 1} angle`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}</div></label></div><label className="confirmation-check"><input type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label></div>
 
@@ -475,6 +485,12 @@ export default function Home() {
       <div className="form-section"><h3>Experiment + CFD uncertainty</h3><div className="form-grid four"><label><span>Experiment pressure uncertainty (%)</span><input type="number" step="0.1" value={numberValue(draft.pressureUncertaintyPct)} onChange={(event) => updateNumber("pressureUncertaintyPct", event.target.value)} /></label><label><span>Experiment timing uncertainty (µs)</span><input type="number" step="0.01" value={numberValue(draft.timingUncertaintyUs)} onChange={(event) => updateNumber("timingUncertaintyUs", event.target.value)} /></label><label><span>CFD pressure uncertainty (%)</span><input type="number" step="0.1" value={numberValue(draft.cfdPressureUncertaintyPct)} onChange={(event) => updateNumber("cfdPressureUncertaintyPct", event.target.value)} /></label><label><span>CFD timing uncertainty (µs)</span><input type="number" step="0.01" value={numberValue(draft.cfdTimingUncertaintyUs)} onChange={(event) => updateNumber("cfdTimingUncertaintyUs", event.target.value)} /></label></div></div>
 
       {error && <p className="error-message">{error}</p>}<div className="modal-actions"><button className="button secondary" onClick={() => setShowLoader(false)}>Cancel</button><button className="button primary" onClick={applyCase}>Analyze case →</button></div>
+    </section></div>}
+
+    {showHelp && <div className="modal-backdrop help-backdrop" role="presentation" onMouseDown={() => setShowHelp(false)}><section className="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}>
+      <button className="close-button" onClick={() => setShowHelp(false)} aria-label="Close input guide">×</button><span className="modal-kicker">CASE INPUT GUIDE</span><h2 id="help-title">What each case input means</h2><p>Use the documented value from the experiment or CFD setup. Caevera does not infer missing model settings or uncertainty.</p>
+      <div className="help-groups">{CASE_INPUT_HELP.map((group) => <section key={group.title} className="help-group"><div><h3>{group.title}</h3><p>{group.description}</p></div><dl>{group.items.map((item) => <div key={item.key}><dt>{item.label}</dt><dd>{item.definition}</dd></div>)}</dl></section>)}</div>
+      <div className="help-actions"><button className="button primary" onClick={() => setShowHelp(false)}>{showLoader ? "Back to case inputs" : "Close guide"}</button></div>
     </section></div>}
   </main>;
 }
