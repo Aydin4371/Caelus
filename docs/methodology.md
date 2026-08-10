@@ -266,3 +266,68 @@ partner-laboratory data, withhold operating points from method development, and
 compare Caevera recommendations with expert assessments. It should report
 sensitivity to sample rate, window length, noise, missing samples, timing error,
 probe placement, sensor response, mesh refinement, and time-step refinement.
+
+
+## 13. Mapped data import and provenance (v1.0)
+
+The import layer parses CSV, TSV, and semicolon-delimited text without assuming
+specific headers. The user explicitly maps one acquisition-time column and at
+least three pressure columns, then confirms the source units. Internally:
+
+- time is converted to milliseconds;
+- pressure is converted to MPa;
+- rows with a missing/non-numeric mapped value are omitted and counted;
+- converted time must be strictly increasing without duplicates;
+- each pressure column may be used only once;
+- a six-row converted preview is shown before the mapping becomes usable.
+
+The case stores the file name, delimiter, selected source headers, source units,
+valid/dropped row counts, and the experiment/CFD mapping. This provenance is
+included in reports and saved workspaces.
+
+## 14. Spectral SNR and conclusion-specific quality gates
+
+For each trace, the Hann-windowed spectrum estimates a dominant fundamental.
+A spectral noise floor is the median amplitude of non-harmonic bins inside the
+analyzed band after excluding neighborhoods around the first three harmonics.
+The reported spectral SNR is
+
+```text
+20 log10(fundamental amplitude / spectral noise floor).
+```
+
+The current explicit gates are:
+
+- frequency: at least five cycles, at least 10 samples/cycle, no gaps or
+  clipping, and spectral SNR at least 10 dB;
+- phase/mode: the frequency gate plus at least 20 samples/cycle and no more
+  than 1% sample-interval variation;
+- front shape/harmonics: the phase gate plus Nyquist frequency at least five
+  times the fundamental.
+
+Failing one gate does not erase unrelated outputs. It creates a named list of
+unavailable conclusions. A failed phase gate makes count, direction,
+propagation speed, phase pattern, and phase jitter Not identifiable while a
+usable single-probe pressure amplitude may still be reported.
+
+These thresholds are analysis-method controls, not universal RDE acceptance
+criteria.
+
+## 15. Workspace persistence
+
+A Caevera workspace is versioned JSON containing raw mapped signals, file
+provenance, probe geometry, model-card inputs, uncertainty, and related-case
+links. Non-finite optional values use an explicit tagged representation rather
+than silently becoming JSON null. Opening a workspace validates every signal,
+probe count, time ordering, case identifier, and schema version. Derived
+metrics are recalculated by the current deterministic engine so saved results
+cannot become detached from the saved raw evidence.
+
+## 16. Published validation boundary
+
+Exact published frequency, wave-count, annulus-diameter, and wave-speed values
+are used as deterministic calculation benchmarks. Registered raw experimental
+archives are kept separate until a compact fixture is extracted with hashes,
+variable names, time windows, probe coordinates, and processing provenance.
+Neither level is described as full experiment–CFD validation unless matching
+numeric arrays from both sides exist.
