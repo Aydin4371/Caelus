@@ -3,7 +3,7 @@
 Caevera is a browser-based RDE simulation-to-test research application. It
 compares three synchronized experimental pressure traces with matching CFD
 virtual probes, determines whether differences are resolved beyond the stated
-uncertainty, ranks traceable diagnostic hypotheses, and recommends one
+uncertainty, orders traceable diagnostic hypotheses by evidence state, and recommends one
 controlled next simulation.
 
 The application starts as an empty case workspace and accepts multiple
@@ -14,7 +14,7 @@ The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
 
-## Version 0.5 product contract
+## Version 0.6 product contract
 
 Each case requires:
 
@@ -27,19 +27,14 @@ Each case requires:
 7. Confirmation that geometry, operating point, probes, and comparison window
    match
 
-Caevera returns:
+The interface returns only:
 
-1. Comparison validity and data-quality findings
-2. Wave frequency, speed, count, direction, stability, and mode confidence
-3. Pressure amplitude, cycle peaks, mean pressure, impulse, rise time,
-   harmonic ratio, and cycle variability
-4. Signed CFD-minus-experiment differences
-5. Combined uncertainty and a resolved/unresolved assessment where supported
-6. Ranked diagnostic hypotheses tied to calculated evidence and model inputs
-7. One controlled next run with hold-fixed variables, expected outcome, and
-   confirmation/rejection criteria
-8. Direct Case B − Case A changes using a selectable campaign baseline
-9. A traceable JSON report
+1. Likely issue
+2. Recommended next run
+3. Why
+
+The downloadable report retains the full validity, data-quality, metric,
+uncertainty, evidence-state, source, and next-run records.
 
 ## v0.4 changes implemented
 
@@ -71,8 +66,26 @@ Caevera returns:
   modules as not assessed when those measurements are absent
 - Caevera branding throughout the interface and reports
 
-No LLM is used in v0.5. A later grounded language layer may explain these
-structured results, but it should not invent conclusions from raw signals.
+That release also used deterministic local analysis rather than an LLM.
+
+## v0.6 changes implemented
+
+- Replaced numeric hypothesis scores with explicit `supports`, `weakens`,
+  `unknown`, and `cannot-assess` evidence states.
+- Added a versioned source ledger containing seven primary RDE papers and one
+  NIST V&V guide, with DOI, applicability, finding, and limitation records.
+- Verified the bibliographic metadata against the publisher or issuing agency
+  and narrowed cause mappings so papers are not cited for claims they did not
+  study.
+- Added optional baseline relationships for controlled reruns. A linked rerun
+  affects a diagnosis only after Caevera verifies the same experiment and
+  operating point and exactly one changed CFD variable group.
+- Renamed the multi-case feature to case history. Every uploaded item remains
+  a case; unrelated cases remain comparisons only.
+- Reduced the visible case output to likely issue, recommended next run, and
+  why. Detailed evidence and citations stay in the traceable report.
+
+No LLM is used in v0.6.
 
 ## Code structure
 
@@ -81,7 +94,8 @@ structured results, but it should not invent conclusions from raw signals.
 - `lib/uncertainty.ts`: uncertainty combination and resolved-difference states
 - `lib/diagnostics.ts`: validity, metric assessments, hypotheses, and next-run
   plans
-- `lib/campaign-analysis.ts`: direct multi-case summaries and baseline deltas
+- `lib/case-history.ts`: related-case checks, direct deltas, and controlled-rerun evidence
+- `lib/diagnostic-knowledge.ts`: reviewed RDE source records and cause mappings
 - `lib/caevera-types.ts`: case and model-card schemas
 - `app/page.tsx`: interaction and presentation
 
@@ -124,7 +138,7 @@ npm test
 The numerical suite covers exact agreement, known timing/amplitude mismatch,
 data-quality failures, unit conversion, dropped-row provenance, three-probe
 mode recovery, uncertainty classification, structured diagnostics, blocked
-case matching, direct campaign deltas, and report content.
+case matching, controlled case-history evidence, source integrity, and report content.
 
 ## Scientific status
 
@@ -139,4 +153,5 @@ causal proof. Thermal, performance, species, optical, and whole-field
 comparisons remain outside this release.
 
 See [docs/methodology.md](docs/methodology.md) for equations, assumptions, and
-claim boundaries.
+claim boundaries, and [docs/diagnostic-sources.md](docs/diagnostic-sources.md)
+for the reviewed source ledger.

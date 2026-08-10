@@ -34,6 +34,6 @@ test("renders development preview metadata", async () => {
   assert.match(html, /CAEVERA/);
   assert.match(html, /No cases loaded/);
   assert.match(html, /Add first case/);
-  assert.match(html, /Load synthetic campaign/);
+  assert.match(html, /Load synthetic case history/);
   assert.doesNotMatch(html, /Synthetic baseline/);
 });

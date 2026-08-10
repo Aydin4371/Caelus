@@ -80,7 +80,7 @@ export type RdeModeResult = {
   alternativeDirection: "Clockwise" | "Counter-clockwise";
 };
 
-export const ANALYSIS_VERSION = "0.5.0";
+export const ANALYSIS_VERSION = "0.6.0";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
