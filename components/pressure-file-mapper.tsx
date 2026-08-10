@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useState } from "react";
 import {
   mapProbeTable,
   parseDelimitedTable,
@@ -30,13 +30,6 @@ export function PressureFileMapper({
   const [mapping, setMapping] = useState<ImportMapping | null>(null);
   const [mapped, setMapped] = useState<MappedProbeImport | null>(null);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!table) return;
-    setMapping((current) => current?.probes.length === expectedProbeCount ? current : suggestImportMapping(table, expectedProbeCount));
-    setMapped(null);
-    onMapped(null);
-  }, [expectedProbeCount, table, onMapped]);
 
   function invalidate(next: ImportMapping) {
     setMapping(next);
