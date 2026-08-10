@@ -1,0 +1,36 @@
+name: Import exact Caevera v1 source
+
+on:
+  push:
+    branches:
+      - agent/caevera-v1-completion
+
+permissions:
+  contents: write
+
+jobs:
+  import-source:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out review branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch preserved Sites source
+        env:
+          SOURCE_REPO: https://git.chatgpt-team.site/b48320f4-9b99-46f2-aeef-b2f82722d8a1/appgprj_6a6e1120a39c81919b4489f2ae71c501.git
+          SOURCE_SHA: 716e2a162f44e0a94de260b32ed22600f6728696
+        run: |
+          git fetch --no-tags --depth=1 "$SOURCE_REPO" "$SOURCE_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$SOURCE_SHA"
+          git read-tree --reset -u FETCH_HEAD
+          test "$(git write-tree)" = "$(git rev-parse FETCH_HEAD^{tree})"
+
+      - name: Commit exact source tree
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Complete Caevera pressure and wave v1"
+          git push origin HEAD:"$GITHUB_REF_NAME"
