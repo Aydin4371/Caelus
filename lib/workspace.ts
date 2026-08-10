@@ -98,7 +98,8 @@ function validateCase(value: unknown, index: number): asserts value is AnalysisC
   if (!Array.isArray(value.testSignals) || !Array.isArray(value.cfdSignals) || value.testSignals.length < 3 || value.testSignals.length !== value.cfdSignals.length) {
     throw new Error(`Case ${index + 1} does not contain matched experiment and CFD probe arrays.`);
   }
-  if (value.metadata.probePositionsDeg.length !== value.testSignals.length) throw new Error(`Case ${index + 1} probe angles do not match its pressure arrays.`);
+  const probePositions = value.metadata.probePositionsDeg;
+  if (!Array.isArray(probePositions) || probePositions.length !== value.testSignals.length) throw new Error(`Case ${index + 1} probe angles do not match its pressure arrays.`);
   value.testSignals.forEach((signal, probe) => validateSignal(signal, `Case ${index + 1} experiment P${probe + 1}`));
   value.cfdSignals.forEach((signal, probe) => validateSignal(signal, `Case ${index + 1} CFD P${probe + 1}`));
   if (value.source !== "uploaded" && value.source !== "demo") throw new Error(`Case ${index + 1} has an invalid source type.`);
