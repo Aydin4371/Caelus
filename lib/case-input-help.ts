@@ -24,7 +24,7 @@ export type CaseInputHelpGroup = {
 
 type InputHelpDetails = Omit<CaseInputHelpGroup["items"][number], "key" | "label" | "definition">;
 
-const CASE_INPUT_HELP_BASE = [
+const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: Array<Pick<CaseInputHelpGroup["items"][number], "key" | "label" | "definition">> }> = [
   {
     title: "Case and geometry",
     description: "Identifies the comparison and locates the synchronized pressure probes around the annulus.",
