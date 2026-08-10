@@ -48,15 +48,65 @@ function validateSignal(value: unknown, label: string) {
   }
 }
 
+const REQUIRED_POSITIVE_METADATA = [
+  "annulusMeanDiameterMm", "experimentSensorBandwidthKHz", "experimentFilterCutoffKHz",
+  "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS",
+  "spatialOrder", "temporalOrder", "cfl", "chemistrySpecies", "chemistryReactions",
+  "meshCells", "minimumCellSizeMm", "cellsPerInductionLength", "nearWallCellSizeMm", "timeStepUs",
+] as const;
+
+const REQUIRED_NONNEGATIVE_METADATA = [
+  "annulusDiameterUncertaintyMm", "pressureUncertaintyPct", "timingUncertaintyUs",
+  "cfdPressureUncertaintyPct", "cfdTimingUncertaintyUs",
+] as const;
+
+const REQUIRED_TEXT_METADATA = [
+  "name", "solver", "solverVersion", "spatialScheme", "numericalFlux", "limiterFilter",
+  "temporalScheme", "turbulenceModel", "combustionModel", "chemistryModel",
+  "chemistryIntegrator", "wallBoundaryCondition", "inletBoundaryCondition",
+  "outletBoundaryCondition", "initializationMethod",
+] as const;
+
+function validateMetadata(metadata: Record<string, unknown>, label: string) {
+  for (const key of REQUIRED_POSITIVE_METADATA) {
+    const value = metadata[key];
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new Error(`${label} has an invalid ${key} value.`);
+  }
+  for (const key of REQUIRED_NONNEGATIVE_METADATA) {
+    const value = metadata[key];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(`${label} has an invalid ${key} value.`);
+  }
+  for (const key of REQUIRED_TEXT_METADATA) {
+    if (typeof metadata[key] !== "string" || !metadata[key].trim()) throw new Error(`${label} is missing ${key}.`);
+  }
+  if (metadata.dimensionality !== "2D" && metadata.dimensionality !== "3D") throw new Error(`${label} has an invalid dimensionality.`);
+  if (typeof metadata.maximumWaveCount !== "number" || !Number.isInteger(metadata.maximumWaveCount) || metadata.maximumWaveCount < 1 || metadata.maximumWaveCount > 12) throw new Error(`${label} has an invalid maximum wave count.`);
+  if (typeof metadata.probeSynchronizationConfirmed !== "boolean" || typeof metadata.comparisonMatchConfirmed !== "boolean") throw new Error(`${label} is missing confirmation states.`);
+  if (!Array.isArray(metadata.probePositionsDeg) || metadata.probePositionsDeg.length < 3 || metadata.probePositionsDeg.some((value) => typeof value !== "number" || !Number.isFinite(value))) throw new Error(`${label} has invalid probe angles.`);
+  const normalized = metadata.probePositionsDeg.map((value) => (((value as number) % 360) + 360) % 360);
+  if (new Set(normalized.map((value) => value.toFixed(6))).size !== normalized.length) throw new Error(`${label} has duplicate probe angles.`);
+}
+
+function validateImportProvenance(value: unknown, probeCount: number, label: string) {
+  if (!isObject(value) || typeof value.fileName !== "string" || typeof value.timeColumn !== "string" || !Array.isArray(value.pressureColumns)) throw new Error(`${label} import provenance is malformed.`);
+  if (value.pressureColumns.length !== probeCount) throw new Error(`${label} import mapping does not match the saved probe count.`);
+}
+
 function validateCase(value: unknown, index: number): asserts value is AnalysisCase {
   if (!isObject(value) || typeof value.id !== "string" || !isObject(value.metadata)) throw new Error(`Case ${index + 1} is malformed.`);
-  if (typeof value.metadata.name !== "string" || !Array.isArray(value.metadata.probePositionsDeg)) throw new Error(`Case ${index + 1} has invalid metadata.`);
+  validateMetadata(value.metadata, `Case ${index + 1}`);
   if (!Array.isArray(value.testSignals) || !Array.isArray(value.cfdSignals) || value.testSignals.length < 3 || value.testSignals.length !== value.cfdSignals.length) {
     throw new Error(`Case ${index + 1} does not contain matched experiment and CFD probe arrays.`);
   }
   if (value.metadata.probePositionsDeg.length !== value.testSignals.length) throw new Error(`Case ${index + 1} probe angles do not match its pressure arrays.`);
   value.testSignals.forEach((signal, probe) => validateSignal(signal, `Case ${index + 1} experiment P${probe + 1}`));
   value.cfdSignals.forEach((signal, probe) => validateSignal(signal, `Case ${index + 1} CFD P${probe + 1}`));
+  if (value.source !== "uploaded" && value.source !== "demo") throw new Error(`Case ${index + 1} has an invalid source type.`);
+  if (value.imports != null) {
+    if (!isObject(value.imports)) throw new Error(`Case ${index + 1} import provenance is malformed.`);
+    validateImportProvenance(value.imports.experiment, value.testSignals.length, `Case ${index + 1} experiment`);
+    validateImportProvenance(value.imports.cfd, value.cfdSignals.length, `Case ${index + 1} CFD`);
+  }
 }
 
 export function serializeWorkspace(state: WorkspaceState) {
