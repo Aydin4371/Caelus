@@ -10,6 +10,10 @@ The application starts as an empty case workspace and accepts multiple
 operating points. It does not run CFD. Uploaded data and deterministic analysis
 remain in the browser session.
 
+The header Help guide defines every case-loader input. Pressure, spectrum, and
+residual graphs remain absent until a case has been parsed and analyzed; their
+traces are calculated from the active case rather than embedded examples.
+
 The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
