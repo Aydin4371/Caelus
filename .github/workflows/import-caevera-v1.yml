@@ -4,18 +4,28 @@ on:
   push:
     branches:
       - agent/caevera-v1-completion
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   import-source:
-    if: github.actor != 'github-actions[bot]'
+    if: >-
+      github.actor == 'Aydin4371' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/caevera-v1-completion'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
-      - name: Check out review branch
+      - name: Check out exact review branch
         uses: actions/checkout@v4
         with:
+          ref: agent/caevera-v1-completion
           fetch-depth: 1
 
       - name: Fetch preserved Sites source
@@ -33,4 +43,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Complete Caevera pressure and wave v1"
-          git push origin HEAD:"$GITHUB_REF_NAME"
+          git push origin HEAD:agent/caevera-v1-completion
