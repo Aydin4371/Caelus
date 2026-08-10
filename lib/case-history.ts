@@ -1,7 +1,8 @@
 import type { AnalysisCase, CaseMetadata, SensitivityVariable } from "./caevera-types.ts";
 import { buildCaseAssessment, type CaseAssessment, type MetricAssessment } from "./diagnostics.ts";
 import type { DiagnosticCauseId } from "./diagnostic-knowledge.ts";
-import { analyzeRdeProbeSet, compareSignals, type RdeModeResult, type Signal } from "./rde-analysis.ts";
+import { compareProbeSets, analyzeRdeProbeSet, type RdeModeResult } from "./wave-dynamics.ts";
+import type { Signal } from "./rde-analysis.ts";
 
 export type CaseSummary = {
   item: AnalysisCase;
@@ -63,15 +64,16 @@ function changedGroups(baseline: CaseMetadata, candidate: CaseMetadata) {
 }
 
 function samePhysicalCase(baseline: AnalysisCase, candidate: AnalysisCase) {
-  const keys: (keyof CaseMetadata)[] = ["annulusMeanDiameterMm", "probePositionsDeg", "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS"];
+  const keys: (keyof CaseMetadata)[] = ["annulusMeanDiameterMm", "annulusDiameterUncertaintyMm", "probePositionsDeg", "maximumWaveCount", "probeSynchronizationConfirmed", "experimentSensorBandwidthKHz", "experimentFilterCutoffKHz", "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS"];
   return keys.every((key) => valueEqual(baseline.metadata[key], candidate.metadata[key]))
     && signalFingerprint(baseline.testSignals) === signalFingerprint(candidate.testSignals);
 }
 
 export function summarizeCase(item: AnalysisCase): CaseSummary {
-  const comparisons = item.testSignals.map((signal, index) => compareSignals(signal, item.cfdSignals[index]));
-  const experiment = analyzeRdeProbeSet(item.testSignals, item.metadata.probePositionsDeg, item.metadata.annulusMeanDiameterMm);
-  const simulation = analyzeRdeProbeSet(item.cfdSignals, item.metadata.probePositionsDeg, item.metadata.annulusMeanDiameterMm);
+  const comparisons = compareProbeSets(item.testSignals, item.cfdSignals).comparisons;
+  const modeOptions = { maximumWaveCount: item.metadata.maximumWaveCount, synchronizationConfirmed: item.metadata.probeSynchronizationConfirmed };
+  const experiment = analyzeRdeProbeSet(item.testSignals, item.metadata.probePositionsDeg, item.metadata.annulusMeanDiameterMm, { ...modeOptions, sensorBandwidthKHz: item.metadata.experimentSensorBandwidthKHz, filterCutoffKHz: item.metadata.experimentFilterCutoffKHz });
+  const simulation = analyzeRdeProbeSet(item.cfdSignals, item.metadata.probePositionsDeg, item.metadata.annulusMeanDiameterMm, modeOptions);
   const assessment = buildCaseAssessment(item.metadata, comparisons, experiment, simulation);
   return { item, experiment, simulation, assessment, metrics: Object.fromEntries(assessment.metrics.map((result) => [result.id, result])) };
 }

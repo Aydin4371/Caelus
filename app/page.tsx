@@ -14,16 +14,16 @@ import {
 import { buildCaseAssessment, type MetricAssessment } from "@/lib/diagnostics";
 import { KNOWLEDGE_BASE_VERSION, sourcesFor } from "@/lib/diagnostic-knowledge";
 import { CASE_INPUT_HELP } from "@/lib/case-input-help";
+import { WAVE_METHOD_SOURCES } from "@/lib/wave-method-sources";
 import {
   ANALYSIS_VERSION,
   REVIEW_THRESHOLDS,
-  analyzeRdeProbeSet,
-  compareSignals,
   makeDemoProbeSignals,
   parseProbeCsv,
   type Comparison,
   type Signal,
 } from "@/lib/rde-analysis";
+import { analyzeRdeProbeSet, compareProbeSets, type RdeModeResult } from "@/lib/wave-dynamics";
 
 const TEST_COLOR = "#2588a2";
 const CFD_COLOR = "#6679bd";
@@ -45,7 +45,7 @@ function metricDigits(metric: MetricAssessment) {
   if (metric.id === "speed") return 0;
   if (metric.id === "rise-time") return 1;
   if (metric.id === "harmonics") return 3;
-  if (metric.id === "cycle-variability") return 1;
+  if (["cycle-variability", "phase-pattern", "frequency-drift", "phase-jitter"].includes(metric.id)) return 1;
   return 0;
 }
 
@@ -149,6 +149,57 @@ function ResidualChart({ comparison }: { comparison: Comparison }) {
   </div>;
 }
 
+function PhaseChart({ experiment, simulation, positionsDeg }: { experiment: RdeModeResult; simulation: RdeModeResult; positionsDeg: number[] }) {
+  const left = 60; const top = 12; const width = 700; const height = 232;
+  const order = positionsDeg.map((position, index) => ({ position: ((position % 360) + 360) % 360, index })).sort((a, b) => a.position - b.position);
+  const points = (values: number[]) => positionsDeg.map((position, index) => {
+    const ordered = order[index];
+    const x = left + ordered.position / 360 * width;
+    const y = top + height - (values[ordered.index] + 180) / 360 * height;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+  return <div className="chart" role="img" aria-label="Circumferential phase pattern at the dominant passage frequency">
+    <svg viewBox="0 0 790 286">
+      <PlotGrid left={left} top={top} width={width} height={height} />
+      <line x1={left} y1={top + height / 2} x2={left + width} y2={top + height / 2} className="zero-line" />
+      <polyline points={points(simulation.probePhasesDeg)} fill="none" stroke={CFD_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <polyline points={points(experiment.probePhasesDeg)} fill="none" stroke={TEST_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      {positionsDeg.map((position, index) => <g key={index}><circle cx={left + (((position % 360) + 360) % 360) / 360 * width} cy={top + height - (experiment.probePhasesDeg[index] + 180) / 360 * height} r="4" fill={TEST_COLOR} /><circle cx={left + (((position % 360) + 360) % 360) / 360 * width} cy={top + height - (simulation.probePhasesDeg[index] + 180) / 360 * height} r="4" fill={CFD_COLOR} /></g>)}
+      <text x="18" y={top + 4} className="axis-value">+180</text><text x="32" y={top + height / 2 + 4} className="axis-value">0</text><text x="20" y={top + height + 4} className="axis-value">−180</text>
+      <text x={left} y="276" className="axis-value">0°</text><text x={left + width / 2} y="276" textAnchor="middle" className="axis-value">180°</text><text x={left + width} y="276" textAnchor="end" className="axis-value">360°</text>
+      <text x="15" y="132" transform="rotate(-90 15 132)" textAnchor="middle" className="axis-title">RELATIVE PHASE (deg)</text>
+    </svg>
+  </div>;
+}
+
+function CycleChart({ experiment, simulation }: { experiment: RdeModeResult; simulation: RdeModeResult }) {
+  const all = [...experiment.cycleSeries, ...simulation.cycleSeries];
+  const start = Math.min(...all.map((point) => point.timeMs));
+  const end = Math.max(...all.map((point) => point.timeMs));
+  const render = (key: "frequencyKHz" | "peakPressureMpa", label: string, digits: number) => {
+    const left = 60; const top = 10; const width = 700; const height = 118;
+    const minimum = Math.min(...all.map((point) => point[key]));
+    const maximum = Math.max(...all.map((point) => point[key]));
+    const points = (mode: RdeModeResult) => mode.cycleSeries.map((point) => {
+      const x = left + (point.timeMs - start) / Math.max(end - start, 1e-12) * width;
+      const y = top + height - (point[key] - minimum) / Math.max(maximum - minimum, 1e-12) * height;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join(" ");
+    return <svg key={key} viewBox="0 0 790 164" aria-label={label}>
+      <PlotGrid left={left} top={top} width={width} height={height} />
+      <polyline points={points(simulation)} fill="none" stroke={CFD_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <polyline points={points(experiment)} fill="none" stroke={TEST_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <text x="7" y={top + 4} className="axis-value">{maximum.toFixed(digits)}</text><text x="7" y={top + height + 4} className="axis-value">{minimum.toFixed(digits)}</text>
+      <text x={left} y="155" className="axis-value">{start.toFixed(2)}</text><text x={left + width} y="155" textAnchor="end" className="axis-value">{end.toFixed(2)} ms</text>
+      <text x="15" y="69" transform="rotate(-90 15 69)" textAnchor="middle" className="axis-title">{label}</text>
+    </svg>;
+  };
+  return <div className="chart cycle-chart-stack" role="img" aria-label="Cycle-by-cycle passage frequency and peak pressure">
+    {render("frequencyKHz", "FREQUENCY (kHz)", 2)}
+    {render("peakPressureMpa", "PEAK PRESSURE (MPa)", 2)}
+  </div>;
+}
+
 function Legend({ residual = false }: { residual?: boolean }) {
   return <div className="legend" aria-label="Chart legend">{residual
     ? <span><i className="legend-residual" />Experiment − CFD</span>
@@ -168,14 +219,15 @@ export default function Home() {
   const [showLoader, setShowLoader] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [error, setError] = useState("");
-  const [activeView, setActiveView] = useState<"signals" | "spectrum" | "residual">("signals");
+  const [activeView, setActiveView] = useState<"signals" | "spectrum" | "residual" | "phase" | "cycles">("signals");
   const [activeProbe, setActiveProbe] = useState(0);
   const [workspaceView, setWorkspaceView] = useState<"case" | "compare">("case");
 
   const activeCase = cases.find((item) => item.id === activeCaseId) ?? null;
-  const comparisons = useMemo(() => activeCase ? activeCase.testSignals.map((signal, index) => compareSignals(signal, activeCase.cfdSignals[index])) : [], [activeCase]);
-  const testMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.testSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm) : null, [activeCase]);
-  const cfdMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.cfdSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm) : null, [activeCase]);
+  const probeSetComparison = useMemo(() => activeCase ? compareProbeSets(activeCase.testSignals, activeCase.cfdSignals) : null, [activeCase]);
+  const comparisons = useMemo(() => probeSetComparison?.comparisons ?? [], [probeSetComparison]);
+  const testMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.testSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: activeCase.metadata.maximumWaveCount, synchronizationConfirmed: activeCase.metadata.probeSynchronizationConfirmed, sensorBandwidthKHz: activeCase.metadata.experimentSensorBandwidthKHz, filterCutoffKHz: activeCase.metadata.experimentFilterCutoffKHz }) : null, [activeCase]);
+  const cfdMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.cfdSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: activeCase.metadata.maximumWaveCount, synchronizationConfirmed: activeCase.metadata.probeSynchronizationConfirmed }) : null, [activeCase]);
   const caseHistoryEvidence = useMemo(() => activeCase ? buildCaseHistoryEvidence(cases, activeCase.id) : [], [cases, activeCase]);
   const assessment = useMemo(() => activeCase && testMode && cfdMode ? buildCaseAssessment(activeCase.metadata, comparisons, testMode, cfdMode, caseHistoryEvidence) : null, [activeCase, comparisons, testMode, cfdMode, caseHistoryEvidence]);
   const activeComparison = comparisons[activeProbe];
@@ -187,8 +239,9 @@ export default function Home() {
   const baselineSummary = caseSummaries.find((summary) => summary.item.id === caseBaselineId) ?? caseSummaries[0] ?? null;
 
   const inputRows = activeCase ? [
-    ["Geometry + probes", `${activeCase.metadata.annulusMeanDiameterMm.toFixed(1)} mm mean diameter · ${activeCase.metadata.probePositionsDeg.map((angle, index) => `P${index + 1} ${angle}°`).join(" · ")}`],
+    ["Geometry + probes", `${activeCase.metadata.annulusMeanDiameterMm.toFixed(1)} mm mean diameter · ${activeCase.metadata.probePositionsDeg.length} probes · modes 1–${activeCase.metadata.maximumWaveCount}`],
     ["Pressure evidence", `${activeCase.testSignals.length} experiment + ${activeCase.cfdSignals.length} CFD traces · ${activeCase.testSignals[0].time.length.toLocaleString()} samples each`],
+    ["Measurement chain", `${activeCase.metadata.experimentSensorBandwidthKHz.toFixed(1)} kHz sensor bandwidth · ${activeCase.metadata.experimentFilterCutoffKHz.toFixed(1)} kHz filter cutoff · synchronized probes`],
     ["Operating point", `${activeCase.metadata.inletPressureBar.toFixed(1)} bar · ${activeCase.metadata.inletTemperatureK.toFixed(0)} K · φ ${activeCase.metadata.equivalenceRatio.toFixed(2)} · ${activeCase.metadata.massFlowKgS.toFixed(2)} kg/s`],
     ["Solver + discretization", `${activeCase.metadata.solver} ${activeCase.metadata.solverVersion} · ${activeCase.metadata.dimensionality} · ${activeCase.metadata.spatialScheme} O${activeCase.metadata.spatialOrder} · ${activeCase.metadata.numericalFlux}`],
     ["Time integration", `${activeCase.metadata.temporalScheme} O${activeCase.metadata.temporalOrder} · ${activeCase.metadata.timeStepUs.toFixed(3)} µs · CFL ${activeCase.metadata.cfl.toFixed(2)}`],
@@ -236,23 +289,26 @@ export default function Home() {
   function applyCase() {
     if (!draft.name.trim()) return setError("Give this operating point a name.");
     if (!draft.comparisonMatchConfirmed) return setError("Confirm that experiment and CFD use the same geometry, operating point, probe locations, and comparison window.");
+    if (!draft.probeSynchronizationConfirmed) return setError("Confirm that every probe in each file uses one synchronized time base.");
     if (!Number.isFinite(draft.annulusMeanDiameterMm) || draft.annulusMeanDiameterMm <= 0) return setError("Enter a positive annulus mean diameter.");
-    if (draft.probePositionsDeg.length !== 3 || draft.probePositionsDeg.some((value) => !Number.isFinite(value))) return setError("Enter three valid probe angles.");
-    const positive = [draft.inletPressureBar, draft.inletTemperatureK, draft.equivalenceRatio, draft.massFlowKgS, draft.spatialOrder, draft.temporalOrder, draft.cfl, draft.meshCells, draft.minimumCellSizeMm, draft.cellsPerInductionLength, draft.nearWallCellSizeMm, draft.timeStepUs, draft.chemistrySpecies, draft.chemistryReactions];
+    if (draft.probePositionsDeg.length < 3 || draft.probePositionsDeg.some((value) => !Number.isFinite(value))) return setError("Enter at least three valid probe angles.");
+    if (!Number.isInteger(draft.maximumWaveCount) || draft.maximumWaveCount < 1 || draft.maximumWaveCount > 12) return setError("Maximum expected wave count must be an integer from 1 to 12.");
+    const positive = [draft.experimentSensorBandwidthKHz, draft.experimentFilterCutoffKHz, draft.inletPressureBar, draft.inletTemperatureK, draft.equivalenceRatio, draft.massFlowKgS, draft.spatialOrder, draft.temporalOrder, draft.cfl, draft.meshCells, draft.minimumCellSizeMm, draft.cellsPerInductionLength, draft.nearWallCellSizeMm, draft.timeStepUs, draft.chemistrySpecies, draft.chemistryReactions];
     if (positive.some((value) => !Number.isFinite(value) || value <= 0)) return setError("Complete every required operating-condition, resolution, chemistry, and numerical field with a positive value.");
-    const uncertainties = [draft.pressureUncertaintyPct, draft.timingUncertaintyUs, draft.cfdPressureUncertaintyPct, draft.cfdTimingUncertaintyUs];
+    const uncertainties = [draft.annulusDiameterUncertaintyMm, draft.pressureUncertaintyPct, draft.timingUncertaintyUs, draft.cfdPressureUncertaintyPct, draft.cfdTimingUncertaintyUs];
     if (uncertainties.some((value) => !Number.isFinite(value) || value < 0)) return setError("Enter non-negative experiment and CFD uncertainty values.");
     const textFields = [draft.solver, draft.solverVersion, draft.dimensionality, draft.spatialScheme, draft.numericalFlux, draft.limiterFilter, draft.temporalScheme, draft.turbulenceModel, draft.combustionModel, draft.chemistryModel, draft.chemistryIntegrator, draft.wallBoundaryCondition, draft.inletBoundaryCondition, draft.outletBoundaryCondition, draft.initializationMethod];
     if (textFields.some((value) => !value.trim())) return setError("Complete every required CFD model-card field. Enter “None” where a limiter, turbulence model, or combustion model is not used.");
-    if ((testPending && !cfdPending) || (!testPending && cfdPending)) return setError("Choose both the experimental and CFD three-probe files.");
+    if ((testPending && !cfdPending) || (!testPending && cfdPending)) return setError("Choose both the experimental and CFD multi-probe files.");
     try {
       const editingCase = cases.find((item) => item.id === editingCaseId) ?? null;
       const nextTest = testPending ?? editingCase?.testSignals;
       const nextCfd = cfdPending ?? editingCase?.cfdSignals;
-      if (!nextTest || !nextCfd) return setError("Choose both the experimental and CFD three-probe files.");
-      nextTest.forEach((signal, index) => compareSignals(signal, nextCfd[index]));
-      analyzeRdeProbeSet(nextTest, draft.probePositionsDeg, draft.annulusMeanDiameterMm);
-      analyzeRdeProbeSet(nextCfd, draft.probePositionsDeg, draft.annulusMeanDiameterMm);
+      if (!nextTest || !nextCfd) return setError("Choose both the experimental and CFD multi-probe files.");
+      if (nextTest.length !== draft.probePositionsDeg.length || nextCfd.length !== draft.probePositionsDeg.length) return setError(`The files contain ${nextTest.length} experiment and ${nextCfd.length} CFD probes, but ${draft.probePositionsDeg.length} probe angles were entered.`);
+      compareProbeSets(nextTest, nextCfd);
+      analyzeRdeProbeSet(nextTest, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed, sensorBandwidthKHz: draft.experimentSensorBandwidthKHz, filterCutoffKHz: draft.experimentFilterCutoffKHz });
+      analyzeRdeProbeSet(nextCfd, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed });
       const id = editingCaseId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       if (draftRelationship?.baselineCaseId === id) return setError("A case cannot be its own baseline.");
       const nextCase: AnalysisCase = { id, source: editingCase?.source ?? "uploaded", relationship: draftRelationship, metadata: cloneMetadata(draft), testSignals: nextTest, cfdSignals: nextCfd };
@@ -271,7 +327,12 @@ export default function Home() {
     const baseMetadata: CaseMetadata = {
         name: "Synthetic baseline",
         annulusMeanDiameterMm: 82,
+        annulusDiameterUncertaintyMm: 0.1,
         probePositionsDeg: [...demo.positionsDeg],
+        maximumWaveCount: 4,
+        probeSynchronizationConfirmed: true,
+        experimentSensorBandwidthKHz: 100,
+        experimentFilterCutoffKHz: 80,
         inletPressureBar: 8,
         inletTemperatureK: 300,
         equivalenceRatio: 1,
@@ -333,9 +394,10 @@ export default function Home() {
 
   function downloadExample() {
     const demo = makeDemoProbeSignals();
-    const rows = ["time_ms,p1_MPa,p2_MPa,p3_MPa", ...demo.test[0].time.slice(0, 800).map((time, index) => [time, ...demo.test.map((signal) => signal.pressure[index])].map((value) => value.toFixed(6)).join(","))];
+    const header = ["time_ms", ...demo.test.map((_, index) => `p${index + 1}_MPa`)].join(",");
+    const rows = [header, ...demo.test[0].time.slice(0, 800).map((time, index) => [time, ...demo.test.map((signal) => signal.pressure[index])].map((value) => value.toFixed(6)).join(","))];
     const url = URL.createObjectURL(new Blob([rows.join("\n")], { type: "text/csv" }));
-    const link = document.createElement("a"); link.href = url; link.download = "caevera-three-probe-example.csv"; link.click(); URL.revokeObjectURL(url);
+    const link = document.createElement("a"); link.href = url; link.download = "caevera-multi-probe-example.csv"; link.click(); URL.revokeObjectURL(url);
   }
 
   function downloadReport() {
@@ -346,11 +408,12 @@ export default function Home() {
       knowledgeBaseVersion: KNOWLEDGE_BASE_VERSION,
       generatedAt: new Date().toISOString(),
       inputs: { metadata: activeCase.metadata, relationship: activeCase.relationship ?? null, experimentalSources: activeCase.testSignals.map((signal) => signal.name), cfdSources: activeCase.cfdSignals.map((signal) => signal.name), units: { time: "ms", pressure: "MPa", frequency: "kHz", waveSpeed: "m/s" } },
-      outputs: { experimentMode: testMode, cfdMode, validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, controlledNextRun: assessment.nextRun, caseHistoryEvidence, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias } },
+      outputs: { experimentMode: testMode, cfdMode, validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, controlledNextRun: assessment.nextRun, caseHistoryEvidence, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias, sharedAlignmentLagUs: probeSetComparison?.sharedLagUs, individualLagUs: probeSetComparison?.individualLagUs, alignmentSpreadUs: probeSetComparison?.alignmentSpreadUs } },
       citedSources: sourcesFor([...new Set(assessment.hypotheses.flatMap((hypothesis) => hypothesis.sourceIds))]),
+      methodSources: WAVE_METHOD_SOURCES,
       perProbe: comparisons,
-      methods: ["bounded cross-correlation", "windowed pressure spectrum", "cycle detection", "uncertainty resolution by RSS", "circumferential phase fit", "structured diagnostic rules"],
-      limitations: ["Hypotheses prioritize controlled sensitivity runs; they do not prove causality.", "Pressure and timing uncertainty are propagated only into supported scalar outputs.", "Mode inference assumes synchronized probes and one dominant rotating mode.", "Thermal, performance, combustion, and flowfield agreement are not assessed without those measurements."],
+      methods: ["shared bounded cross-correlation", "Hann-windowed FFT pressure spectrum", "cycle-by-cycle passage tracking", "sliding-window circumferential phase-mode fit", "uncertainty resolution by RSS", "structured diagnostic rules"],
+      limitations: ["Hypotheses prioritize controlled sensitivity runs; they do not prove causality.", "Pressure and timing uncertainty are propagated only into supported scalar outputs.", "Mode inference assumes synchronized probes and one dominant rotating mode; ambiguous and simultaneous modes are reported as not identifiable.", "Thermal, performance, combustion, and flowfield agreement are outside this pressure-and-wave product scope."],
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
     const link = document.createElement("a"); link.href = url; link.download = "caevera-rde-case-report.json"; link.click(); URL.revokeObjectURL(url);
@@ -360,7 +423,7 @@ export default function Home() {
   const updateText = (key: keyof CaseMetadata, value: string) => setDraft((current) => ({ ...current, [key]: value }));
   const numberValue = (value: number) => Number.isFinite(value) ? value : "";
 
-  function returnToHome() {
+  function returnToEmptyWorkspace() {
     setCases([]);
     setActiveCaseId(null);
     setCaseBaselineId(null);
@@ -372,8 +435,8 @@ export default function Home() {
     setShowLoader(false);
     setShowHelp(false);
     setError("");
-    setActiveView("signals");
     setActiveProbe(0);
+    setActiveView("signals");
     setWorkspaceView("case");
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
     requestAnimationFrame(() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -381,7 +444,7 @@ export default function Home() {
 
   return <main className="app-shell">
     <header className="product-header">
-      <a className="brand" href="#top" aria-label="Return to empty home workspace" onClick={(event) => { event.preventDefault(); returnToHome(); }}><span className="brand-mark">C</span><span><strong>CAEVERA</strong><small>BY CAELUS</small></span></a>
+      <a className="brand" href="#top" aria-label="Return to empty home workspace" onClick={(event) => { event.preventDefault(); returnToEmptyWorkspace(); }}><span className="brand-mark">C</span><span><strong>CAEVERA</strong><small>BY CAELUS</small></span></a>
       <p>RDE simulation-to-test intelligence</p>
       <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Add case</button></div>
     </header>
@@ -473,7 +536,7 @@ export default function Home() {
 
           </>}
 
-          <section className="evidence-panel" aria-label="Calculated signal evidence"><div className="evidence-heading"><div><span className="calculated-label">CALCULATED AFTER CASE ANALYSIS</span><h2>Signal evidence</h2><p>Pressure, frequency content, and residual calculated from the active experiment and CFD traces.</p></div><div className="control-group"><div className="probe-tabs" aria-label="Probe selection">{[0, 1, 2].map((probe) => <button key={probe} className={activeProbe === probe ? "active" : ""} onClick={() => setActiveProbe(probe)}>P{probe + 1}</button>)}</div><div className="view-tabs" aria-label="Evidence view"><button className={activeView === "signals" ? "active" : ""} onClick={() => setActiveView("signals")}>Pressure</button><button className={activeView === "spectrum" ? "active" : ""} onClick={() => setActiveView("spectrum")}>Frequency</button><button className={activeView === "residual" ? "active" : ""} onClick={() => setActiveView("residual")}>Residual</button></div></div></div><div className="chart-heading"><span>Probe P{activeProbe + 1} · {activeCase.metadata.probePositionsDeg[activeProbe]}° · {activeComparison.time.length.toLocaleString()} aligned samples</span><Legend residual={activeView === "residual"} /></div>{activeView === "signals" && <SignalChart comparison={activeComparison} />}{activeView === "spectrum" && <SpectrumChart comparison={activeComparison} />}{activeView === "residual" && <ResidualChart comparison={activeComparison} />}</section>
+          <section className="evidence-panel" aria-label="Calculated signal evidence"><div className="evidence-heading"><div><span className="calculated-label">CALCULATED AFTER CASE ANALYSIS</span><h2>Pressure and wave evidence</h2><p>Every trace, spectrum, propagation phase, and cycle statistic is calculated from the active case.</p></div><div className="control-group"><div className="probe-tabs" aria-label="Probe selection">{activeCase.testSignals.map((_, probe) => <button key={probe} className={activeProbe === probe ? "active" : ""} onClick={() => setActiveProbe(probe)}>P{probe + 1}</button>)}</div><div className="view-tabs" aria-label="Evidence view"><button className={activeView === "signals" ? "active" : ""} onClick={() => setActiveView("signals")}>Pressure</button><button className={activeView === "spectrum" ? "active" : ""} onClick={() => setActiveView("spectrum")}>Spectrum</button><button className={activeView === "residual" ? "active" : ""} onClick={() => setActiveView("residual")}>Residual</button><button className={activeView === "phase" ? "active" : ""} onClick={() => setActiveView("phase")}>Propagation</button><button className={activeView === "cycles" ? "active" : ""} onClick={() => setActiveView("cycles")}>Cycle stability</button></div></div></div><div className="chart-heading"><span>{activeView === "phase" ? `${activeCase.testSignals.length} probes · ${testMode.identifiability.toLowerCase()} experimental mode` : activeView === "cycles" ? `${testMode.cycleSeries.length} experiment cycles · ${cfdMode.cycleSeries.length} CFD cycles` : `Probe P${activeProbe + 1} · ${activeCase.metadata.probePositionsDeg[activeProbe]}° · ${activeComparison.time.length.toLocaleString()} aligned samples`}</span><Legend residual={activeView === "residual"} /></div>{activeView === "signals" && <SignalChart comparison={activeComparison} />}{activeView === "spectrum" && <SpectrumChart comparison={activeComparison} />}{activeView === "residual" && <ResidualChart comparison={activeComparison} />}{activeView === "phase" && <PhaseChart experiment={testMode} simulation={cfdMode} positionsDeg={activeCase.metadata.probePositionsDeg} />}{activeView === "cycles" && <CycleChart experiment={testMode} simulation={cfdMode} />}<div className="wave-summary"><span><b>{probeSetComparison?.sharedLagUs.toFixed(2)} µs</b> shared experiment–CFD alignment</span><span><b>{testMode.waveCount}-wave {testMode.direction.toLowerCase()}</b> experiment · {testMode.identifiability}</span><span><b>{cfdMode.waveCount}-wave {cfdMode.direction.toLowerCase()}</b> CFD · {cfdMode.identifiability}</span><span><b>{testMode.phaseJitterDeg.toFixed(1)}° / {cfdMode.phaseJitterDeg.toFixed(1)}°</b> phase jitter</span></div>{[...testMode.warnings, ...cfdMode.warnings].length > 0 && <ul className="wave-warnings">{[...new Set([...testMode.warnings, ...cfdMode.warnings])].map((warning) => <li key={warning}>{warning}</li>)}</ul>}</section>
           <footer><span>Caevera v{ANALYSIS_VERSION} · deterministic analysis</span><span>{cases.length} case{cases.length === 1 ? "" : "s"} in this browser session · not certification evidence</span></footer>
         </>}
       </>}
@@ -482,11 +545,11 @@ export default function Home() {
     {showLoader && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowLoader(false)}><section className="loader-modal" role="dialog" aria-modal="true" aria-labelledby="loader-title" onMouseDown={(event) => event.stopPropagation()}>
       <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close case loader">×</button><div className="loader-intro"><div><span className="modal-kicker">RDE CASE INPUTS</span><h2 id="loader-title">{editingCaseId ? "Edit operating point" : "Add operating point"}</h2></div><button className="input-help-button" onClick={() => setShowHelp(true)}>What does each input mean?</button></div><p>Required fields feed a calculation, validity check, uncertainty assessment, or diagnostic rule. Optional convergence results strengthen the recommendation when available.</p>
 
-      <div className="form-section"><h3>Case + geometry</h3><div className="form-grid three"><label><span>Case name</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label><label><span>Mean diameter (mm)</span><input type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label><label><span>Probe angles (deg)</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input key={index} type="number" aria-label={`Probe ${index + 1} angle`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}</div></label></div><label className="confirmation-check"><input type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label></div>
+      <div className="form-section"><h3>Case + geometry</h3><div className="form-grid four"><label><span>Case name</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label><label><span>Mean diameter (mm)</span><input type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label><label><span>Diameter uncertainty (mm)</span><input type="number" step="0.01" value={numberValue(draft.annulusDiameterUncertaintyMm)} onChange={(event) => updateNumber("annulusDiameterUncertaintyMm", event.target.value)} /></label><label><span>Maximum expected waves</span><input type="number" min="1" max="12" value={numberValue(draft.maximumWaveCount)} onChange={(event) => updateNumber("maximumWaveCount", event.target.value)} /></label></div><label className="probe-angle-editor"><span>Probe angles (deg) · minimum 3, nonuniform preferred</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input key={index} type="number" aria-label={`Probe ${index + 1} angle`} placeholder={`P${index + 1}`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}<button type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: [...current.probePositionsDeg, Number.NaN] }))}>+ probe</button>{draft.probePositionsDeg.length > 3 && <button type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.slice(0, -1) }))}>Remove</button>}</div></label><label className="confirmation-check"><input type="checkbox" checked={draft.probeSynchronizationConfirmed} onChange={(event) => setDraft((current) => ({ ...current, probeSynchronizationConfirmed: event.target.checked }))} /><span>I confirm every pressure probe in each file uses one synchronized acquisition time base.</span></label><label className="confirmation-check"><input type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label></div>
 
       {cases.length > 0 && <div className="form-section"><h3>Related rerun · optional</h3><p className="form-help">Use this only when this is a controlled rerun of an existing case. Caevera verifies the relationship before using it as diagnostic evidence.</p><div className="form-grid three"><label><span>Baseline case</span><select value={draftRelationship?.baselineCaseId ?? ""} onChange={(event) => setDraftRelationship(event.target.value ? { baselineCaseId: event.target.value, changedVariable: draftRelationship?.changedVariable ?? "other", description: draftRelationship?.description ?? "" } : null)}><option value="">Not a related rerun</option>{cases.filter((item) => item.id !== editingCaseId).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label><label><span>Single CFD change</span><select disabled={!draftRelationship} value={draftRelationship?.changedVariable ?? "other"} onChange={(event) => setDraftRelationship((current) => current ? { ...current, changedVariable: event.target.value as SensitivityVariable } : null)}><option value="mesh">Mesh / spatial method</option><option value="time-step">Time step / temporal method</option><option value="chemistry">Chemistry model</option><option value="inlet">Inlet treatment</option><option value="wall">Wall treatment</option><option value="initialization">Initialization</option><option value="other">Other / comparison only</option></select></label><label><span>Change description</span><input disabled={!draftRelationship} value={draftRelationship?.description ?? ""} onChange={(event) => setDraftRelationship((current) => current ? { ...current, description: event.target.value } : null)} placeholder="e.g. 50% front-cell refinement" /></label></div></div>}
 
-      <div className="form-section"><div className="form-section-heading"><h3>Three synchronized pressure traces</h3><button onClick={downloadExample}>Download example CSV</button></div><div className="upload-grid"><label className={`upload-box ${testPending ? "loaded" : ""}`}><span>EXPERIMENT</span><strong>{testPending?.[0].name.split(" · ")[0] ?? (editingCaseId ? "Keep current file or choose replacement" : "Choose three-probe CSV")}</strong><small>time_ms, p1_MPa, p2_MPa, p3_MPa</small><input type="file" accept=".csv,.txt" onChange={(event) => readProbeFile(event, "test")} hidden /></label><label className={`upload-box ${cfdPending ? "loaded" : ""}`}><span>CFD</span><strong>{cfdPending?.[0].name.split(" · ")[0] ?? (editingCaseId ? "Keep current file or choose replacement" : "Choose matching CFD CSV")}</strong><small>Same probes, positions, and operating point</small><input type="file" accept=".csv,.txt" onChange={(event) => readProbeFile(event, "cfd")} hidden /></label></div></div>
+      <div className="form-section"><div className="form-section-heading"><h3>Synchronized pressure probes</h3><button onClick={downloadExample}>Download example CSV</button></div><div className="upload-grid"><label className={`upload-box ${testPending ? "loaded" : ""}`}><span>EXPERIMENT</span><strong>{testPending?.[0].name.split(" · ")[0] ?? (editingCaseId ? "Keep current file or choose replacement" : "Choose multi-probe CSV")}</strong><small>time_ms, p1_MPa, p2_MPa … pN_MPa</small><input type="file" accept=".csv,.txt" onChange={(event) => readProbeFile(event, "test")} hidden /></label><label className={`upload-box ${cfdPending ? "loaded" : ""}`}><span>CFD</span><strong>{cfdPending?.[0].name.split(" · ")[0] ?? (editingCaseId ? "Keep current file or choose replacement" : "Choose matching CFD CSV")}</strong><small>Same probe count, positions, and operating point</small><input type="file" accept=".csv,.txt" onChange={(event) => readProbeFile(event, "cfd")} hidden /></label></div><div className="form-grid two measurement-chain"><label><span>Experiment sensor bandwidth (kHz)</span><input type="number" step="0.1" value={numberValue(draft.experimentSensorBandwidthKHz)} onChange={(event) => updateNumber("experimentSensorBandwidthKHz", event.target.value)} /></label><label><span>Experiment low-pass / anti-alias cutoff (kHz)</span><input type="number" step="0.1" value={numberValue(draft.experimentFilterCutoffKHz)} onChange={(event) => updateNumber("experimentFilterCutoffKHz", event.target.value)} /></label></div></div>
 
       <div className="form-section"><h3>Operating conditions</h3><div className="form-grid four"><label><span>Inlet pressure (bar)</span><input type="number" value={numberValue(draft.inletPressureBar)} onChange={(event) => updateNumber("inletPressureBar", event.target.value)} /></label><label><span>Inlet temperature (K)</span><input type="number" value={numberValue(draft.inletTemperatureK)} onChange={(event) => updateNumber("inletTemperatureK", event.target.value)} /></label><label><span>Equivalence ratio</span><input type="number" step="0.01" value={numberValue(draft.equivalenceRatio)} onChange={(event) => updateNumber("equivalenceRatio", event.target.value)} /></label><label><span>Mass flow (kg/s)</span><input type="number" step="0.01" value={numberValue(draft.massFlowKgS)} onChange={(event) => updateNumber("massFlowKgS", event.target.value)} /></label></div></div>
 

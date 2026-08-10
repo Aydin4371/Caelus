@@ -2,7 +2,7 @@
 
 ## Scope
 
-Version 0.5 analyzes one matched RDE operating point using at least three
+Version 0.7 analyzes one matched RDE operating point using at least three
 synchronized experimental pressure traces and matching CFD virtual probes. It
 asks:
 
@@ -18,13 +18,15 @@ caused a discrepancy.
 - Experiment and CFD use the same geometry and operating condition.
 - Each virtual probe represents the corresponding physical sensor position.
 - Probe clocks are synchronized and major trigger offsets are already known.
+- The experimental sensor bandwidth and applied filter cutoff are documented.
 - Probe angles share one annulus direction and reference.
 - Pressure and timing uncertainties are supplied as one-standard-uncertainty
   estimates when the user wants a resolved/unresolved interpretation.
 - Annulus geometry is represented by a mean diameter for wave-speed inference.
 
-Nonuniform probe positions are preferred. Three equally spaced probes can make
-some combinations of wave count and direction indistinguishable.
+Nonuniform probe positions are preferred. Three probes can support a candidate
+mode, while four or more well-placed probes are recommended for an identified
+mode. Equal spacing can make wave count and direction aliases indistinguishable.
 
 ## 1. Comparison validity
 
@@ -50,14 +52,20 @@ Current review rules flag fewer than five captured cycles, fewer than twenty
 samples per cycle, sample-interval variation above 1%, acquisition gaps,
 dropped nonnumeric rows, or three or more consecutive identical samples.
 
-These are explicit prototype checks. Passing them does not establish a sensor
+Caevera also compares Nyquist frequency, sensor bandwidth, and filter cutoff
+with the passage-frequency harmonic bands used by the pressure metrics. These
+are explicit method checks. Passing them does not establish a complete sensor
 transfer function or eliminate measurement bias.
 
 ## 3. Common time base and bounded alignment
 
-For each probe pair, Caevera uses the larger median sample interval and linearly
-interpolates experiment and CFD over their common time interval. The interactive
-analysis uses at most 2,400 native-interval samples.
+Caevera first estimates bounded correlation lags for every matching probe pair,
+then uses the median as one shared experiment-to-CFD lag for the entire probe
+array. Every pair is recomputed using that shared lag. This prevents independent
+per-probe alignment from removing a real circumferential phase mismatch. Each
+pair uses the larger median sample interval and linear interpolation over its
+common interval; the interactive waveform comparison uses at most 2,400
+native-interval samples.
 
 At candidate lag \(\ell\), normalized correlation is
 
@@ -73,7 +81,8 @@ or timestamp.
 
 ## 4. Frequency, residual, and pressure-cycle metrics
 
-The dominant frequency comes from the pressure amplitude spectrum. For test
+The dominant frequency comes from a Hann-windowed, zero-padded radix-2 FFT
+amplitude spectrum, with parabolic peak interpolation. For test
 frequency \(f_t\) and CFD frequency \(f_c\), the signed difference is
 
 \[
@@ -100,21 +109,24 @@ normalized RMSE, correlation, and mean pressure bias.
 
 ## 5. Rotating-mode inference
 
-The mode frequency is the median rising-mean-crossing frequency across probes.
-At that frequency, Caevera calculates complex phase \(\phi_i\) at every probe
-position \(\theta_i\).
+The passage frequency is the median dominant FFT frequency across probes. At
+that frequency, Caevera calculates Hann-windowed complex phase \(\phi_i\) at
+every probe position \(\theta_i\).
 
-For candidate wave count \(m\in\{1,2,3,4\}\) and direction sign
+For candidate wave count \(m\in\{1,\ldots,m_{max}\}\), where the user supplies
+the physically plausible maximum, and direction sign
 \(s\in\{-1,+1\}\), predicted relative phase is
 
 \[
 \Delta\phi_i^{pred}=s\,m\,(\theta_i-\theta_1).
 \]
 
-The candidate with the smallest mean wrapped phase error is selected. The
-reported confidence combines the best phase fit with separation from the
-next-best wave-count/direction candidate. Caevera reports that alternative so
-the mode classification is not presented as uniquely certain when it is not.
+The candidate with the smallest RMS wrapped phase error is selected. Caevera
+also reports the next candidate and classifies the result as **Identified**,
+**Candidate**, or **Not identifiable** using phase residual, separation from the
+runner-up, probe count, synchronization, and window-to-window mode consistency.
+The result is downgraded rather than silently choosing a mode when the evidence
+does not distinguish it.
 
 For mean annulus diameter \(D\), detected temporal frequency \(f\), and wave
 count \(m\), circumferential speed is
@@ -128,14 +140,24 @@ second.
 
 ## 6. Stability classification
 
-Each trace is divided into two windows. Caevera combines cross-window
-frequency drift with circumferential phase fit:
+Rising mean crossings provide cycle-by-cycle passage frequency and peak
+pressure. A linear fit over the cycle frequencies estimates record-wide drift.
+The pressure array is also divided into up to twelve windows, each covering
+roughly three cycles, to refit mode count/direction and relative phase. This
+produces frequency variation, phase jitter, and a count of mode transitions.
 
-- **Stable:** drift \(\le 3\%\) and phase fit \(\ge 0.90\)
-- **Transitional:** drift \(\le 8\%\) and phase fit \(\ge 0.75\)
+The current explicit stability categories are:
+
+- **Stable:** identified mode, no transition, drift \(\le 3\%\), frequency
+  variation \(\le 2\%\), and phase jitter \(\le 15^\circ\)
+- **Transitional:** at least a candidate mode, no more than one transition,
+  drift \(\le 8\%\), frequency variation \(\le 5\%\), and phase jitter
+  \(\le 30^\circ\)
 - **Unstable:** otherwise
 
-This does not yet resolve intermittent mode switching or simultaneous modes.
+These are transparent product method limits, not universal physical boundaries.
+Simultaneous co-/counter-rotating content is flagged through poor or changing
+fits; it is not uniquely decomposed by this release.
 
 ## 7. Uncertainty-aware difference states
 
@@ -157,9 +179,9 @@ inconclusive state rather than a pass.
 
 Pressure-derived uncertainty uses the supplied relative pressure values.
 Frequency uncertainty combines half a finite-record spectral bin with the
-supplied timing contribution. Wave-speed uncertainty propagates frequency only;
-diameter uncertainty is not yet an input. Rise-time uncertainty combines the
-two timing inputs. Pressure impulse combines pressure and timing contributions.
+supplied timing contribution. Wave-speed uncertainty conservatively combines
+frequency and supplied mean-diameter uncertainty. Rise-time uncertainty combines
+the two timing inputs. Pressure impulse combines pressure and timing contributions.
 
 Harmonic ratio and cycle variability currently use labeled prototype method
 limits because estimator and repeatability uncertainty are not supplied. Their
@@ -217,11 +239,12 @@ heuristic; Caevera does not borrow a citation from an adjacent topic.
 
 ## 10. Coverage and traceable report
 
-The coverage matrix marks wave dynamics and pressure as assessed. Thermal and
+The product scope is pressure and wave dynamics. Thermal and
 performance remain not assessed unless those measurements are added in later
 modules. The JSON report stores metadata, source names, modes, validity, data
 quality, uncertainty states, per-probe evidence, ranked hypotheses, next-run
-plan, methods, and limitations.
+plan, methods, limitations, and the reviewed primary sources behind the wave
+analysis methods.
 
 ## Known limitations
 
@@ -233,7 +256,7 @@ plan, methods, and limitations.
 - Mode inference assumes synchronized probes and one dominant rotating mode.
 - Diagnostic ranking is rule-based and needs comparison with expert decisions.
 - Heat flux, wall temperature, thrust, optical diagnostics, species, and full
-  spatial fields are outside version 0.6.
+  spatial fields are outside version 0.7.
 - One operating point cannot establish a validation envelope.
 
 ## Evidence required for a research release
