@@ -58,6 +58,13 @@ export type DataQualityResult = {
   detectedGaps: number;
   droppedRows: number;
   clippingDetected: boolean;
+  spectralSnrDb: number;
+  noiseFloorMpa: number;
+  aliasingRisk: boolean;
+  frequencyUsable: boolean;
+  phaseUsable: boolean;
+  frontShapeUsable: boolean;
+  limitedOutputs: string[];
   status: "Ready" | "Review";
   findings: string[];
 };
@@ -68,7 +75,7 @@ export type Recommendation = {
   evidence: string;
 };
 
-export const ANALYSIS_VERSION = "0.7.0";
+export const ANALYSIS_VERSION = "1.0.0";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
@@ -329,10 +336,12 @@ export function assessSignalQuality(signal: Signal, frequencyKHz?: number): Data
   const intervals = signal.time.slice(1).map((time, index) => time - signal.time[index]);
   const dt = median(intervals);
   const durationMs = (signal.time.at(-1) ?? signal.time[0]) - signal.time[0];
-  const inferredFrequency = frequencyKHz ?? dominantFrequency(spectrum(signal.pressure, dt));
+  const resultSpectrum = spectrum(signal.pressure, dt);
+  const inferredFrequency = frequencyKHz ?? dominantFrequency(resultSpectrum);
   const intervalJitterPct = 100 * Math.max(...intervals.map((value) => Math.abs(value - dt))) / Math.max(dt, 1e-12);
   const detectedGaps = intervals.filter((value) => value > 1.5 * dt).length;
-  const tolerance = Math.max(1e-12, (Math.max(...signal.pressure) - Math.min(...signal.pressure)) * 1e-10);
+  const pressureRange = Math.max(...signal.pressure) - Math.min(...signal.pressure);
+  const tolerance = Math.max(1e-12, pressureRange * 1e-10);
   let clippedRun = 0;
   let longestClippedRun = 0;
   for (let index = 1; index < signal.pressure.length; index += 1) {
@@ -345,30 +354,60 @@ export function assessSignalQuality(signal: Signal, frequencyKHz?: number): Data
   }
   const clippingDetected = longestClippedRun >= 3;
   const sampleRateKHz = 1 / Math.max(dt, 1e-12);
+  const nyquistKHz = sampleRateKHz / 2;
   const samplesPerCycle = sampleRateKHz / Math.max(inferredFrequency, 1e-12);
   const capturedCycles = durationMs * inferredFrequency;
   const droppedRows = signal.droppedRows ?? 0;
+  const spacing = resultSpectrum.frequency.length > 1 ? resultSpectrum.frequency[1] - resultSpectrum.frequency[0] : 0;
+  const fundamentalAmplitude = harmonicAmplitude(resultSpectrum, inferredFrequency);
+  const noiseBins = resultSpectrum.amplitude.filter((_, index) => {
+    const frequency = resultSpectrum.frequency[index];
+    if (frequency > Math.min(nyquistKHz, 5 * inferredFrequency)) return false;
+    return [1, 2, 3].every((harmonic) => Math.abs(frequency - harmonic * inferredFrequency) > Math.max(2 * spacing, 0.04 * inferredFrequency));
+  });
+  const noiseFloorMpa = noiseBins.length ? median(noiseBins) : 0;
+  const spectralSnrDb = 20 * Math.log10(Math.max(fundamentalAmplitude, 1e-12) / Math.max(noiseFloorMpa, 1e-12));
+  const aliasingRisk = samplesPerCycle < 10 || inferredFrequency >= 0.4 * nyquistKHz;
+  const frequencyUsable = capturedCycles >= 5 && samplesPerCycle >= 10 && detectedGaps === 0 && !clippingDetected && spectralSnrDb >= 10;
+  const phaseUsable = frequencyUsable && samplesPerCycle >= 20 && intervalJitterPct <= 1;
+  const frontShapeUsable = phaseUsable && nyquistKHz >= 5 * inferredFrequency;
+
+  const limitedOutputs: string[] = [];
+  if (!frequencyUsable) limitedOutputs.push("dominant frequency and frequency drift");
+  if (!phaseUsable) limitedOutputs.push("wave count, direction, propagation speed, and phase jitter");
+  if (!frontShapeUsable) limitedOutputs.push("rise time, peak sharpness, and harmonic content");
+
   const findings: string[] = [];
-  if (capturedCycles < 5) findings.push(`Only ${capturedCycles.toFixed(1)} cycles captured; use at least five for stable statistics.`);
-  if (samplesPerCycle < 20) findings.push(`Only ${samplesPerCycle.toFixed(0)} samples per cycle; front-rise metrics may be under-resolved.`);
-  if (intervalJitterPct > 1) findings.push(`Sample-interval variation reaches ${intervalJitterPct.toFixed(1)}%.`);
+  if (capturedCycles < 5) findings.push(`Only ${capturedCycles.toFixed(1)} cycles captured; at least five are required for frequency and cycle statistics.`);
+  if (samplesPerCycle < 20) findings.push(`Only ${samplesPerCycle.toFixed(0)} samples per cycle; phase and front-rise conclusions are limited.`);
+  if (intervalJitterPct > 1) findings.push(`Sample-interval variation reaches ${intervalJitterPct.toFixed(1)}%; resample or correct the acquisition time base before phase analysis.`);
   if (detectedGaps) findings.push(`${detectedGaps} acquisition gap${detectedGaps === 1 ? "" : "s"} detected.`);
   if (droppedRows) findings.push(`${droppedRows} non-numeric source row${droppedRows === 1 ? " was" : "s were"} omitted during import.`);
-  if (clippingDetected) findings.push("Repeated identical samples suggest possible clipping or quantization plateaus.");
-  if (!findings.length) findings.push("Sampling, duration, continuity, and clipping checks are ready for analysis.");
+  if (clippingDetected) findings.push("Repeated plateaus suggest clipping or coarse quantization; peak and waveform-shape conclusions are limited.");
+  if (spectralSnrDb < 10) findings.push(`Fundamental-to-spectral-noise ratio is ${spectralSnrDb.toFixed(1)} dB; frequency and phase estimates are not trusted below 10 dB.`);
+  if (aliasingRisk) findings.push("The dominant frequency is too close to Nyquist or has fewer than 10 samples per cycle; aliasing cannot be excluded.");
+  if (limitedOutputs.length) findings.push(`Not identifiable from this trace: ${limitedOutputs.join("; ")}.`);
+  if (!findings.length) findings.push(`Sampling, continuity, clipping, and spectral SNR checks pass (${spectralSnrDb.toFixed(1)} dB).`);
 
   return {
     sampleCount: signal.time.length,
     durationMs,
     sampleRateKHz,
-    nyquistKHz: sampleRateKHz / 2,
+    nyquistKHz,
     samplesPerCycle,
     capturedCycles,
     intervalJitterPct,
     detectedGaps,
     droppedRows,
     clippingDetected,
-    status: findings.length === 1 && findings[0].startsWith("Sampling") ? "Ready" : "Review",
+    spectralSnrDb,
+    noiseFloorMpa,
+    aliasingRisk,
+    frequencyUsable,
+    phaseUsable,
+    frontShapeUsable,
+    limitedOutputs,
+    status: limitedOutputs.length ? "Review" : "Ready",
     findings,
   };
 }
