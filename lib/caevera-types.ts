@@ -1,4 +1,5 @@
 import type { Signal } from "./rde-analysis.ts";
+import type { FileImportProvenance } from "./data-import.ts";
 
 export type Dimensionality = "2D" | "3D" | "";
 
@@ -64,6 +65,7 @@ export type AnalysisCase = {
   metadata: CaseMetadata;
   testSignals: Signal[];
   cfdSignals: Signal[];
+  imports?: { experiment: FileImportProvenance; cfd: FileImportProvenance } | null;
 };
 
 export const EMPTY_METADATA: CaseMetadata = {
