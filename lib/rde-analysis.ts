@@ -51,6 +51,7 @@ export type DataQualityResult = {
   sampleCount: number;
   durationMs: number;
   sampleRateKHz: number;
+  nyquistKHz: number;
   samplesPerCycle: number;
   capturedCycles: number;
   intervalJitterPct: number;
@@ -67,20 +68,7 @@ export type Recommendation = {
   evidence: string;
 };
 
-export type RdeModeResult = {
-  waveFrequencyKHz: number;
-  waveSpeedMps: number;
-  waveCount: number;
-  direction: "Clockwise" | "Counter-clockwise";
-  stability: "Stable" | "Transitional" | "Unstable";
-  frequencyDrift: number;
-  phaseFit: number;
-  modeConfidence: number;
-  alternativeWaveCount: number;
-  alternativeDirection: "Clockwise" | "Counter-clockwise";
-};
-
-export const ANALYSIS_VERSION = "0.6.0";
+export const ANALYSIS_VERSION = "0.7.0";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
@@ -145,34 +133,76 @@ function interpolate(signal: Signal, time: number) {
   return signal.pressure[low] + fraction * (signal.pressure[high] - signal.pressure[low]);
 }
 
+function nextPowerOfTwo(value: number) {
+  let result = 1;
+  while (result < value) result *= 2;
+  return result;
+}
+
+function fft(real: number[], imaginary: number[]) {
+  const n = real.length;
+  for (let index = 1, reverse = 0; index < n; index += 1) {
+    let bit = n >> 1;
+    for (; reverse & bit; bit >>= 1) reverse ^= bit;
+    reverse ^= bit;
+    if (index < reverse) {
+      [real[index], real[reverse]] = [real[reverse], real[index]];
+      [imaginary[index], imaginary[reverse]] = [imaginary[reverse], imaginary[index]];
+    }
+  }
+  for (let length = 2; length <= n; length *= 2) {
+    const angle = (-2 * Math.PI) / length;
+    const stepReal = Math.cos(angle);
+    const stepImaginary = Math.sin(angle);
+    for (let offset = 0; offset < n; offset += length) {
+      let twiddleReal = 1;
+      let twiddleImaginary = 0;
+      for (let index = 0; index < length / 2; index += 1) {
+        const even = offset + index;
+        const odd = even + length / 2;
+        const oddReal = real[odd] * twiddleReal - imaginary[odd] * twiddleImaginary;
+        const oddImaginary = real[odd] * twiddleImaginary + imaginary[odd] * twiddleReal;
+        real[odd] = real[even] - oddReal;
+        imaginary[odd] = imaginary[even] - oddImaginary;
+        real[even] += oddReal;
+        imaginary[even] += oddImaginary;
+        const nextReal = twiddleReal * stepReal - twiddleImaginary * stepImaginary;
+        twiddleImaginary = twiddleReal * stepImaginary + twiddleImaginary * stepReal;
+        twiddleReal = nextReal;
+      }
+    }
+  }
+}
+
 /**
- * Computes a one-sided amplitude spectrum with a direct DFT. Frequencies are
- * returned in kHz because the input time base is milliseconds.
+ * Computes a Hann-windowed one-sided amplitude spectrum with a radix-2 FFT.
+ * Frequencies are returned in kHz because the input time base is milliseconds.
  */
 export function spectrum(values: number[], dtMs: number): Spectrum {
   if (values.length < 32 || !Number.isFinite(dtMs) || dtMs <= 0) {
     throw new Error("A spectrum requires at least 32 samples and a positive sample interval.");
   }
 
-  const maxSamples = 768;
-  const stride = Math.max(1, Math.ceil(values.length / maxSamples));
-  const sampled = values.filter((_, index) => index % stride === 0);
-  const centered = sampled.map((value) => value - mean(sampled));
-  const n = centered.length;
+  const sampleCount = Math.min(values.length, 8192);
+  const start = Math.floor((values.length - sampleCount) / 2);
+  const sampled = values.slice(start, start + sampleCount);
+  const center = mean(sampled);
+  const transformSize = Math.min(16384, nextPowerOfTwo(sampleCount));
+  const real = Array(transformSize).fill(0);
+  const imaginary = Array(transformSize).fill(0);
+  let windowSum = 0;
+  for (let index = 0; index < sampleCount; index += 1) {
+    const window = sampleCount === 1 ? 1 : 0.5 - 0.5 * Math.cos((2 * Math.PI * index) / (sampleCount - 1));
+    real[index] = (sampled[index] - center) * window;
+    windowSum += window;
+  }
+  fft(real, imaginary);
   const frequency: number[] = [];
   const amplitude: number[] = [];
-  const maxBin = Math.min(Math.floor(n / 2), 280);
-
+  const maxBin = Math.floor(transformSize / 2);
   for (let k = 1; k < maxBin; k += 1) {
-    let real = 0;
-    let imaginary = 0;
-    for (let i = 0; i < n; i += 1) {
-      const angle = (2 * Math.PI * k * i) / n;
-      real += centered[i] * Math.cos(angle);
-      imaginary -= centered[i] * Math.sin(angle);
-    }
-    frequency.push(k / (n * dtMs * stride));
-    amplitude.push((2 * Math.hypot(real, imaginary)) / n);
+    frequency.push(k / (transformSize * dtMs));
+    amplitude.push((2 * Math.hypot(real[k], imaginary[k])) / Math.max(windowSum, 1e-12));
   }
 
   return { frequency, amplitude };
@@ -184,7 +214,14 @@ export function dominantFrequency(result: Spectrum) {
   for (let index = 1; index < result.amplitude.length; index += 1) {
     if (result.amplitude[index] > result.amplitude[best]) best = index;
   }
-  return result.frequency[best];
+  if (best === 0 || best === result.amplitude.length - 1) return result.frequency[best];
+  const left = Math.log(Math.max(result.amplitude[best - 1], 1e-16));
+  const center = Math.log(Math.max(result.amplitude[best], 1e-16));
+  const right = Math.log(Math.max(result.amplitude[best + 1], 1e-16));
+  const denominator = left - 2 * center + right;
+  const offset = Math.abs(denominator) > 1e-12 ? 0.5 * (left - right) / denominator : 0;
+  const spacing = result.frequency[1] - result.frequency[0];
+  return result.frequency[best] + Math.max(-0.5, Math.min(0.5, offset)) * spacing;
 }
 
 function upwardCrossings(time: number[], values: number[], baseline = mean(values)) {
@@ -324,6 +361,7 @@ export function assessSignalQuality(signal: Signal, frequencyKHz?: number): Data
     sampleCount: signal.time.length,
     durationMs,
     sampleRateKHz,
+    nyquistKHz: sampleRateKHz / 2,
     samplesPerCycle,
     capturedCycles,
     intervalJitterPct,
@@ -357,7 +395,11 @@ function normalizedCorrelation(a: number[], b: number[]) {
  * Aligns a test signal and a matching CFD virtual probe, then calculates
  * deterministic comparison metrics. Both signals use milliseconds and MPa.
  */
-export function compareSignals(testSignal: Signal, cfdSignal: Signal): Comparison {
+export function compareSignals(
+  testSignal: Signal,
+  cfdSignal: Signal,
+  options: { fixedLagUs?: number } = {},
+): Comparison {
   validateSignal(testSignal);
   validateSignal(cfdSignal);
 
@@ -385,10 +427,15 @@ export function compareSignals(testSignal: Signal, cfdSignal: Signal): Compariso
   const preliminaryFrequency = dominantFrequency(spectrum(test, dt));
   const halfPeriodSamples = preliminaryFrequency > 0 ? Math.floor(0.45 / (preliminaryFrequency * dt)) : 24;
   const maxLag = Math.max(2, Math.min(160, Math.floor(sampleCount / 8), halfPeriodSamples));
-  let bestLag = 0;
+  let bestLag = Number.isFinite(options.fixedLagUs)
+    ? Math.max(-maxLag, Math.min(maxLag, Math.round(options.fixedLagUs! / (dt * 1000))))
+    : 0;
   let bestCorrelation = -Infinity;
 
-  for (let lag = -maxLag; lag <= maxLag; lag += 1) {
+  const candidateLags = Number.isFinite(options.fixedLagUs)
+    ? [bestLag]
+    : Array.from({ length: 2 * maxLag + 1 }, (_, index) => index - maxLag);
+  for (const lag of candidateLags) {
     const testWindow: number[] = [];
     const cfdWindow: number[] = [];
     for (let index = maxLag; index < sampleCount - maxLag; index += 1) {
@@ -486,7 +533,7 @@ export function makeDemoSignals() {
 }
 
 /**
- * Creates a complete, non-sensitive three-probe RDE case for interface and
+ * Creates a complete, non-sensitive five-probe RDE case for interface and
  * numerical demonstrations. Probe angles are deliberately nonuniform so that
  * wave count and direction are not aliased by equal angular spacing.
  */
@@ -494,7 +541,7 @@ export function makeDemoProbeSignals() {
   const count = 1600;
   const dt = 0.0025;
   const time = Array.from({ length: count }, (_, index) => index * dt);
-  const positionsDeg = [0, 110, 245];
+  const positionsDeg = [0, 47, 131, 226, 311];
   const makeSet = (kind: "test" | "cfd") =>
     positionsDeg.map((positionDeg, probeIndex) => {
       const angle = (positionDeg * Math.PI) / 180;
@@ -518,121 +565,6 @@ export function makeDemoProbeSignals() {
     positionsDeg,
     test: makeSet("test"),
     cfd: makeSet("cfd"),
-  };
-}
-
-function wrapAngle(value: number) {
-  return Math.atan2(Math.sin(value), Math.cos(value));
-}
-
-function phaseAtFrequency(signal: Signal, frequencyKHz: number) {
-  const signalMean = mean(signal.pressure);
-  let real = 0;
-  let imaginary = 0;
-  for (let index = 0; index < signal.time.length; index += 1) {
-    const angle = 2 * Math.PI * frequencyKHz * signal.time[index];
-    const value = signal.pressure[index] - signalMean;
-    real += value * Math.cos(angle);
-    imaginary -= value * Math.sin(angle);
-  }
-  return Math.atan2(imaginary, real);
-}
-
-function crossingFrequency(signal: Signal, startIndex: number, endIndex: number) {
-  const values = signal.pressure.slice(startIndex, endIndex);
-  const baseline = mean(values);
-  const crossings: number[] = [];
-  for (let index = Math.max(1, startIndex); index < endIndex; index += 1) {
-    const before = signal.pressure[index - 1] - baseline;
-    const after = signal.pressure[index] - baseline;
-    if (before <= 0 && after > 0) {
-      const fraction = -before / Math.max(after - before, 1e-12);
-      crossings.push(
-        signal.time[index - 1] + fraction * (signal.time[index] - signal.time[index - 1]),
-      );
-    }
-  }
-  if (crossings.length < 2) return 0;
-  const periods = crossings.slice(1).map((time, index) => time - crossings[index]);
-  return 1 / Math.max(median(periods), 1e-12);
-}
-
-/**
- * Infers a dominant rotating mode from three or more circumferential probes.
- * Frequency is in kHz, geometry in mm, and the returned wave speed is m/s.
- */
-export function analyzeRdeProbeSet(
-  signals: Signal[],
-  positionsDeg: number[],
-  annulusMeanDiameterMm: number,
-): RdeModeResult {
-  if (signals.length < 3 || signals.length !== positionsDeg.length) {
-    throw new Error("Wave mode analysis requires at least three signals with matching probe positions.");
-  }
-  if (!Number.isFinite(annulusMeanDiameterMm) || annulusMeanDiameterMm <= 0) {
-    throw new Error("Annulus mean diameter must be a positive number in millimetres.");
-  }
-  signals.forEach(validateSignal);
-  if (positionsDeg.some((value) => !Number.isFinite(value))) {
-    throw new Error("Every probe position must be a finite angle in degrees.");
-  }
-
-  const frequencies = signals.map((signal) =>
-    crossingFrequency(signal, 0, signal.time.length),
-  );
-  const waveFrequencyKHz = median(frequencies);
-  const phases = signals.map((signal) => phaseAtFrequency(signal, waveFrequencyKHz));
-  const relativePhases = phases.map((phase) => wrapAngle(phase - phases[0]));
-  const relativePositions = positionsDeg.map(
-    (position) => ((position - positionsDeg[0]) * Math.PI) / 180,
-  );
-
-  const candidates: { waveCount: number; direction: RdeModeResult["direction"]; error: number }[] = [];
-  for (let waveCount = 1; waveCount <= 4; waveCount += 1) {
-    for (const direction of ["Counter-clockwise", "Clockwise"] as const) {
-      const sign = direction === "Counter-clockwise" ? -1 : 1;
-      const error = relativePhases
-        .slice(1)
-        .reduce(
-          (sum, phase, index) =>
-            sum + Math.abs(wrapAngle(phase - sign * waveCount * relativePositions[index + 1])),
-          0,
-        ) / (signals.length - 1);
-      candidates.push({ waveCount, direction, error });
-    }
-  }
-  candidates.sort((a, b) => a.error - b.error);
-  const best = candidates[0];
-  const alternative = candidates[1];
-
-  const halfFrequencies = signals.flatMap((signal) => {
-    const half = Math.floor(signal.time.length / 2);
-    return [crossingFrequency(signal, 0, half), crossingFrequency(signal, half, signal.time.length)];
-  }).filter((value) => value > 0);
-  const minimumFrequency = Math.min(...halfFrequencies);
-  const maximumFrequency = Math.max(...halfFrequencies);
-  const frequencyDrift = (maximumFrequency - minimumFrequency) / Math.max(waveFrequencyKHz, 1e-12);
-  const phaseFit = Math.max(0, 1 - best.error / Math.PI);
-  const modeConfidence = Math.max(0, Math.min(1, (alternative.error - best.error) / Math.PI + 0.5 * phaseFit));
-  const stability = frequencyDrift <= 0.03 && phaseFit >= 0.9
-    ? "Stable"
-    : frequencyDrift <= 0.08 && phaseFit >= 0.75
-      ? "Transitional"
-      : "Unstable";
-  const circumferenceMm = Math.PI * annulusMeanDiameterMm;
-  const waveSpeedMps = (circumferenceMm * waveFrequencyKHz) / best.waveCount;
-
-  return {
-    waveFrequencyKHz,
-    waveSpeedMps,
-    waveCount: best.waveCount,
-    direction: best.direction,
-    stability,
-    frequencyDrift,
-    phaseFit,
-    modeConfidence,
-    alternativeWaveCount: alternative.waveCount,
-    alternativeDirection: alternative.direction,
   };
 }
 
@@ -708,8 +640,8 @@ export function parseSignalCsv(text: string, name: string): Signal {
 }
 
 /**
- * Parses one three-probe export. Required columns are time plus P1, P2, and P3
- * pressure columns with units, for example time_ms, p1_MPa, p2_MPa, p3_MPa.
+ * Parses one synchronized multi-probe export. Required columns are time plus
+ * three or more contiguous pressure columns, such as p1_MPa through p5_MPa.
  */
 export function parseProbeCsv(text: string, name: string): Signal[] {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
@@ -724,28 +656,17 @@ export function parseProbeCsv(text: string, name: string): Signal[] {
     throw new Error("Use a named time column with units, such as time_ms.");
   }
 
-  const probes = [1, 2, 3].map((probe) => {
-    const unitOptions = [
-      { suffix: "mpa", factor: 1 },
-      { suffix: "kpa", factor: 0.001 },
-      { suffix: "pa", factor: 0.000001 },
-    ];
-    for (const option of unitOptions) {
-      const aliases = [
-        `p${probe}_${option.suffix}`,
-        `pressure_p${probe}_${option.suffix}`,
-        `probe${probe}_${option.suffix}`,
-        `sensor${probe}_${option.suffix}`,
-      ];
-      const index = headers.findIndex((header) => aliases.includes(header));
-      if (index >= 0) return { index, factor: option.factor };
-    }
-    return null;
-  });
-
-  if (probes.some((probe) => !probe)) {
-    throw new Error("Include P1, P2, and P3 pressure columns with units, such as p1_MPa.");
+  const detected = headers.flatMap((header, index) => {
+    const match = header.match(/^(?:p|pressure_p|probe|sensor)(\d+)_(mpa|kpa|pa)$/);
+    if (!match) return [];
+    const factor = match[2] === "mpa" ? 1 : match[2] === "kpa" ? 0.001 : 0.000001;
+    return [{ probe: Number(match[1]), index, factor }];
+  }).sort((left, right) => left.probe - right.probe);
+  const unique = detected.filter((item, index) => index === 0 || item.probe !== detected[index - 1].probe);
+  if (unique.length < 3 || unique.some((item, index) => item.probe !== index + 1)) {
+    throw new Error("Include at least P1, P2, and P3 as contiguous pressure columns with units, such as p1_MPa.");
   }
+  const probes = unique.map(({ index, factor }) => ({ index, factor }));
 
   const sourceRows = lines.slice(1);
   const rows = sourceRows
@@ -760,7 +681,7 @@ export function parseProbeCsv(text: string, name: string): Signal[] {
     }))
     .sort((a, b) => a.time - b.time);
 
-  return [0, 1, 2].map((probeIndex) => {
+  return probes.map((_, probeIndex) => {
     const signal = {
       name: `${name} · P${probeIndex + 1}`,
       time: rows.map((row) => row.time),
