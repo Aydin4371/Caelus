@@ -1,8 +1,8 @@
 # Caevera by Caelus
 
 Caevera is a browser-based RDE simulation-to-test research application. It
-compares three synchronized experimental pressure traces with matching CFD
-virtual probes, determines whether differences are resolved beyond the stated
+compares three or more synchronized experimental pressure traces with matching
+CFD virtual probes, determines whether differences are resolved beyond the stated
 uncertainty, orders traceable diagnostic hypotheses by evidence state, and recommends one
 controlled next simulation.
 
@@ -10,25 +10,28 @@ The application starts as an empty case workspace and accepts multiple
 operating points. It does not run CFD. Uploaded data and deterministic analysis
 remain in the browser session.
 
-The header Help guide defines every case-loader input. Pressure, spectrum, and
-residual graphs remain absent until a case has been parsed and analyzed; their
-traces are calculated from the active case rather than embedded examples.
+The header Help guide defines every case-loader input. Pressure, spectrum,
+residual, propagation-phase, and cycle-stability graphs remain absent until a
+case has been parsed and analyzed; their traces are calculated from the active
+case rather than embedded examples.
 
 The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
 
-## Version 0.6 product contract
+## Version 0.7 product contract
 
 Each case requires:
 
-1. Annulus mean diameter and three nonuniform probe positions
-2. Three synchronized experimental pressure traces
+1. Annulus mean diameter, uncertainty, and at least three probe positions
+2. Three or more synchronized experimental pressure traces, with four or more
+   nonuniform probes recommended for stronger mode identifiability
 3. Matching CFD virtual-probe traces
-4. Operating conditions
-5. A detailed CFD model card
-6. Experimental and numerical pressure/timing uncertainties
-7. Confirmation that geometry, operating point, probes, and comparison window
+4. Sensor bandwidth and filter cutoff
+5. Operating conditions
+6. A detailed CFD model card
+7. Experimental and numerical pressure/timing uncertainties
+8. Confirmation that geometry, operating point, probes, clocks, and comparison window
    match
 
 The interface returns only:
@@ -91,10 +94,33 @@ That release also used deterministic local analysis rather than an LLM.
 
 No LLM is used in v0.6.
 
+## v0.7 pressure and wave-dynamics scope
+
+- Accepts synchronized `P1` through `PN` pressure columns instead of a fixed
+  three-probe format.
+- Uses one robust shared experiment-to-CFD time alignment for the full probe
+  array so independent alignment cannot erase spatial phase error.
+- Uses a Hann-windowed FFT with interpolated dominant frequency.
+- Fits wave count and direction candidates to circumferential phase and labels
+  the result Identified, Candidate, or Not identifiable.
+- Calculates cycle-by-cycle passage frequency and peak pressure, record-wide
+  frequency drift, phase jitter, and window-to-window mode transitions.
+- Adds calculated propagation and cycle-stability graphs below the concise
+  recommendation.
+- Checks sensor bandwidth, filter cutoff, Nyquist frequency, probe
+  synchronization, and placement alias risk before trusting wave conclusions.
+- Stores the reviewed primary method sources and their applicability limits in
+  the downloaded evidence report.
+
+No LLM is used in v0.7.
+
 ## Code structure
 
-- `lib/rde-analysis.ts`: signal parsing, alignment, pressure-cycle metrics,
-  spectra, data quality, and rotating-mode inference
+- `lib/rde-analysis.ts`: signal parsing, pressure-cycle metrics, FFT spectra,
+  data quality, and single-pair waveform comparison
+- `lib/wave-dynamics.ts`: shared probe-array alignment, phase-mode fitting,
+  drift, jitter, transitions, and mode identifiability
+- `lib/wave-method-sources.ts`: reviewed primary sources for the wave-analysis methods
 - `lib/uncertainty.ts`: uncertainty combination and resolved-difference states
 - `lib/diagnostics.ts`: validity, metric assessments, hypotheses, and next-run
   plans
@@ -117,12 +143,12 @@ Open the local address printed by the development server.
 ## Pressure-file format
 
 Upload one experimental file and one CFD file. Each contains a shared time base
-and three pressure columns:
+and three or more contiguous pressure columns:
 
 ```csv
-time_ms,p1_MPa,p2_MPa,p3_MPa
-0.000000,1.602100,1.052079,2.259342
-0.002500,1.751244,1.217591,2.365071
+time_ms,p1_MPa,p2_MPa,p3_MPa,p4_MPa,p5_MPa
+0.000000,1.602100,1.052079,2.259342,1.809100,0.972400
+0.002500,1.751244,1.217591,2.365071,1.654800,0.901700
 ```
 
 Each file needs at least 32 valid rows. Supported time units are `ms`, `s`, and
@@ -140,8 +166,9 @@ npm test
 ```
 
 The numerical suite covers exact agreement, known timing/amplitude mismatch,
-data-quality failures, unit conversion, dropped-row provenance, three-probe
-mode recovery, uncertainty classification, structured diagnostics, blocked
+data-quality failures, unit conversion, dropped-row provenance, multi-probe
+mode recovery, shared alignment, frequency drift, mode transitions,
+uncertainty classification, structured diagnostics, blocked
 case matching, controlled case-history evidence, source integrity, and report content.
 
 ## Scientific status
@@ -157,5 +184,7 @@ causal proof. Thermal, performance, species, optical, and whole-field
 comparisons remain outside this release.
 
 See [docs/methodology.md](docs/methodology.md) for equations, assumptions, and
-claim boundaries, and [docs/diagnostic-sources.md](docs/diagnostic-sources.md)
-for the reviewed source ledger.
+claim boundaries, [docs/pressure-wave-sources.md](docs/pressure-wave-sources.md)
+for the pressure/wave method sources, and
+[docs/diagnostic-sources.md](docs/diagnostic-sources.md) for the diagnostic
+source ledger.
