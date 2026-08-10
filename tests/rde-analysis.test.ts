@@ -261,7 +261,7 @@ test("case assessment blocks recommendations when the physical pairing is unconf
   const simulation = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
   const result = buildCaseAssessment({ ...DEMO_METADATA, comparisonMatchConfirmed: false }, comparisons, experiment, simulation);
   assert.equal(result.validity.status, "Blocked");
-  assert.match(result.nextRun.title, /verify/i);
+  assert.match(result.nextRun.title, /correct/i);
 });
 
 test("case-history comparison calculates direct physical and CFD-error deltas", () => {
