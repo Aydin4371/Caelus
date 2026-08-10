@@ -82,7 +82,7 @@ export function PressureFileMapper({
     {table && mapping && <>
       <div className="mapper-source-summary"><span>{table.sourceRows.toLocaleString()} source rows</span><span>{table.headers.length} columns</span><span>{table.delimiter === "\t" ? "tab" : table.delimiter === "," ? "comma" : "semicolon"} delimited</span></div>
       <div className="mapping-grid time-mapping">
-        <label><span>Acquisition time column</span><select value={mapping.timeColumnIndex} onChange={(event) => invalidate({ ...mapping, timeColumnIndex: Number(event.target.value) })}>{table.headers.map((header, index) => <option key={index} value={index}>{header}</option>)}</select></label>
+        <label><span>Acquisition time column</span><select value={mapping.timeColumnIndex} onChange={(event) => invalidate({ ...mapping, timeColumnIndex: Number(event.target.value) })}><option value={-1}>Select time column</option>{table.headers.map((header, index) => <option key={index} value={index}>{header}</option>)}</select></label>
         <label><span>Time unit in file</span><select value={mapping.timeUnit} onChange={(event) => invalidate({ ...mapping, timeUnit: event.target.value as TimeUnit })}>{TIME_UNITS.map((unit) => <option key={unit}>{unit}</option>)}</select></label>
       </div>
       <div className="probe-mapping-list">
