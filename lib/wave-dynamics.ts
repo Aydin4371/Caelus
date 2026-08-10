@@ -1,3 +1,4 @@
+import { waveSpeedFromPassageFrequency } from "./published-benchmarks.ts";
 import {
   assessSignalQuality,
   compareSignals,
@@ -263,7 +264,8 @@ export function analyzeRdeProbeSet(
     : best.phaseResidualDeg <= 45 && separationDeg >= 5
       ? "Candidate"
       : "Not identifiable";
-  if (options.synchronizationConfirmed === false || modeTransitions > Math.max(1, Math.floor(windowModes.length / 3))) {
+  const phaseQualityUsable = qualities.every((quality) => quality.phaseUsable);
+  if (options.synchronizationConfirmed === false || !phaseQualityUsable || modeTransitions > Math.max(1, Math.floor(windowModes.length / 3))) {
     identifiability = "Not identifiable";
   }
   const phaseFit = Math.max(0, 1 - (best.phaseResidualDeg * Math.PI / 180) / Math.PI);
@@ -284,6 +286,7 @@ export function analyzeRdeProbeSet(
   if (signals.length === 3) warnings.push("Three probes can leave competing wave modes unresolved; four or more nonuniform probes are recommended.");
   if (equalSpacingRisk(positionsDeg)) warnings.push("Equal circumferential spacing can alias wave count and direction.");
   if (options.synchronizationConfirmed === false) warnings.push("Probe synchronization was not confirmed, so wave count and direction are not identifiable.");
+  if (!phaseQualityUsable) warnings.push("At least one probe fails the phase-quality gate; wave count, direction, propagation speed, and phase jitter are not identifiable.");
   if (identifiability !== "Identified") warnings.push(`Dominant mode is ${identifiability.toLowerCase()}; the next candidate is ${alternative.waveCount}-wave ${alternative.direction.toLowerCase()}.`);
   const minimumNyquist = Math.min(...qualities.map((quality) => quality.nyquistKHz));
   if (minimumNyquist < 3 * waveFrequencyKHz) warnings.push("Sampling Nyquist frequency does not cover the third harmonic of the passage frequency.");
@@ -293,7 +296,7 @@ export function analyzeRdeProbeSet(
 
   return {
     waveFrequencyKHz,
-    waveSpeedMps: (Math.PI * annulusMeanDiameterMm * waveFrequencyKHz) / best.waveCount,
+    waveSpeedMps: waveSpeedFromPassageFrequency(waveFrequencyKHz, annulusMeanDiameterMm, best.waveCount),
     waveCount: best.waveCount,
     direction: best.direction,
     stability,
