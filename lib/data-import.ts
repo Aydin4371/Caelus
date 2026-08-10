@@ -137,7 +137,7 @@ export function parseDelimitedTable(text: string, fileName: string): DelimitedTa
 }
 
 export function suggestImportMapping(table: DelimitedTable, expectedProbeCount?: number): ImportMapping {
-  const timeColumnIndex = Math.max(0, table.headers.findIndex(isTimeHeader));
+  const timeColumnIndex = table.headers.findIndex(isTimeHeader);
   const candidates = table.headers
     .map((header, columnIndex) => ({ header, columnIndex }))
     .filter((item) => item.columnIndex !== timeColumnIndex && isPressureHeader(item.header));
