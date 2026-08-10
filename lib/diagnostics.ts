@@ -4,8 +4,8 @@ import {
   REVIEW_THRESHOLDS,
   type Comparison,
   type DataQualityResult,
-  type RdeModeResult,
 } from "./rde-analysis.ts";
+import { phasePatternErrorDeg, type RdeModeResult } from "./wave-dynamics.ts";
 import {
   assessResolvedDifference,
   exactAssessment,
@@ -191,7 +191,7 @@ function caseDataQuality(comparisons: Comparison[]) {
   return {
     experiment,
     cfd,
-    findings: findings.length ? findings : ["All six traces passed the current sampling, duration, continuity, and clipping checks."],
+    findings: findings.length ? findings : [`All ${experiment.length + cfd.length} traces passed the current sampling, duration, continuity, and clipping checks.`],
     status: [...experiment, ...cfd].some((result) => result.status === "Review") ? "Review" as const : "Ready" as const,
   };
 }
@@ -228,10 +228,20 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
   const harmonics = metricById(metrics, "harmonics");
   const variability = metricById(metrics, "cycle-variability");
   const mode = metricById(metrics, "wave-count");
+  const phasePattern = metricById(metrics, "phase-pattern");
+  const frequencyDrift = metricById(metrics, "frequency-drift");
+  const phaseJitter = metricById(metrics, "phase-jitter");
+  const modeTransitions = metricById(metrics, "mode-transitions");
 
   const evidence = (observation: string, state: EvidenceState, strength: EvidenceStrength = "moderate", basis: DiagnosticEvidence["basis"] = "case", sourceIds: string[] = []): DiagnosticEvidence => ({ observation, state, strength, basis, sourceIds });
   const add = (id: DiagnosticCauseId, title: string, observations: DiagnosticEvidence[], modelInputs: string[]) => {
     const history = caseHistory.filter((item) => item.causeId === id).map((item) => evidence(item.detail, item.state, item.strength, "case-history"));
+    const existing = candidates.find((candidate) => candidate.id === id);
+    if (existing) {
+      existing.evidence.push(...observations);
+      existing.modelInputs = [...new Set([...existing.modelInputs, ...modelInputs])];
+      return;
+    }
     candidates.push({ id, title, evidence: [...observations, ...history], modelInputs, sourceIds: SOURCE_IDS_BY_CAUSE[id] });
   };
 
@@ -257,14 +267,36 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
       evidence(isMismatch(impulse) ? `Wave-passage impulse difference is ${Math.abs(impulse!.percentDifference ?? 0).toFixed(1)}% and exceeds combined uncertainty.` : "Pressure impulse is not independently resolved.", isMismatch(impulse) ? "supports" : "unknown"),
     ], [metadata.wallBoundaryCondition, `${metadata.nearWallCellSizeMm} mm near-wall cell`, metadata.chemistryModel, metadata.chemistryIntegrator]);
   }
-  if (isMismatch(mode)) {
-    add("initialization-mode", "Initialization or domain-mode sensitivity", [evidence("Experiment and CFD predict different rotating-wave counts.", "supports", "strong")], [metadata.initializationMethod, metadata.dimensionality, `${metadata.meshCells.toLocaleString()} cells`]);
+  if (isMismatch(mode) || isMismatch(phasePattern) || isMismatch(modeTransitions)) {
+    add("initialization-mode", "Initialization or domain-mode sensitivity", [
+      evidence(isMismatch(mode) ? "Experiment and CFD identify different rotating-wave counts." : "Wave count matches across the full record.", isMismatch(mode) ? "supports" : "unknown", "strong"),
+      evidence(isMismatch(phasePattern) ? `CFD circumferential phase pattern differs by ${numeric(phasePattern!.difference).toFixed(1)}° RMS.` : "Circumferential phase pattern is within the current method limit.", isMismatch(phasePattern) ? "supports" : "weakens"),
+      evidence(isMismatch(modeTransitions) ? "Experiment and CFD contain different numbers of window-to-window mode transitions." : "Mode-transition counts match.", isMismatch(modeTransitions) ? "supports" : "weakens"),
+    ], [metadata.initializationMethod, metadata.dimensionality, `${metadata.meshCells.toLocaleString()} cells`, `${metadata.probePositionsDeg.length} pressure probes`]);
   }
   if (isMismatch(harmonics)) {
     add("spatial-resolution", "Spatial resolution or numerical dissipation", [evidence(`Second-harmonic ratio differs by ${Math.abs(harmonics!.percentDifference ?? 0).toFixed(1)}%.`, "supports", "context")], [metadata.spatialScheme, metadata.numericalFlux, metadata.limiterFilter, metadata.chemistryIntegrator]);
   }
-  if (isMismatch(variability) && numeric(variability!.cfd) < numeric(variability!.experiment)) {
-    add("missing-unsteadiness", "Missing unsteadiness in the CFD setup", [evidence(`CFD cycle variability is lower by ${Math.abs(numeric(variability!.difference)).toFixed(1)} percentage points.`, "supports")], [metadata.turbulenceModel, metadata.combustionModel, metadata.inletBoundaryCondition, metadata.dimensionality]);
+  if ((isMismatch(variability) && numeric(variability!.cfd) < numeric(variability!.experiment)) || isMismatch(frequencyDrift) || (isMismatch(phaseJitter) && numeric(phaseJitter!.cfd) < numeric(phaseJitter!.experiment))) {
+    add("missing-unsteadiness", "Missing unsteadiness in the CFD setup", [
+      evidence(isMismatch(variability) ? `CFD cycle variability differs by ${Math.abs(numeric(variability!.difference)).toFixed(1)} percentage points.` : "Cycle-range variability is within the current method limit.", isMismatch(variability) ? "supports" : "weakens"),
+      evidence(isMismatch(frequencyDrift) ? `Frequency-drift difference is ${Math.abs(numeric(frequencyDrift!.difference)).toFixed(1)} percentage points.` : "Frequency drift is similar.", isMismatch(frequencyDrift) ? "supports" : "weakens"),
+      evidence(isMismatch(phaseJitter) ? `Phase-jitter difference is ${Math.abs(numeric(phaseJitter!.difference)).toFixed(1)}°.` : "Phase jitter is similar.", isMismatch(phaseJitter) ? "supports" : "weakens"),
+    ], [metadata.turbulenceModel, metadata.combustionModel, metadata.inletBoundaryCondition, metadata.dimensionality]);
+  }
+
+  const historyTitles: Partial<Record<DiagnosticCauseId, string>> = {
+    "spatial-resolution": "Spatial resolution or numerical dissipation",
+    "chemistry-timescale": "Chemistry timescale or temporal resolution",
+    "inlet-boundary": "Inlet state or backflow representation",
+    "wall-loss": "Wall heat-loss treatment",
+    "initialization-mode": "Initialization or domain-mode sensitivity",
+    "missing-unsteadiness": "Missing unsteadiness in the CFD setup",
+  };
+  for (const item of caseHistory) {
+    if (!candidates.some((candidate) => candidate.id === item.causeId)) {
+      add(item.causeId, historyTitles[item.causeId] ?? "Related-case sensitivity", [], [item.detail]);
+    }
   }
 
   if (!candidates.length) {
@@ -436,8 +468,11 @@ export function buildCaseAssessment(
   };
 
   const speedDifference = cfdMode.waveSpeedMps - testMode.waveSpeedMps;
-  const testSpeedUncertainty = testMode.waveSpeedMps * testFrequencyUncertainty / Math.max(testMode.waveFrequencyKHz, 1e-12);
-  const cfdSpeedUncertainty = cfdMode.waveSpeedMps * cfdFrequencyUncertainty / Math.max(cfdMode.waveFrequencyKHz, 1e-12);
+  const diameterRelativeUncertainty = Number.isFinite(metadata.annulusDiameterUncertaintyMm)
+    ? metadata.annulusDiameterUncertaintyMm / Math.max(metadata.annulusMeanDiameterMm, 1e-12)
+    : 0;
+  const testSpeedUncertainty = testMode.waveSpeedMps * Math.hypot(testFrequencyUncertainty / Math.max(testMode.waveFrequencyKHz, 1e-12), diameterRelativeUncertainty);
+  const cfdSpeedUncertainty = cfdMode.waveSpeedMps * Math.hypot(cfdFrequencyUncertainty / Math.max(cfdMode.waveFrequencyKHz, 1e-12), diameterRelativeUncertainty);
   const speedAssessment = assessResolvedDifference(speedDifference, testSpeedUncertainty, cfdSpeedUncertainty);
   const speedMetric: MetricAssessment = {
     id: "speed",
@@ -449,7 +484,7 @@ export function buildCaseAssessment(
     percentDifference: 100 * speedDifference / Math.max(testMode.waveSpeedMps, 1e-12),
     unit: "m/s",
     uncertainty: speedAssessment.combined,
-    uncertaintyLabel: "Frequency contribution only; geometry uncertainty not supplied",
+    uncertaintyLabel: Number.isFinite(metadata.annulusDiameterUncertaintyMm) ? "Frequency + mean-diameter uncertainty (conservative RSS)" : "Frequency contribution only; diameter uncertainty missing",
     assessment: speedAssessment,
     tone: statusTone(speedAssessment.status),
   };
@@ -490,12 +525,37 @@ export function buildCaseAssessment(
     percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Prototype ±10 percentage-point method limit", assessment: variabilityAssessment, tone: statusTone(variabilityAssessment.status),
   };
 
+  const phaseError = phasePatternErrorDeg(testMode, cfdMode);
+  const phaseAssessment = prototypeAssessment(phaseError <= 20, "≤20° RMS phase-pattern limit", "The shared time shift is removed; this compares relative phase around the probe array.");
+  const phasePattern: MetricAssessment = {
+    id: "phase-pattern", label: "Probe phase pattern", purpose: "Circumferential propagation agreement", experiment: "Reference", cfd: phaseError, difference: phaseError,
+    percentDifference: null, unit: "° RMS", uncertainty: null, uncertaintyLabel: "Prototype ≤20° RMS method limit", assessment: phaseAssessment, tone: statusTone(phaseAssessment.status),
+  };
+
+  const driftDifference = cfdMode.frequencyDriftPct - testMode.frequencyDriftPct;
+  const driftAssessment = prototypeAssessment(Math.abs(driftDifference) <= 3, "±3 percentage-point drift limit", "Compares the fitted cycle-frequency trend over the loaded record.");
+  const frequencyDrift: MetricAssessment = {
+    id: "frequency-drift", label: "Frequency drift", purpose: "Cycle-frequency trend across the record", experiment: testMode.frequencyDriftPct, cfd: cfdMode.frequencyDriftPct, difference: driftDifference,
+    percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Prototype ±3 percentage-point method limit", assessment: driftAssessment, tone: statusTone(driftAssessment.status),
+  };
+
+  const jitterDifference = cfdMode.phaseJitterDeg - testMode.phaseJitterDeg;
+  const jitterAssessment = prototypeAssessment(Math.abs(jitterDifference) <= 10, "±10° phase-jitter limit", "Sliding-window relative-phase variation; sensor timing uncertainty is not yet propagated into this estimator.");
+  const phaseJitter: MetricAssessment = {
+    id: "phase-jitter", label: "Phase jitter", purpose: "Window-to-window propagation consistency", experiment: testMode.phaseJitterDeg, cfd: cfdMode.phaseJitterDeg, difference: jitterDifference,
+    percentDifference: null, unit: "°", uncertainty: null, uncertaintyLabel: "Prototype ±10° method limit", assessment: jitterAssessment, tone: statusTone(jitterAssessment.status),
+  };
+
   const metrics = [
     frequencyMetric,
     speedMetric,
     categoricalMetric("wave-count", "Wave count", "Number of rotating waves", testMode.waveCount, cfdMode.waveCount),
     categoricalMetric("direction", "Direction", "Direction of rotation", testMode.direction, cfdMode.direction),
     categoricalMetric("stability", "Mode stability", "Classification over the analysis window", testMode.stability, cfdMode.stability),
+    categoricalMetric("mode-transitions", "Mode transitions", "Count/direction changes across analysis windows", testMode.modeTransitions, cfdMode.modeTransitions),
+    phasePattern,
+    frequencyDrift,
+    phaseJitter,
     amplitude,
     peak,
     meanPressure,
@@ -510,19 +570,28 @@ export function buildCaseAssessment(
     ? { label: "Matched physical case", status: "Pass", detail: "The user confirmed matching geometry, operating point, probe coordinates, and comparison window." }
     : { label: "Matched physical case", status: "Blocked", detail: "Matching geometry, operating point, probe coordinates, and comparison window have not been confirmed." };
   const layoutRisk = probeLayoutReview(metadata.probePositionsDeg);
+  const synchronizationCheck: ValidityCheck = metadata.probeSynchronizationConfirmed
+    ? { label: "Synchronized probe clocks", status: "Pass", detail: "The user confirmed one common time base within each pressure-probe array." }
+    : { label: "Synchronized probe clocks", status: "Blocked", detail: "Wave count, direction, phase, and speed require synchronized probe timing." };
+  const modeStatus = testMode.identifiability === "Not identifiable" || cfdMode.identifiability === "Not identifiable"
+    ? "Review" as const
+    : testMode.identifiability === "Identified" && cfdMode.identifiability === "Identified"
+      ? "Pass" as const
+      : "Review" as const;
   const checks: ValidityCheck[] = [
     matchCheck,
-    { label: "Probe layout", status: layoutRisk ? "Review" : "Pass", detail: layoutRisk ? "Equally spaced probes can alias some wave-count/direction combinations." : "Nonuniform circumferential spacing reduces common mode aliases." },
+    synchronizationCheck,
+    { label: "Probe layout", status: layoutRisk || metadata.probePositionsDeg.length < 4 ? "Review" : "Pass", detail: layoutRisk ? "Equally spaced probes can alias wave count and direction." : metadata.probePositionsDeg.length < 4 ? "Three nonuniform probes support a candidate mode; four or more are recommended for stronger separation." : `${metadata.probePositionsDeg.length} nonuniform probes reduce common spatial aliases.` },
     { label: "Common evidence window", status: dataQuality.status === "Ready" ? "Pass" : "Review", detail: dataQuality.status === "Ready" ? "All traces provide a continuous, usable comparison window." : "At least one trace has a sampling, duration, continuity, or clipping finding." },
-    { label: "Mode identifiability", status: Math.min(testMode.modeConfidence, cfdMode.modeConfidence) >= 0.6 ? "Pass" : "Review", detail: `Experiment confidence ${testMode.modeConfidence.toFixed(2)}; CFD confidence ${cfdMode.modeConfidence.toFixed(2)}.` },
+    { label: "Mode identifiability", status: modeStatus, detail: `Experiment: ${testMode.identifiability}, ${testMode.phaseResidualDeg.toFixed(1)}° residual; CFD: ${cfdMode.identifiability}, ${cfdMode.phaseResidualDeg.toFixed(1)}° residual.` },
   ];
   const validity = {
     checks,
     status: checks.some((check) => check.status === "Blocked") ? "Blocked" as const : checks.some((check) => check.status === "Review") ? "Review" as const : "Valid" as const,
   };
   const coverage: CoverageItem[] = [
-    { module: "Wave dynamics", status: "Assessed", detail: "Frequency, speed, count, direction, stability, and mode confidence" },
-    { module: "Pressure", status: "Assessed", detail: "Amplitude, peaks, mean, impulse, rise time, harmonics, and cycle variability" },
+    { module: "Wave dynamics", status: modeStatus === "Pass" ? "Assessed" : "Inconclusive", detail: "Frequency, speed, count, direction, phase pattern, drift, jitter, and mode transitions" },
+    { module: "Pressure", status: "Assessed", detail: "Amplitude, peaks, mean, impulse, rise time, harmonics, residuals, and cycle variability" },
     { module: "Uncertainty", status: metrics.some((metric) => metric.assessment.status === "inconclusive") ? "Inconclusive" : "Assessed", detail: "Experiment and CFD pressure/timing inputs propagated where supported" },
     { module: "Thermal", status: "Not assessed", detail: "No temperature or heat-flux data loaded" },
     { module: "Performance", status: "Not assessed", detail: "No thrust or total-pressure data loaded" },
