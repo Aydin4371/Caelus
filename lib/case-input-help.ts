@@ -24,7 +24,10 @@ export const CASE_INPUT_HELP: CaseInputHelpGroup[] = [
     items: [
       { key: "name", label: "Case name", definition: "A short identifier for this experiment–CFD comparison, such as Baseline 8 bar." },
       { key: "annulusMeanDiameterMm", label: "Mean diameter (mm)", definition: "The annulus mean-line diameter used with the measured wave frequency to calculate circumferential wave speed." },
-      { key: "probePositionsDeg", label: "Probe angles (deg)", definition: "The circumferential locations of P1, P2, and P3 in the same angular coordinate system used by the experiment and CFD." },
+      { key: "annulusDiameterUncertaintyMm", label: "Diameter uncertainty (mm)", definition: "Standard uncertainty of the mean-line diameter used when propagating uncertainty into circumferential wave speed." },
+      { key: "probePositionsDeg", label: "Probe angles (deg)", definition: "The circumferential locations of P1 through PN in one angular coordinate system shared by experiment and CFD. Use at least three; four or more nonuniform locations are preferred." },
+      { key: "maximumWaveCount", label: "Maximum expected waves", definition: "The largest physically plausible simultaneous co-rotating wave count included in the phase-mode search. Use prior imaging, operating knowledge, or a conservative upper bound." },
+      { key: "probeSynchronizationConfirmed", label: "Probe synchronization", definition: "Confirms that every pressure column within each file was acquired or exported on one common clock. This is required for direction, wave count, and phase calculations." },
       { key: "comparisonMatchConfirmed", label: "Comparison-match confirmation", definition: "Confirms that geometry, operating point, probe locations, and analysis window match before Caevera interprets any difference." },
       { key: "baselineCaseId", label: "Baseline case · optional", definition: "Links a controlled CFD rerun to the original case whose experiment and operating point remain unchanged." },
       { key: "changedVariable", label: "Single CFD change · optional", definition: "The one model or numerical variable group intentionally changed from the linked baseline." },
@@ -35,8 +38,10 @@ export const CASE_INPUT_HELP: CaseInputHelpGroup[] = [
     title: "Pressure files",
     description: "Supplies the synchronized signals from which every visible graph and pressure metric is calculated.",
     items: [
-      { key: "experimentCsv", label: "Experiment CSV", definition: "Measured pressure history with columns time_ms, p1_MPa, p2_MPa, and p3_MPa. Each row must represent the same instant for all three probes." },
-      { key: "cfdCsv", label: "CFD CSV", definition: "Virtual-probe pressure history at the same locations and operating point, using the same four-column format as the experiment file." },
+      { key: "experimentCsv", label: "Experiment CSV", definition: "Measured pressure history with time_ms and contiguous p1_MPa through pN_MPa columns. Each row must represent the same instant for every probe." },
+      { key: "cfdCsv", label: "CFD CSV", definition: "Virtual-probe pressure history at the same locations and operating point, using the same probe count and column naming as the experiment file." },
+      { key: "experimentSensorBandwidthKHz", label: "Experiment sensor bandwidth (kHz)", definition: "Usable frequency bandwidth of the complete pressure sensor and conditioning chain. Caevera checks whether it covers the fundamental and harmonic bands used in the analysis." },
+      { key: "experimentFilterCutoffKHz", label: "Experiment filter cutoff (kHz)", definition: "Applied analog or digital low-pass/anti-alias cutoff. A cutoff below the analyzed harmonic band limits sharp-front and harmonic comparisons." },
     ],
   },
   {
