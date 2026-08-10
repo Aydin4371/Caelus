@@ -385,7 +385,7 @@ test("arbitrary CSV columns can be mapped, reordered, and converted before analy
   }
   const table = parseDelimitedTable(rows.join("\n"), "ordinary-export.csv");
   const suggested = suggestImportMapping(table, 3);
-  assert.equal(suggested.timeColumnIndex, 0);
+  assert.equal(suggested.timeColumnIndex, -1, "unrecognized time headers must require an explicit mapping");
   const mapped = mapProbeTable(table, {
     timeColumnIndex: 0,
     timeUnit: "s",
