@@ -360,14 +360,28 @@ export default function Home() {
   const updateText = (key: keyof CaseMetadata, value: string) => setDraft((current) => ({ ...current, [key]: value }));
   const numberValue = (value: number) => Number.isFinite(value) ? value : "";
 
-  function returnToCaseWorkspace() {
+  function returnToHome() {
+    setCases([]);
+    setActiveCaseId(null);
+    setCaseBaselineId(null);
+    setEditingCaseId(null);
+    setDraft(cloneMetadata(EMPTY_METADATA));
+    setDraftRelationship(null);
+    setTestPending(null);
+    setCfdPending(null);
+    setShowLoader(false);
+    setShowHelp(false);
+    setError("");
+    setActiveView("signals");
+    setActiveProbe(0);
     setWorkspaceView("case");
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
     requestAnimationFrame(() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
   return <main className="app-shell">
     <header className="product-header">
-      <a className="brand" href="#top" aria-label="Return to case workspace" onClick={(event) => { event.preventDefault(); returnToCaseWorkspace(); }}><span className="brand-mark">C</span><span><strong>CAEVERA</strong><small>BY CAELUS</small></span></a>
+      <a className="brand" href="#top" aria-label="Return to empty home workspace" onClick={(event) => { event.preventDefault(); returnToHome(); }}><span className="brand-mark">C</span><span><strong>CAEVERA</strong><small>BY CAELUS</small></span></a>
       <p>RDE simulation-to-test intelligence</p>
       <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Add case</button></div>
     </header>
