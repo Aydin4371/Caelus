@@ -13,7 +13,12 @@ export type CaseRelationship = {
 export type CaseMetadata = {
   name: string;
   annulusMeanDiameterMm: number;
+  annulusDiameterUncertaintyMm: number;
   probePositionsDeg: number[];
+  maximumWaveCount: number;
+  probeSynchronizationConfirmed: boolean;
+  experimentSensorBandwidthKHz: number;
+  experimentFilterCutoffKHz: number;
   inletPressureBar: number;
   inletTemperatureK: number;
   equivalenceRatio: number;
@@ -64,7 +69,12 @@ export type AnalysisCase = {
 export const EMPTY_METADATA: CaseMetadata = {
   name: "",
   annulusMeanDiameterMm: Number.NaN,
+  annulusDiameterUncertaintyMm: Number.NaN,
   probePositionsDeg: [Number.NaN, Number.NaN, Number.NaN],
+  maximumWaveCount: 4,
+  probeSynchronizationConfirmed: false,
+  experimentSensorBandwidthKHz: Number.NaN,
+  experimentFilterCutoffKHz: Number.NaN,
   inletPressureBar: Number.NaN,
   inletTemperatureK: Number.NaN,
   equivalenceRatio: Number.NaN,
