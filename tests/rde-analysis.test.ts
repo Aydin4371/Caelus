@@ -6,7 +6,6 @@ import type { AnalysisCase, CaseMetadata } from "../lib/caevera-types.ts";
 import { buildCaseAssessment } from "../lib/diagnostics.ts";
 import { DIAGNOSTIC_SOURCES, SOURCE_IDS_BY_CAUSE } from "../lib/diagnostic-knowledge.ts";
 import {
-  analyzeRdeProbeSet,
   assessSignalQuality,
   compareSignals,
   makeDemoProbeSignals,
@@ -16,8 +15,10 @@ import {
   serializeReport,
   type Signal,
 } from "../lib/rde-analysis.ts";
+import { analyzeRdeProbeSet, compareProbeSets, phasePatternErrorDeg } from "../lib/wave-dynamics.ts";
 import { assessResolvedDifference } from "../lib/uncertainty.ts";
 import { CASE_INPUT_HELP } from "../lib/case-input-help.ts";
+import { WAVE_METHOD_SOURCES } from "../lib/wave-method-sources.ts";
 
 function sineSignal({
   name,
@@ -49,7 +50,12 @@ function close(actual: number, expected: number, tolerance: number, label: strin
 const DEMO_METADATA: CaseMetadata = {
   name: "Synthetic test",
   annulusMeanDiameterMm: 82,
-  probePositionsDeg: [0, 110, 245],
+  annulusDiameterUncertaintyMm: 0.1,
+  probePositionsDeg: [0, 47, 131, 226, 311],
+  maximumWaveCount: 4,
+  probeSynchronizationConfirmed: true,
+  experimentSensorBandwidthKHz: 100,
+  experimentFilterCutoffKHz: 80,
   inletPressureBar: 8,
   inletTemperatureK: 300,
   equivalenceRatio: 1,
@@ -150,7 +156,7 @@ test("three-probe parser reads synchronized pressure columns", () => {
   close(signals[2].pressure[0], 3, 1e-12, "P3 pressure");
 });
 
-test("three nonuniform probes recover wave mode with confidence and alternative", () => {
+test("five nonuniform probes recover an identifiable wave mode and alternative", () => {
   const demo = makeDemoProbeSignals();
   const result = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
   assert.equal(result.waveCount, 1);
@@ -160,7 +166,61 @@ test("three nonuniform probes recover wave mode with confidence and alternative"
   close(result.waveSpeedMps, Math.PI * 82 * 8.42, 22, "wave speed");
   assert.ok(result.phaseFit > 0.95);
   assert.ok(result.modeConfidence > 0.6);
+  assert.equal(result.identifiability, "Identified");
+  assert.ok(result.phaseResidualDeg < 5);
   assert.ok(result.alternativeWaveCount >= 1);
+  const cfd = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
+  assert.ok(phasePatternErrorDeg(result, cfd) < 10);
+});
+
+test("probe-set comparison applies one shared lag to preserve spatial phase", () => {
+  const demo = makeDemoProbeSignals();
+  const result = compareProbeSets(demo.test, demo.cfd);
+  assert.equal(result.comparisons.length, demo.test.length);
+  assert.ok(result.comparisons.every((comparison) => Math.abs(comparison.phaseLagUs - result.sharedLagUs) < 1e-9));
+  assert.ok(Number.isFinite(result.alignmentSpreadUs));
+});
+
+test("unconfirmed probe synchronization prevents a confident mode", () => {
+  const demo = makeDemoProbeSignals();
+  const result = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82, { synchronizationConfirmed: false });
+  assert.equal(result.identifiability, "Not identifiable");
+  assert.ok(result.warnings.some((warning) => /synchronization/i.test(warning)));
+});
+
+test("cycle tracking detects frequency drift", () => {
+  const positions = [0, 47, 131, 226, 311];
+  const count = 2400;
+  const dtMs = 0.002;
+  const time = Array.from({ length: count }, (_, index) => index * dtMs);
+  const signals = positions.map((position, probe) => ({
+    name: `drifting P${probe + 1}`,
+    time,
+    pressure: time.map((value) => 1.5 + Math.sin(2 * Math.PI * (8 * value + 0.15 * value ** 2) - position * Math.PI / 180)),
+  }));
+  const result = analyzeRdeProbeSet(signals, positions, 82, { maximumWaveCount: 3, synchronizationConfirmed: true });
+  assert.ok(Math.abs(result.frequencyDriftPct) > 5);
+  assert.equal(result.stability, "Unstable");
+  assert.ok(result.cycleSeries.length > 20);
+});
+
+test("sliding phase windows detect a wave-count transition", () => {
+  const positions = [0, 47, 131, 226, 311];
+  const count = 2400;
+  const dtMs = 0.002;
+  const time = Array.from({ length: count }, (_, index) => index * dtMs);
+  const midpoint = time.at(-1)! / 2;
+  const signals = positions.map((position, probe) => ({
+    name: `switching P${probe + 1}`,
+    time,
+    pressure: time.map((value) => {
+      const waves = value < midpoint ? 1 : 2;
+      return 1.5 + Math.sin(2 * Math.PI * 8 * value - waves * position * Math.PI / 180);
+    }),
+  }));
+  const result = analyzeRdeProbeSet(signals, positions, 82, { maximumWaveCount: 3, synchronizationConfirmed: true });
+  assert.ok(result.modeTransitions >= 1);
+  assert.equal(result.stability, "Unstable");
 });
 
 test("uncertainty distinguishes unresolved and resolved differences", () => {
@@ -171,14 +231,16 @@ test("uncertainty distinguishes unresolved and resolved differences", () => {
 
 test("case assessment connects validity, uncertainty, model inputs, and next run", () => {
   const demo = makeDemoProbeSignals();
-  const comparisons = demo.test.map((signal, index) => compareSignals(signal, demo.cfd[index]));
+  const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
   const experiment = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
   const simulation = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
   const result = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation);
 
   assert.equal(result.validity.status, "Valid");
   assert.equal(result.dataQuality.status, "Ready");
-  assert.equal(result.metrics.length, 12);
+  assert.equal(result.metrics.length, 16);
+  assert.ok(result.metrics.some((metric) => metric.id === "phase-pattern"));
+  assert.ok(result.metrics.some((metric) => metric.id === "phase-jitter"));
   assert.ok(result.metrics.some((metric) => metric.assessment.status === "resolved-mismatch"));
   assert.ok(result.hypotheses[0].modelInputs.length > 0);
   assert.ok(!("score" in result.hypotheses[0]), "diagnostic ranking must not expose an arbitrary score");
@@ -191,7 +253,7 @@ test("case assessment connects validity, uncertainty, model inputs, and next run
 
 test("case assessment blocks recommendations when the physical pairing is unconfirmed", () => {
   const demo = makeDemoProbeSignals();
-  const comparisons = demo.test.map((signal, index) => compareSignals(signal, demo.cfd[index]));
+  const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
   const experiment = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
   const simulation = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
   const result = buildCaseAssessment({ ...DEMO_METADATA, comparisonMatchConfirmed: false }, comparisons, experiment, simulation);
@@ -233,7 +295,7 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   assert.equal(history[0].state, "supports");
   assert.equal(history[0].strength, "strong");
 
-  const comparisons = demo.test.map((signal, index) => compareSignals(signal, demo.cfd[index]));
+  const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
   const result = buildCaseAssessment(DEMO_METADATA, comparisons, analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82), analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82), history);
   assert.equal(result.hypotheses[0].id, "spatial-resolution");
   assert.match(result.nextRun.title, /mesh-convergence/i);
@@ -267,6 +329,23 @@ test("diagnostic source records are complete and mapped", () => {
   assert.ok(SOURCE_IDS_BY_CAUSE["spatial-resolution"].length >= 2);
   assert.deepEqual(SOURCE_IDS_BY_CAUSE["initialization-mode"], ["yao-wang-2016"]);
   assert.deepEqual(SOURCE_IDS_BY_CAUSE["missing-unsteadiness"], []);
+});
+
+test("pressure and wave method sources retain reviewed citation metadata", () => {
+  const expected = new Map([
+    ["bohon-et-al-2019", "10.1007/s10494-019-00017-z"],
+    ["durkee-et-al-2026", "10.2514/6.2026-2036"],
+    ["pritschau-et-al-2025", "10.1016/j.combustflame.2025.114057"],
+    ["tobias-et-al-2022", "10.2514/6.2022-1879"],
+    ["sato-et-al-2025", "10.2514/1.A36447"],
+  ]);
+  assert.equal(WAVE_METHOD_SOURCES.length, expected.size);
+  for (const source of WAVE_METHOD_SOURCES) {
+    assert.equal(source.doi, expected.get(source.id));
+    assert.equal(source.url, `https://doi.org/${source.doi}`);
+    assert.ok(source.supports.length > 50);
+    assert.ok(source.limitation.length > 50);
+  }
 });
 
 test("case input guide documents every model-card field", () => {
