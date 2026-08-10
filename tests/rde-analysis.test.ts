@@ -17,6 +17,7 @@ import {
   type Signal,
 } from "../lib/rde-analysis.ts";
 import { assessResolvedDifference } from "../lib/uncertainty.ts";
+import { CASE_INPUT_HELP } from "../lib/case-input-help.ts";
 
 function sineSignal({
   name,
@@ -266,6 +267,14 @@ test("diagnostic source records are complete and mapped", () => {
   assert.ok(SOURCE_IDS_BY_CAUSE["spatial-resolution"].length >= 2);
   assert.deepEqual(SOURCE_IDS_BY_CAUSE["initialization-mode"], ["yao-wang-2016"]);
   assert.deepEqual(SOURCE_IDS_BY_CAUSE["missing-unsteadiness"], []);
+});
+
+test("case input guide documents every model-card field", () => {
+  const documented = new Set(CASE_INPUT_HELP.flatMap((group) => group.items.map((item) => item.key)));
+  for (const key of Object.keys(DEMO_METADATA)) assert.ok(documented.has(key as keyof CaseMetadata), `missing input help for ${key}`);
+  for (const key of ["baselineCaseId", "changedVariable", "changeDescription", "experimentCsv", "cfdCsv"]) {
+    assert.ok(documented.has(key as never), `missing input help for ${key}`);
+  }
 });
 
 test("serialized report exposes cycle metrics, data quality, provenance, and limitations", () => {
