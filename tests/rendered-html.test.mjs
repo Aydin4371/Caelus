@@ -32,7 +32,10 @@ test("renders development preview metadata", async () => {
   const html = await response.text();
   assert.match(html, developmentPreviewMeta);
   assert.match(html, /CAEVERA/);
+  assert.match(html, /Welcome to Caevera/);
+  assert.match(html, /recommends the next CFD run/);
   assert.match(html, /No cases loaded/);
+  assert.match(html, /rel="manifest"/);
   assert.match(html, /Add first case/);
   assert.match(html, /Load synthetic case history/);
   assert.match(html, />Help</);
@@ -42,4 +45,17 @@ test("renders development preview metadata", async () => {
   assert.doesNotMatch(html, /Synthetic baseline/);
   assert.doesNotMatch(html, /Signal evidence/);
   assert.doesNotMatch(html, /aligned samples/);
+  assert.doesNotMatch(html, /\u2014/);
+});
+
+test("ships an installable Caevera app manifest and service worker", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const manifest = JSON.parse(await readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"));
+  assert.equal(manifest.name, "Caevera by Caelus");
+  assert.equal(manifest.display, "standalone");
+  assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
+  assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
+  const serviceWorker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
+  assert.match(serviceWorker, /caevera-shell-v1/);
+  assert.match(serviceWorker, /request\.mode === "navigate"/);
 });
