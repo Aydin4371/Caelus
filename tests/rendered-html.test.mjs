@@ -60,3 +60,10 @@ test("ships an installable Caevera app manifest and service worker", async () =>
   assert.match(serviceWorker, /caevera-shell-v1/);
   assert.match(serviceWorker, /request\.mode === "navigate"/);
 });
+
+test("keeps decision-card section headings above recommendation text", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.decision-card article > span[^}]*clamp\(23px, 2\.2vw, 30px\)/s);
+  assert.match(css, /\.decision-card h2[^}]*clamp\(21px, 1\.9vw, 27px\)/s);
+});
