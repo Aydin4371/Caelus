@@ -64,6 +64,11 @@ test("ships an installable Caevera app manifest and service worker", async () =>
 test("keeps decision-card section headings above recommendation text", async () => {
   const { readFile } = await import("node:fs/promises");
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(css, /\.decision-card article > span[^}]*clamp\(23px, 2\.2vw, 30px\)/s);
   assert.match(css, /\.decision-card h2[^}]*clamp\(21px, 1\.9vw, 27px\)/s);
+  assert.match(page, /<span>Likely issue<\/span>/);
+  assert.match(page, /<span>Recommended next CFD run<\/span>/);
+  assert.match(page, /<span>Why<\/span>/);
+  assert.doesNotMatch(page, /Make one controlled change, or one technically linked set of changes/);
 });
