@@ -36,6 +36,7 @@ test("renders development preview metadata", async () => {
   assert.match(html, /recommends the next CFD run/);
   assert.match(html, /No cases loaded/);
   assert.match(html, /rel="manifest"/);
+  assert.match(html, />Install Caevera</);
   assert.match(html, /Add first case/);
   assert.match(html, /Load synthetic case history/);
   assert.match(html, />Help</);

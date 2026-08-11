@@ -530,8 +530,24 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 
 /* Installable app and product-entry refinements */
 .install-button { border-color: rgba(37, 136, 162, 0.46); color: var(--test); }
+.install-backdrop { z-index: 30; }
+.install-modal { width: min(540px, 100%); padding: 31px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 30px 90px rgba(55, 78, 84, 0.22); }
+.install-modal h2 { margin: 8px 0; font-size: 28px; font-weight: 590; letter-spacing: -0.03em; }
+.install-modal > p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
+.install-modal ol { margin: 20px 0; padding-left: 22px; color: var(--ink); font-size: 14px; line-height: 1.7; }
+.install-modal li + li { margin-top: 6px; }
+.install-modal .install-note { padding-top: 15px; border-top: 1px solid var(--line); font-size: 13px; }
+.install-actions { margin-top: 22px; display: flex; justify-content: flex-end; }
 .empty-status { margin-top: 19px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--quiet); font: 650 9px var(--font-geist-mono), monospace; letter-spacing: .08em; text-transform: uppercase; }
 .empty-requirements i { display: inline; color: inherit; font-style: normal; }
 .empty-requirements strong { color: var(--text); }
 .decision-card article .next-run-purpose { max-width: 860px; color: var(--quiet); font-size: 13px; }
 .next-run-guidance { max-width: 850px; margin: 11px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+
+@media (max-width: 680px) {
+  .install-modal { padding: 25px 20px; }
+}
+
+@media (display-mode: standalone) {
+  .install-button { display: none; }
+}

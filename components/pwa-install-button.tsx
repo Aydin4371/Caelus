@@ -9,6 +9,8 @@ interface InstallPromptEvent extends Event {
 
 export function PwaInstallButton() {
   const [promptEvent, setPromptEvent] = useState<InstallPromptEvent | null>(null);
+  const [showInstructions, setShowInstructions] = useState(false);
+  const [installed, setInstalled] = useState(false);
 
   useEffect(() => {
     if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
@@ -23,6 +25,8 @@ export function PwaInstallButton() {
     };
     const markInstalled = () => {
       setPromptEvent(null);
+      setShowInstructions(false);
+      setInstalled(true);
     };
 
     window.addEventListener("beforeinstallprompt", capturePrompt);
@@ -34,13 +38,33 @@ export function PwaInstallButton() {
   }, []);
 
   async function install() {
-    if (!promptEvent) return;
+    if (!promptEvent) {
+      setShowInstructions(true);
+      return;
+    }
     await promptEvent.prompt();
-    await promptEvent.userChoice;
+    const choice = await promptEvent.userChoice;
     setPromptEvent(null);
+    if (choice.outcome === "dismissed") setShowInstructions(true);
   }
 
-  if (!promptEvent) return null;
+  if (installed) return null;
 
-  return <button className="button secondary install-button" onClick={install}>Install Caevera</button>;
+  return <>
+    <button className="button secondary install-button" onClick={install}>Install Caevera</button>
+    {showInstructions && <div className="modal-backdrop install-backdrop" role="presentation" onMouseDown={() => setShowInstructions(false)}>
+      <section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title" onMouseDown={(event) => event.stopPropagation()}>
+        <span className="eyebrow">DESKTOP APP</span>
+        <h2 id="install-title">Install Caevera</h2>
+        <p>Your browser has not made the one-click installer available on this page. You can still install Caevera from the browser controls.</p>
+        <ol>
+          <li>Look for the install icon at the right side of the address bar.</li>
+          <li>If it is not there, open the Chrome or Edge menu.</li>
+          <li>Choose <strong>Cast, save, and share</strong>, then <strong>Install Caevera</strong> or <strong>Install page as app</strong>.</li>
+        </ol>
+        <p className="install-note">The installed app opens in its own window and stays connected to the current Caevera version.</p>
+        <div className="install-actions"><button className="button primary" onClick={() => setShowInstructions(false)}>Got it</button></div>
+      </section>
+    </div>}
+  </>;
 }
