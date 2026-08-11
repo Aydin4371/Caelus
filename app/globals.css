@@ -157,9 +157,12 @@ button { color: inherit; }
 
 .decision-card { margin: 0 auto 28px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); box-shadow: 0 16px 42px rgba(38, 70, 82, 0.08); }
 .decision-card article { padding: clamp(22px, 3vw, 34px); border-bottom: 1px solid var(--line); }
-.decision-card article > span { display: block; color: var(--test); font: 650 clamp(23px, 2.2vw, 30px) var(--font-geist-sans), "Segoe UI", sans-serif; letter-spacing: -0.025em; line-height: 1.15; }
-.decision-card h2 { max-width: 980px; margin: 10px 0 0; font-size: clamp(21px, 1.9vw, 27px); font-weight: 590; letter-spacing: -0.025em; line-height: 1.2; }
+.decision-card h2 { max-width: 1100px; margin: 0; font-size: clamp(21px, 1.9vw, 27px); font-weight: 590; letter-spacing: -0.025em; line-height: 1.25; }
+.decision-card .decision-line > span { color: var(--test); font-size: clamp(23px, 2.2vw, 30px); font-weight: 650; }
 .decision-card article p { max-width: 980px; margin: 9px 0 0; color: var(--muted); font-size: clamp(15px, 1.5vw, 18px); line-height: 1.62; }
+.decision-card article .decision-reason { margin-top: 0; }
+.decision-card .decision-reason > strong { color: var(--test); font-size: 1.08em; font-weight: 680; }
+
 .source-links { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
 .source-links a { padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--test); font: 620 11px var(--font-geist-mono), monospace; text-decoration: none; }
 .source-links a:hover { border-color: var(--test); background: var(--surface-blue); }
@@ -339,17 +342,25 @@ button { color: inherit; }
 .wave-summary span { padding: 10px 12px; display: grid; gap: 3px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.58); color: var(--muted); font-size: 11px; }
 .wave-summary b { color: var(--text); font-size: 12px; }
 .wave-warnings { margin: 12px 0 0; padding-left: 18px; color: #805526; font-size: 12px; line-height: 1.55; }
-.legend { display: flex; gap: 15px; color: var(--muted); font: 500 12px var(--font-geist-mono), monospace; }
-.legend span { display: flex; align-items: center; gap: 6px; }
-.legend i { width: 16px; height: 2px; display: inline-block; }
-.legend-test { background: var(--test); }
-.legend-cfd { background: var(--cfd); }
-.legend-residual { background: var(--amber); }
+.legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; color: var(--muted); }
+.legend-item { min-width: 154px; padding: 8px 10px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255, 255, 255, 0.68); }
+.legend-item > span { display: grid; gap: 2px; }
+.legend-item strong { color: var(--text); font-size: 12px; font-weight: 680; line-height: 1.2; }
+.legend-item small { color: var(--quiet); font: 500 9px var(--font-geist-mono), monospace; line-height: 1.2; }
+.legend i { width: 24px; height: 0; display: inline-block; flex: 0 0 auto; }
+.legend-test { border-top: 3px solid var(--test); }
+.legend-cfd { border-top: 3px dashed var(--cfd); }
+.legend-residual { border-top: 3px solid var(--amber); }
 .chart { width: 100%; overflow: hidden; }
 .chart svg { display: block; width: 100%; height: auto; max-height: 390px; }
+.cycle-chart-stack { display: grid; gap: 18px; }
+.series-experiment { stroke-width: 2.4; }
+.series-cfd { stroke-width: 2.2; stroke-dasharray: 7 5; }
+.series-residual { stroke-width: 2.4; }
 .grid-line { stroke: rgba(91, 127, 138, 0.2); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.axis-value { fill: #627c85; font: 12px var(--font-geist-mono), monospace; }
-.axis-title { fill: #627c85; font: 11px var(--font-geist-mono), monospace; letter-spacing: 0.05em; }
+.axis-value { fill: #526f79; font: 13px var(--font-geist-mono), monospace; }
+.axis-title { fill: #3e616d; font: 650 12px var(--font-geist-mono), monospace; letter-spacing: 0.04em; }
+
 .zero-line { stroke: rgba(25, 52, 62, 0.36); stroke-width: 1; stroke-dasharray: 5 5; vector-effect: non-scaling-stroke; }
 
 footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap: 20px; color: #718992; font: 520 8px var(--font-geist-mono), monospace; text-transform: uppercase; letter-spacing: 0.07em; }

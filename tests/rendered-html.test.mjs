@@ -61,14 +61,27 @@ test("ships an installable Caevera app manifest and service worker", async () =>
   assert.match(serviceWorker, /request\.mode === "navigate"/);
 });
 
-test("keeps decision-card section headings above recommendation text", async () => {
+test("uses inline labels for the diagnostic recommendation", async () => {
   const { readFile } = await import("node:fs/promises");
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  assert.match(css, /\.decision-card article > span[^}]*clamp\(23px, 2\.2vw, 30px\)/s);
+  assert.match(css, /\.decision-card \.decision-line > span[^}]*clamp\(23px, 2\.2vw, 30px\)/s);
   assert.match(css, /\.decision-card h2[^}]*clamp\(21px, 1\.9vw, 27px\)/s);
-  assert.match(page, /<span>Likely issue<\/span>/);
-  assert.match(page, /<span>Recommended next CFD run<\/span>/);
-  assert.match(page, /<span>Why<\/span>/);
+  assert.match(page, /<span>Likely issue:<\/span> \{likelyHypothesis/);
+  assert.match(page, /<span>Recommended next CFD run:<\/span> \{assessment\.nextRun\.title\}/);
+  assert.match(page, /<strong>Why:<\/strong> \{likelyEvidence/);
   assert.doesNotMatch(page, /Make one controlled change, or one technically linked set of changes/);
+});
+
+test("uses clear graph labels and a shared legend for every case", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /<strong>Measured experiment<\/strong><small>Solid teal line<\/small>/);
+  assert.match(page, /<strong>CFD simulation<\/strong><small>Dashed blue line<\/small>/);
+  assert.match(page, /Measured experiment minus CFD simulation/);
+  assert.match(page, /TIME \(ms\)/);
+  assert.match(page, /FREQUENCY \(kHz\)/);
+  assert.match(page, /PROBE POSITION \(deg\)/);
+  assert.match(css, /\.series-cfd[^}]*stroke-dasharray: 7 5/);
 });

@@ -94,18 +94,19 @@ function SignalChart({ comparison }: { comparison: Comparison }) {
   const middle = (minimum + maximum) / 2;
   const start = comparison.time[0] ?? 0;
   const end = comparison.time.at(-1) ?? 0;
-  const left = 60; const top = 12; const width = 700; const height = 232;
+  const left = 96; const top = 16; const width = 734; const height = 236;
   return <div className="chart" role="img" aria-label="Aligned experimental and CFD pressure histories">
-    <svg viewBox="0 0 790 286">
+    <svg viewBox="0 0 860 324">
       <PlotGrid left={left} top={top} width={width} height={height} />
-      <polyline points={polylinePoints(comparison.cfd, width, height, minimum, maximum, left, top)} fill="none" stroke={CFD_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-      <polyline points={polylinePoints(comparison.test, width, height, minimum, maximum, left, top)} fill="none" stroke={TEST_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-      <text x="7" y={top + 4} className="axis-value">{maximum.toFixed(2)}</text>
-      <text x="7" y={top + height / 2 + 4} className="axis-value">{middle.toFixed(2)}</text>
-      <text x="7" y={top + height + 4} className="axis-value">{minimum.toFixed(2)}</text>
-      <text x={left} y="276" className="axis-value">{start.toFixed(2)}</text>
-      <text x={left + width} y="276" textAnchor="end" className="axis-value">{end.toFixed(2)} ms</text>
-      <text x="17" y="132" transform="rotate(-90 17 132)" textAnchor="middle" className="axis-title">PRESSURE (MPa)</text>
+      <polyline className="series-cfd" points={polylinePoints(comparison.cfd, width, height, minimum, maximum, left, top)} fill="none" stroke={CFD_COLOR} vectorEffect="non-scaling-stroke" />
+      <polyline className="series-experiment" points={polylinePoints(comparison.test, width, height, minimum, maximum, left, top)} fill="none" stroke={TEST_COLOR} vectorEffect="non-scaling-stroke" />
+      <text x="82" y={top + 4} textAnchor="end" className="axis-value">{maximum.toFixed(2)}</text>
+      <text x="82" y={top + height / 2 + 4} textAnchor="end" className="axis-value">{middle.toFixed(2)}</text>
+      <text x="82" y={top + height + 4} textAnchor="end" className="axis-value">{minimum.toFixed(2)}</text>
+      <text x={left} y="278" className="axis-value">{start.toFixed(2)}</text>
+      <text x={left + width} y="278" textAnchor="end" className="axis-value">{end.toFixed(2)}</text>
+      <text x={left + width / 2} y="313" textAnchor="middle" className="axis-title">TIME (ms)</text>
+      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">PRESSURE (MPa)</text>
     </svg>
   </div>;
 }
@@ -119,16 +120,21 @@ function SpectrumChart({ comparison }: { comparison: Comparison }) {
   const cfd = trim(comparison.cfdSpectrum).map((point) => point.value);
   const all = [...test, ...cfd];
   const minimum = Math.min(...all); const maximum = Math.max(...all);
-  const left = 52; const top = 12; const width = 708; const height = 232;
+  const middle = (minimum + maximum) / 2;
+  const left = 96; const top = 16; const width = 734; const height = 236;
   return <div className="chart" role="img" aria-label="Experimental and CFD pressure spectra">
-    <svg viewBox="0 0 790 286">
+    <svg viewBox="0 0 860 324">
       <PlotGrid left={left} top={top} width={width} height={height} />
-      <polyline points={polylinePoints(cfd, width, height, minimum, maximum, left, top)} fill="none" stroke={CFD_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-      <polyline points={polylinePoints(test, width, height, minimum, maximum, left, top)} fill="none" stroke={TEST_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-      <text x={left} y="276" className="axis-value">0</text>
-      <text x={left + width / 2} y="276" textAnchor="middle" className="axis-value">{(maximumFrequency / 2).toFixed(1)}</text>
-      <text x={left + width} y="276" textAnchor="end" className="axis-value">{maximumFrequency.toFixed(1)} kHz</text>
-      <text x="15" y="132" transform="rotate(-90 15 132)" textAnchor="middle" className="axis-title">LOG AMPLITUDE</text>
+      <polyline className="series-cfd" points={polylinePoints(cfd, width, height, minimum, maximum, left, top)} fill="none" stroke={CFD_COLOR} vectorEffect="non-scaling-stroke" />
+      <polyline className="series-experiment" points={polylinePoints(test, width, height, minimum, maximum, left, top)} fill="none" stroke={TEST_COLOR} vectorEffect="non-scaling-stroke" />
+      <text x="82" y={top + 4} textAnchor="end" className="axis-value">{maximum.toFixed(2)}</text>
+      <text x="82" y={top + height / 2 + 4} textAnchor="end" className="axis-value">{middle.toFixed(2)}</text>
+      <text x="82" y={top + height + 4} textAnchor="end" className="axis-value">{minimum.toFixed(2)}</text>
+      <text x={left} y="278" className="axis-value">0</text>
+      <text x={left + width / 2} y="278" textAnchor="middle" className="axis-value">{(maximumFrequency / 2).toFixed(1)}</text>
+      <text x={left + width} y="278" textAnchor="end" className="axis-value">{maximumFrequency.toFixed(1)}</text>
+      <text x={left + width / 2} y="313" textAnchor="middle" className="axis-title">FREQUENCY (kHz)</text>
+      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">LOG AMPLITUDE</text>
     </svg>
   </div>;
 }
@@ -137,24 +143,25 @@ function ResidualChart({ comparison }: { comparison: Comparison }) {
   const residual = comparison.test.map((value, index) => value - comparison.cfd[index]);
   const bound = Math.max(...residual.map(Math.abs), 1e-4);
   const start = comparison.time[0] ?? 0; const end = comparison.time.at(-1) ?? 0;
-  const left = 60; const top = 12; const width = 700; const height = 232;
+  const left = 96; const top = 16; const width = 734; const height = 236;
   return <div className="chart" role="img" aria-label="Experimental pressure minus CFD pressure residual">
-    <svg viewBox="0 0 790 286">
+    <svg viewBox="0 0 860 324">
       <PlotGrid left={left} top={top} width={width} height={height} />
       <line x1={left} y1={top + height / 2} x2={left + width} y2={top + height / 2} className="zero-line" />
-      <polyline points={polylinePoints(residual, width, height, -bound, bound, left, top)} fill="none" stroke={RESIDUAL_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-      <text x="7" y={top + 4} className="axis-value">+{bound.toFixed(2)}</text>
-      <text x="32" y={top + height / 2 + 4} className="axis-value">0</text>
-      <text x="7" y={top + height + 4} className="axis-value">−{bound.toFixed(2)}</text>
-      <text x={left} y="276" className="axis-value">{start.toFixed(2)}</text>
-      <text x={left + width} y="276" textAnchor="end" className="axis-value">{end.toFixed(2)} ms</text>
-      <text x="17" y="132" transform="rotate(-90 17 132)" textAnchor="middle" className="axis-title">TEST − CFD (MPa)</text>
+      <polyline className="series-residual" points={polylinePoints(residual, width, height, -bound, bound, left, top)} fill="none" stroke={RESIDUAL_COLOR} vectorEffect="non-scaling-stroke" />
+      <text x="82" y={top + 4} textAnchor="end" className="axis-value">+{bound.toFixed(2)}</text>
+      <text x="82" y={top + height / 2 + 4} textAnchor="end" className="axis-value">0</text>
+      <text x="82" y={top + height + 4} textAnchor="end" className="axis-value">−{bound.toFixed(2)}</text>
+      <text x={left} y="278" className="axis-value">{start.toFixed(2)}</text>
+      <text x={left + width} y="278" textAnchor="end" className="axis-value">{end.toFixed(2)}</text>
+      <text x={left + width / 2} y="313" textAnchor="middle" className="axis-title">TIME (ms)</text>
+      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">PRESSURE DIFFERENCE (MPa)</text>
     </svg>
   </div>;
 }
 
 function PhaseChart({ experiment, simulation, positionsDeg }: { experiment: RdeModeResult; simulation: RdeModeResult; positionsDeg: number[] }) {
-  const left = 60; const top = 12; const width = 700; const height = 232;
+  const left = 96; const top = 16; const width = 734; const height = 236;
   const order = positionsDeg.map((position, index) => ({ position: ((position % 360) + 360) % 360, index })).sort((a, b) => a.position - b.position);
   const points = (values: number[]) => positionsDeg.map((position, index) => {
     const ordered = order[index];
@@ -163,15 +170,16 @@ function PhaseChart({ experiment, simulation, positionsDeg }: { experiment: RdeM
     return `${x.toFixed(2)},${y.toFixed(2)}`;
   }).join(" ");
   return <div className="chart" role="img" aria-label="Circumferential phase pattern at the dominant passage frequency">
-    <svg viewBox="0 0 790 286">
+    <svg viewBox="0 0 860 324">
       <PlotGrid left={left} top={top} width={width} height={height} />
       <line x1={left} y1={top + height / 2} x2={left + width} y2={top + height / 2} className="zero-line" />
-      <polyline points={points(simulation.probePhasesDeg)} fill="none" stroke={CFD_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-      <polyline points={points(experiment.probePhasesDeg)} fill="none" stroke={TEST_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <polyline className="series-cfd" points={points(simulation.probePhasesDeg)} fill="none" stroke={CFD_COLOR} vectorEffect="non-scaling-stroke" />
+      <polyline className="series-experiment" points={points(experiment.probePhasesDeg)} fill="none" stroke={TEST_COLOR} vectorEffect="non-scaling-stroke" />
       {positionsDeg.map((position, index) => <g key={index}><circle cx={left + (((position % 360) + 360) % 360) / 360 * width} cy={top + height - (experiment.probePhasesDeg[index] + 180) / 360 * height} r="4" fill={TEST_COLOR} /><circle cx={left + (((position % 360) + 360) % 360) / 360 * width} cy={top + height - (simulation.probePhasesDeg[index] + 180) / 360 * height} r="4" fill={CFD_COLOR} /></g>)}
-      <text x="18" y={top + 4} className="axis-value">+180</text><text x="32" y={top + height / 2 + 4} className="axis-value">0</text><text x="20" y={top + height + 4} className="axis-value">−180</text>
-      <text x={left} y="276" className="axis-value">0°</text><text x={left + width / 2} y="276" textAnchor="middle" className="axis-value">180°</text><text x={left + width} y="276" textAnchor="end" className="axis-value">360°</text>
-      <text x="15" y="132" transform="rotate(-90 15 132)" textAnchor="middle" className="axis-title">RELATIVE PHASE (deg)</text>
+      <text x="82" y={top + 4} textAnchor="end" className="axis-value">+180</text><text x="82" y={top + height / 2 + 4} textAnchor="end" className="axis-value">0</text><text x="82" y={top + height + 4} textAnchor="end" className="axis-value">−180</text>
+      <text x={left} y="278" className="axis-value">0</text><text x={left + width / 2} y="278" textAnchor="middle" className="axis-value">180</text><text x={left + width} y="278" textAnchor="end" className="axis-value">360</text>
+      <text x={left + width / 2} y="313" textAnchor="middle" className="axis-title">PROBE POSITION (deg)</text>
+      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">RELATIVE PHASE (deg)</text>
     </svg>
   </div>;
 }
@@ -181,7 +189,7 @@ function CycleChart({ experiment, simulation }: { experiment: RdeModeResult; sim
   const start = Math.min(...all.map((point) => point.timeMs));
   const end = Math.max(...all.map((point) => point.timeMs));
   const render = (key: "frequencyKHz" | "peakPressureMpa", label: string, digits: number) => {
-    const left = 60; const top = 10; const width = 700; const height = 118;
+    const left = 96; const top = 12; const width = 734; const height = 124;
     const minimum = Math.min(...all.map((point) => point[key]));
     const maximum = Math.max(...all.map((point) => point[key]));
     const points = (mode: RdeModeResult) => mode.cycleSeries.map((point) => {
@@ -189,13 +197,14 @@ function CycleChart({ experiment, simulation }: { experiment: RdeModeResult; sim
       const y = top + height - (point[key] - minimum) / Math.max(maximum - minimum, 1e-12) * height;
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     }).join(" ");
-    return <svg key={key} viewBox="0 0 790 164" aria-label={label}>
+    return <svg key={key} viewBox="0 0 860 210" aria-label={label}>
       <PlotGrid left={left} top={top} width={width} height={height} />
-      <polyline points={points(simulation)} fill="none" stroke={CFD_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-      <polyline points={points(experiment)} fill="none" stroke={TEST_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-      <text x="7" y={top + 4} className="axis-value">{maximum.toFixed(digits)}</text><text x="7" y={top + height + 4} className="axis-value">{minimum.toFixed(digits)}</text>
-      <text x={left} y="155" className="axis-value">{start.toFixed(2)}</text><text x={left + width} y="155" textAnchor="end" className="axis-value">{end.toFixed(2)} ms</text>
-      <text x="15" y="69" transform="rotate(-90 15 69)" textAnchor="middle" className="axis-title">{label}</text>
+      <polyline className="series-cfd" points={points(simulation)} fill="none" stroke={CFD_COLOR} vectorEffect="non-scaling-stroke" />
+      <polyline className="series-experiment" points={points(experiment)} fill="none" stroke={TEST_COLOR} vectorEffect="non-scaling-stroke" />
+      <text x="82" y={top + 4} textAnchor="end" className="axis-value">{maximum.toFixed(digits)}</text><text x="82" y={top + height + 4} textAnchor="end" className="axis-value">{minimum.toFixed(digits)}</text>
+      <text x={left} y="162" className="axis-value">{start.toFixed(2)}</text><text x={left + width} y="162" textAnchor="end" className="axis-value">{end.toFixed(2)}</text>
+      <text x={left + width / 2} y="197" textAnchor="middle" className="axis-title">TIME (ms)</text>
+      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">{label}</text>
     </svg>;
   };
   return <div className="chart cycle-chart-stack" role="img" aria-label="Cycle-by-cycle passage frequency and peak pressure">
@@ -206,8 +215,8 @@ function CycleChart({ experiment, simulation }: { experiment: RdeModeResult; sim
 
 function Legend({ residual = false }: { residual?: boolean }) {
   return <div className="legend" aria-label="Chart legend">{residual
-    ? <span><i className="legend-residual" />Experiment − CFD</span>
-    : <><span><i className="legend-test" />Experiment</span><span><i className="legend-cfd" />CFD</span></>
+    ? <div className="legend-item"><i className="legend-residual" /><span><strong>Pressure difference</strong><small>Measured experiment minus CFD simulation</small></span></div>
+    : <><div className="legend-item"><i className="legend-test" /><span><strong>Measured experiment</strong><small>Solid teal line</small></span></div><div className="legend-item"><i className="legend-cfd" /><span><strong>CFD simulation</strong><small>Dashed blue line</small></span></div></>
   }</div>;
 }
 
@@ -523,9 +532,9 @@ export default function Home() {
           <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div><h1>{activeCase.metadata.name}</h1><p>Operating point {cases.findIndex((item) => item.id === activeCase.id) + 1} of {cases.length} · deterministic local analysis</p></div>
 
           <section className="decision-card" aria-label="Diagnostic recommendation">
-            <article><span>Likely issue</span><h2>{likelyHypothesis?.title ?? "Cannot assess"}</h2></article>
-            <article><span>Recommended next CFD run</span><h2>{assessment.nextRun.title}</h2><p>{assessment.nextRun.change}</p></article>
-            <article><span>Why</span><p>{likelyEvidence.length ? likelyEvidence.join(" ") : "The loaded evidence does not support a more specific diagnosis."}</p>{likelySources.length > 0 && <div className="source-links" aria-label="Diagnostic sources">{likelySources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>}</article>
+            <article><h2 className="decision-line"><span>Likely issue:</span> {likelyHypothesis?.title ?? "Cannot assess"}</h2></article>
+            <article><h2 className="decision-line"><span>Recommended next CFD run:</span> {assessment.nextRun.title}</h2><p>{assessment.nextRun.change}</p></article>
+            <article><p className="decision-reason"><strong>Why:</strong> {likelyEvidence.length ? likelyEvidence.join(" ") : "The loaded evidence does not support a more specific diagnosis."}</p>{likelySources.length > 0 && <div className="source-links" aria-label="Diagnostic sources">{likelySources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>}</article>
             <div className="decision-actions"><button className="button secondary" onClick={openCaseEditor}>Edit case</button><button className="button secondary" onClick={downloadReport}>Download evidence report</button><button className="button secondary" onClick={downloadWorkspace}>Save complete workspace</button>{cases.length > 1 && <button className="button secondary" onClick={() => setWorkspaceView("compare")}>View case history</button>}</div>
           </section>
 
