@@ -19,7 +19,7 @@ The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
 
-## Version 0.7 product contract
+## Version 1.0 product contract
 
 Each case requires:
 
@@ -114,6 +114,31 @@ No LLM is used in v0.6.
 
 No LLM is used in v0.7.
 
+## v1.0 real-user workflow
+
+- Maps arbitrary CSV, TSV, or semicolon-delimited time and pressure columns
+  instead of requiring prescribed header names or column order.
+- Converts user-confirmed time and pressure units into milliseconds and MPa,
+  previews converted rows, and records the complete mapping in the case.
+- Adds conclusion-specific data-quality gates for duration, sample density,
+  time jitter, gaps, clipping, spectral signal-to-noise ratio, and aliasing.
+- Withholds wave count, direction, speed, phase pattern, and jitter whenever
+  the mapped probe array or data quality cannot uniquely support them.
+- Gives every case input a specific unit/format, source location, calculation
+  use, requirement state, and missing-input consequence.
+- Saves and reopens complete browser workspaces with raw signals, mappings,
+  metadata, uncertainty, and related-case links. Derived outputs are
+  recalculated with the recorded analysis version rather than stored as stale
+  duplicates.
+- Replaces arbitrary next-run percentages with recommendations tied to the
+  current model-card values, combined uncertainty, and documented sensitivity
+  sequence.
+- Reproduces published RDE frequency/wave-count/geometry-to-speed values and
+  separately registers raw experimental datasets without presenting them as
+  paired experiment–CFD validation.
+
+No heat, thrust, LLM, or automatic CFD execution is included in v1.0.
+
 ## Code structure
 
 - `lib/rde-analysis.ts`: signal parsing, pressure-cycle metrics, FFT spectra,
@@ -127,6 +152,10 @@ No LLM is used in v0.7.
 - `lib/case-history.ts`: related-case checks, direct deltas, and controlled-rerun evidence
 - `lib/diagnostic-knowledge.ts`: reviewed RDE source records and cause mappings
 - `lib/caevera-types.ts`: case and model-card schemas
+- `lib/data-import.ts`: delimited-file parsing, column mapping, unit conversion, provenance, and previews
+- `lib/workspace.ts`: versioned complete-workspace save and restore
+- `lib/published-benchmarks.ts`: attributable published calculation benchmarks and raw-dataset registry
+- `components/pressure-file-mapper.tsx`: real-file mapping and preview interaction
 - `app/page.tsx`: interaction and presentation
 
 ## Run locally
@@ -140,21 +169,21 @@ npm run dev
 
 Open the local address printed by the development server.
 
-## Pressure-file format
+## Pressure-file mapping
 
-Upload one experimental file and one CFD file. Each contains a shared time base
-and three or more contiguous pressure columns:
+Upload one experimental file and one CFD file as CSV, TSV, or
+semicolon-delimited text. The columns may use any names and any order. In the
+loader, explicitly select:
 
-```csv
-time_ms,p1_MPa,p2_MPa,p3_MPa,p4_MPa,p5_MPa
-0.000000,1.602100,1.052079,2.259342,1.809100,0.972400
-0.002500,1.751244,1.217591,2.365071,1.654800,0.901700
-```
+1. the acquisition-time column and its unit (`s`, `ms`, `us`, or `ns`);
+2. one pressure column for every physical/virtual probe;
+3. each pressure column's unit (`Pa`, `kPa`, `MPa`, `bar`, or `psi`).
 
-Each file needs at least 32 valid rows. Supported time units are `ms`, `s`, and
-`us`; supported pressure units are `MPa`, `kPa`, and `Pa`. Nonuniform probe
-spacing is strongly preferred because equally spaced layouts can alias some
-wave-count and direction combinations.
+Each file needs at least 32 valid mapped rows. The experiment and CFD files need
+the same probe count, and the entered angles define their one-to-one physical
+matching. Caevera previews values after conversion to milliseconds and MPa
+before analysis. Nonuniform probe spacing is strongly preferred because equally
+spaced layouts can alias wave-count and direction combinations.
 
 ## Verification
 
@@ -185,6 +214,7 @@ comparisons remain outside this release.
 
 See [docs/methodology.md](docs/methodology.md) for equations, assumptions, and
 claim boundaries, [docs/pressure-wave-sources.md](docs/pressure-wave-sources.md)
-for the pressure/wave method sources, and
-[docs/diagnostic-sources.md](docs/diagnostic-sources.md) for the diagnostic
-source ledger.
+for the pressure/wave method sources,
+[docs/published-validation.md](docs/published-validation.md) for the validation
+case ledger, and [docs/diagnostic-sources.md](docs/diagnostic-sources.md) for the
+diagnostic source ledger.

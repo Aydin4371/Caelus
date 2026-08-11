@@ -19,6 +19,9 @@ import { analyzeRdeProbeSet, compareProbeSets, phasePatternErrorDeg } from "../l
 import { assessResolvedDifference } from "../lib/uncertainty.ts";
 import { CASE_INPUT_HELP } from "../lib/case-input-help.ts";
 import { WAVE_METHOD_SOURCES } from "../lib/wave-method-sources.ts";
+import { mapProbeTable, parseDelimitedTable, suggestImportMapping } from "../lib/data-import.ts";
+import { deserializeWorkspace, serializeWorkspace, WORKSPACE_SCHEMA } from "../lib/workspace.ts";
+import { PUBLISHED_VALIDATION_SOURCES, PUBLISHED_WAVE_SPEED_BENCHMARKS, RAW_DATASET_VALIDATION_CASES, waveSpeedFromPassageFrequency } from "../lib/published-benchmarks.ts";
 
 function sineSignal({
   name,
@@ -258,7 +261,7 @@ test("case assessment blocks recommendations when the physical pairing is unconf
   const simulation = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
   const result = buildCaseAssessment({ ...DEMO_METADATA, comparisonMatchConfirmed: false }, comparisons, experiment, simulation);
   assert.equal(result.validity.status, "Blocked");
-  assert.match(result.nextRun.title, /verify/i);
+  assert.match(result.nextRun.title, /correct/i);
 });
 
 test("case-history comparison calculates direct physical and CFD-error deltas", () => {
@@ -354,6 +357,12 @@ test("case input guide documents every model-card field", () => {
   for (const key of ["baselineCaseId", "changedVariable", "changeDescription", "experimentCsv", "cfdCsv"]) {
     assert.ok(documented.has(key as never), `missing input help for ${key}`);
   }
+  for (const item of CASE_INPUT_HELP.flatMap((group) => group.items)) {
+    assert.ok(item.format.length > 8, `${item.key} needs a concrete format/unit explanation`);
+    assert.ok(item.obtainFrom.length > 8, `${item.key} needs a source location`);
+    assert.ok(item.usedFor.length > 8, `${item.key} needs a calculation use`);
+    assert.ok(item.missingEffect.length > 8, `${item.key} needs a missing-input consequence`);
+  }
 });
 
 test("serialized report exposes cycle metrics, data quality, provenance, and limitations", () => {
@@ -366,4 +375,103 @@ test("serialized report exposes cycle metrics, data quality, provenance, and lim
   assert.ok(report.metrics.pressureCycleMetrics.experiment.cycleCount > 20);
   assert.equal(report.dataQuality.experiment.status, "Ready");
   assert.ok(report.limitations.length >= 3);
+});
+
+
+test("arbitrary CSV columns can be mapped, reordered, and converted before analysis", () => {
+  const rows = ["clock_seconds,PT_B_bar,operator_note,PT_A_kPa,PT_C_psi"];
+  for (let index = 0; index < 40; index += 1) {
+    rows.push(`${index * 0.0001},${2 + index * 0.001},steady,${1000 + index},${100 + index * 0.1}`);
+  }
+  const table = parseDelimitedTable(rows.join("\n"), "ordinary-export.csv");
+  const suggested = suggestImportMapping(table, 3);
+  assert.equal(suggested.timeColumnIndex, -1, "unrecognized time headers must require an explicit mapping");
+  const mapped = mapProbeTable(table, {
+    timeColumnIndex: 0,
+    timeUnit: "s",
+    probes: [
+      { label: "P1", columnIndex: 3, unit: "kPa" },
+      { label: "P2", columnIndex: 1, unit: "bar" },
+      { label: "P3", columnIndex: 4, unit: "psi" },
+    ],
+  });
+  assert.equal(mapped.signals.length, 3);
+  close(mapped.signals[0].time[1], 0.1, 1e-12, "mapped time");
+  close(mapped.signals[0].pressure[0], 1, 1e-12, "mapped kPa");
+  close(mapped.signals[1].pressure[0], 0.2, 1e-12, "mapped bar");
+  close(mapped.signals[2].pressure[0], 0.6894757293, 1e-9, "mapped psi");
+  assert.equal(mapped.provenance.timeColumn, "clock_seconds");
+  assert.equal(mapped.preview.rows.length, 6);
+});
+
+test("mapped import reports omitted rows and rejects duplicate column assignments", () => {
+  const rows = ["t_ms,left_kPa,right_kPa,third_kPa"];
+  for (let index = 0; index < 40; index += 1) rows.push(`${index * 0.01},${1000 + index},${1100 + index},${1200 + index}`);
+  rows.splice(10, 0, "bad,row,,,");
+  const table = parseDelimitedTable(rows.join("\n"), "rows.tsv");
+  const mapping = {
+    timeColumnIndex: 0,
+    timeUnit: "ms" as const,
+    probes: [
+      { label: "P1", columnIndex: 1, unit: "kPa" as const },
+      { label: "P2", columnIndex: 2, unit: "kPa" as const },
+      { label: "P3", columnIndex: 3, unit: "kPa" as const },
+    ],
+  };
+  const mapped = mapProbeTable(table, mapping);
+  assert.equal(mapped.provenance.droppedRows, 1);
+  assert.throws(() => mapProbeTable(table, { ...mapping, probes: mapping.probes.map((probe) => ({ ...probe, columnIndex: 1 })) }), /different source column/i);
+});
+
+test("spectral noise and undersampling limit only unsupported pressure conclusions", () => {
+  let state = 17;
+  const count = 600;
+  const dtMs = 0.02;
+  const time = Array.from({ length: count }, (_, index) => index * dtMs);
+  const pressure = time.map(() => {
+    state = (1664525 * state + 1013904223) >>> 0;
+    return 1 + (state / 0xffffffff - 0.5) * 0.02;
+  });
+  const signal: Signal = { name: "noise-dominated", time, pressure };
+  const quality = assessSignalQuality(signal);
+  assert.equal(quality.phaseUsable, false);
+  assert.ok(quality.limitedOutputs.some((item) => /wave count/i.test(item)));
+  const mode = analyzeRdeProbeSet([0, 1, 2, 3, 4].map((probe) => ({ ...signal, name: `noise P${probe + 1}`, time: [...time], pressure: [...pressure] })), [0, 47, 131, 226, 311], 82, { synchronizationConfirmed: true });
+  assert.equal(mode.identifiability, "Not identifiable");
+});
+
+test("complete workspaces round-trip raw signals, mappings, links, and non-finite optional values", () => {
+  const demo = makeDemoProbeSignals();
+  const metadata = { ...DEMO_METADATA, probePositionsDeg: [...DEMO_METADATA.probePositionsDeg], meshConvergencePct: Number.NaN };
+  const provenance = {
+    fileName: "mapped.csv",
+    delimiter: "comma" as const,
+    timeColumn: "clock",
+    timeUnit: "ms" as const,
+    pressureColumns: demo.test.map((_, index) => ({ label: `P${index + 1}`, column: `sensor_${index + 1}`, unit: "MPa" as const })),
+    sourceRows: demo.test[0].time.length,
+    validRows: demo.test[0].time.length,
+    droppedRows: 0,
+  };
+  const item: AnalysisCase = { id: "saved-case", source: "uploaded", relationship: null, metadata, testSignals: demo.test, cfdSignals: demo.cfd, imports: { experiment: provenance, cfd: { ...provenance, fileName: "cfd.csv" } } };
+  const serialized = serializeWorkspace({ cases: [item], activeCaseId: item.id, baselineCaseId: item.id });
+  assert.match(serialized, new RegExp(WORKSPACE_SCHEMA));
+  const restored = deserializeWorkspace(serialized);
+  assert.equal(restored.cases.length, 1);
+  assert.equal(restored.activeCaseId, item.id);
+  assert.equal(restored.cases[0].imports?.experiment.timeColumn, "clock");
+  assert.equal(restored.cases[0].testSignals[0].pressure.length, demo.test[0].pressure.length);
+  assert.ok(Number.isNaN(restored.cases[0].metadata.meshConvergencePct));
+  assert.throws(() => deserializeWorkspace('{"schema":"other"}'), /not a Caevera/i);
+});
+
+test("published RDE wave-speed values are reproduced without treating them as paired CFD validation", () => {
+  for (const benchmark of PUBLISHED_WAVE_SPEED_BENCHMARKS) {
+    const calculated = waveSpeedFromPassageFrequency(benchmark.passageFrequencyKHz, benchmark.annulusMeanDiameterMm, benchmark.waveCount);
+    close(calculated, benchmark.reportedWaveSpeedMps, benchmark.toleranceMps, benchmark.id);
+  }
+  assert.equal(PUBLISHED_VALIDATION_SOURCES["xue-et-al-2023"].doi, "10.3389/fenrg.2023.1136156");
+  assert.match(PUBLISHED_VALIDATION_SOURCES["xue-et-al-2023"].limitation, /does not release a paired/i);
+  assert.deepEqual(RAW_DATASET_VALIDATION_CASES.map((item) => item.id), ["BD0041", "BD0038", "CE2029"]);
+  assert.ok(RAW_DATASET_VALIDATION_CASES.every((item) => item.automationStatus === "registered-not-embedded"));
 });

@@ -14,10 +14,17 @@ export type CaseInputHelpGroup = {
     key: CaseInputHelpKey;
     label: string;
     definition: string;
+    format: string;
+    requirement: "Required" | "Conditional" | "Optional";
+    obtainFrom: string;
+    usedFor: string;
+    missingEffect: string;
   }>;
 };
 
-export const CASE_INPUT_HELP: CaseInputHelpGroup[] = [
+type InputHelpDetails = Omit<CaseInputHelpGroup["items"][number], "key" | "label" | "definition">;
+
+const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: Array<Pick<CaseInputHelpGroup["items"][number], "key" | "label" | "definition">> }> = [
   {
     title: "Case and geometry",
     description: "Identifies the comparison and locates the synchronized pressure probes around the annulus.",
@@ -110,3 +117,355 @@ export const CASE_INPUT_HELP: CaseInputHelpGroup[] = [
     ],
   },
 ];
+
+
+const INPUT_HELP_DETAILS = {
+  "name": {
+    "format": "Free text; use a unique run or operating-point identifier.",
+    "requirement": "Required",
+    "obtainFrom": "Experiment log or CFD run directory.",
+    "usedFor": "Case tabs, reports, exports, and related-case links.",
+    "missingEffect": "The case cannot be saved or distinguished from other runs."
+  },
+  "annulusMeanDiameterMm": {
+    "format": "Millimetres; mean of inner and outer annulus diameters at the probe plane.",
+    "requirement": "Required",
+    "obtainFrom": "Combustor drawing or as-built metrology.",
+    "usedFor": "Converts passage frequency and identified wave count into circumferential wave speed.",
+    "missingEffect": "Wave speed cannot be calculated."
+  },
+  "annulusDiameterUncertaintyMm": {
+    "format": "Millimetres; non-negative one-standard-uncertainty value.",
+    "requirement": "Required",
+    "obtainFrom": "Drawing tolerance, dimensional inspection, or metrology report.",
+    "usedFor": "Propagates geometric uncertainty into wave-speed uncertainty.",
+    "missingEffect": "Wave speed may be shown, but its experiment–CFD significance is inconclusive."
+  },
+  "probePositionsDeg": {
+    "format": "Degrees from one shared 0° datum; enter one unique angle for every mapped probe.",
+    "requirement": "Required",
+    "obtainFrom": "Sensor installation drawing and matching CFD virtual-probe coordinates.",
+    "usedFor": "Fits circumferential phase, wave count, direction, speed, and placement ambiguity.",
+    "missingEffect": "Only per-probe pressure and frequency comparisons remain available."
+  },
+  "maximumWaveCount": {
+    "format": "Positive integer from 1 to 12; upper bound on physically plausible simultaneous fronts.",
+    "requirement": "Required",
+    "obtainFrom": "Prior imaging, facility experience, or a deliberately conservative physical bound.",
+    "usedFor": "Defines the candidate wave-count search set.",
+    "missingEffect": "Mode fitting is not run."
+  },
+  "probeSynchronizationConfirmed": {
+    "format": "Checkbox; confirm common clock/trigger within each probe array.",
+    "requirement": "Required",
+    "obtainFrom": "DAQ configuration and CFD sampling setup.",
+    "usedFor": "Authorizes probe-to-probe phase, direction, count, speed, and jitter calculations.",
+    "missingEffect": "All multi-probe phase conclusions are Not identifiable."
+  },
+  "comparisonMatchConfirmed": {
+    "format": "Checkbox; confirm same geometry, operating point, probe locations, and evidence window.",
+    "requirement": "Required",
+    "obtainFrom": "Experiment run sheet, CFD case setup, and export window.",
+    "usedFor": "Controls whether any mismatch may influence a diagnostic recommendation.",
+    "missingEffect": "Diagnosis is blocked; Caevera recommends correcting the pairing."
+  },
+  "baselineCaseId": {
+    "format": "Select one existing Caevera case.",
+    "requirement": "Optional",
+    "obtainFrom": "Caevera case list.",
+    "usedFor": "Links a controlled rerun to its original experiment and operating point.",
+    "missingEffect": "The case remains standalone and cannot contribute case-history evidence."
+  },
+  "changedVariable": {
+    "format": "Choose exactly one CFD variable group.",
+    "requirement": "Conditional",
+    "obtainFrom": "Simulation change log.",
+    "usedFor": "Tests whether the linked rerun isolates one possible cause.",
+    "missingEffect": "The related case is treated as comparison only."
+  },
+  "changeDescription": {
+    "format": "Exact before → after wording, including values and units where known.",
+    "requirement": "Conditional",
+    "obtainFrom": "Simulation change log or solver input diff.",
+    "usedFor": "Makes the related rerun reproducible and reportable.",
+    "missingEffect": "The rerun may be linked, but the controlled change is not auditable."
+  },
+  "experimentCsv": {
+    "format": "CSV, TSV, or semicolon-delimited text; map one time plus at least three pressure columns.",
+    "requirement": "Required",
+    "obtainFrom": "DAQ export after documented calibration/filtering.",
+    "usedFor": "Provides measured time histories for every pressure and wave calculation.",
+    "missingEffect": "No experiment–CFD analysis can run."
+  },
+  "cfdCsv": {
+    "format": "CSV, TSV, or semicolon-delimited text; map matching virtual probes.",
+    "requirement": "Required",
+    "obtainFrom": "Solver monitor or virtual-probe export.",
+    "usedFor": "Provides simulated time histories for comparison at the experimental locations.",
+    "missingEffect": "No experiment–CFD analysis can run."
+  },
+  "experimentSensorBandwidthKHz": {
+    "format": "kHz; usable −3 dB or manufacturer/calibrated system bandwidth, not sampling rate.",
+    "requirement": "Required",
+    "obtainFrom": "Transducer calibration sheet plus charge amplifier/conditioning chain.",
+    "usedFor": "Checks whether fundamental and harmonic content lies inside the measurement response.",
+    "missingEffect": "Harmonic/front-shape conclusions are limited and sensor attenuation cannot be separated from CFD smoothing."
+  },
+  "experimentFilterCutoffKHz": {
+    "format": "kHz; applied analog or digital low-pass/anti-alias cutoff.",
+    "requirement": "Required",
+    "obtainFrom": "DAQ/filter configuration or processing script.",
+    "usedFor": "Checks attenuation of fundamental/harmonics and consistency with Nyquist.",
+    "missingEffect": "Spectrum and rise-time differences may be measurement-limited."
+  },
+  "inletPressureBar": {
+    "format": "bar; state whether this is static, total, or plenum pressure consistently across cases.",
+    "requirement": "Required",
+    "obtainFrom": "Experiment run sheet and CFD inlet definition.",
+    "usedFor": "Verifies operating-point matching and supports inlet-related diagnostic context.",
+    "missingEffect": "The physical pairing and related-case comparison are incomplete."
+  },
+  "inletTemperatureK": {
+    "format": "kelvin; use the temperature at the same inlet/plenum definition as pressure.",
+    "requirement": "Required",
+    "obtainFrom": "Thermocouple/facility log and CFD inlet definition.",
+    "usedFor": "Verifies operating-point matching and chemistry/inlet context.",
+    "missingEffect": "The physical pairing and related-case comparison are incomplete."
+  },
+  "equivalenceRatio": {
+    "format": "Dimensionless fuel/oxidizer ratio divided by stoichiometric ratio.",
+    "requirement": "Required",
+    "obtainFrom": "Calibrated mass-flow calculation or experiment run sheet.",
+    "usedFor": "Defines the operating point and related-case identity.",
+    "missingEffect": "The physical pairing and validation-envelope location are incomplete."
+  },
+  "massFlowKgS": {
+    "format": "kg/s; total reactant mass flow represented by both files.",
+    "requirement": "Required",
+    "obtainFrom": "Calibrated flow meters and CFD boundary summary.",
+    "usedFor": "Verifies operating-point matching and inlet-model context.",
+    "missingEffect": "The physical pairing and related-case comparison are incomplete."
+  },
+  "solver": {
+    "format": "Solver/product name or internal code identifier.",
+    "requirement": "Required",
+    "obtainFrom": "CFD case metadata.",
+    "usedFor": "Makes recommendations and reports reproducible.",
+    "missingEffect": "The numerical setup cannot be traced."
+  },
+  "solverVersion": {
+    "format": "Release, commit hash, or internal build identifier.",
+    "requirement": "Required",
+    "obtainFrom": "Solver executable metadata or repository commit.",
+    "usedFor": "Distinguishes behavior that may change between solver builds.",
+    "missingEffect": "The run cannot be reproduced exactly."
+  },
+  "dimensionality": {
+    "format": "Select 2D or 3D.",
+    "requirement": "Required",
+    "obtainFrom": "CFD domain definition.",
+    "usedFor": "Provides context for mode-selection and missing-unsteadiness hypotheses.",
+    "missingEffect": "Domain-mode limitations cannot be interpreted."
+  },
+  "spatialScheme": {
+    "format": "Named spatial reconstruction/discretization.",
+    "requirement": "Required",
+    "obtainFrom": "Solver input deck.",
+    "usedFor": "Interprets peak/rise-time smoothing and mesh sensitivities.",
+    "missingEffect": "Spatial-resolution recommendations lack method context."
+  },
+  "spatialOrder": {
+    "format": "Positive integer formal order in smooth regions.",
+    "requirement": "Required",
+    "obtainFrom": "Solver documentation and case input.",
+    "usedFor": "Interprets numerical dissipation with the spatial scheme.",
+    "missingEffect": "Spatial-resolution context is incomplete."
+  },
+  "numericalFlux": {
+    "format": "Named Riemann/interface flux such as HLLC or Roe.",
+    "requirement": "Required",
+    "obtainFrom": "Solver input deck.",
+    "usedFor": "Records a major pressure-front dissipation choice.",
+    "missingEffect": "Front-smearing recommendations are not reproducible."
+  },
+  "limiterFilter": {
+    "format": "Limiter, shock sensor, filter, or artificial dissipation; enter None if unused.",
+    "requirement": "Required",
+    "obtainFrom": "Solver input deck.",
+    "usedFor": "Interprets attenuated peaks, rise time, and harmonics.",
+    "missingEffect": "Caevera cannot distinguish undocumented numerical damping from physical/model effects."
+  },
+  "temporalScheme": {
+    "format": "Named time integrator.",
+    "requirement": "Required",
+    "obtainFrom": "Solver input deck.",
+    "usedFor": "Provides context for phase/frequency and time-step sensitivity.",
+    "missingEffect": "Time-resolution recommendations are incomplete."
+  },
+  "temporalOrder": {
+    "format": "Positive integer formal temporal order.",
+    "requirement": "Required",
+    "obtainFrom": "Solver documentation and input deck.",
+    "usedFor": "Interprets the reported flow time step.",
+    "missingEffect": "Time-resolution context is incomplete."
+  },
+  "timeStepUs": {
+    "format": "Microseconds; physical flow-solver time step represented by the pressure export.",
+    "requirement": "Required",
+    "obtainFrom": "Solver control file or run log.",
+    "usedFor": "Makes chemistry/time-resolution recommendations specific to the current baseline.",
+    "missingEffect": "A time-resolution sensitivity cannot be tied to the current run."
+  },
+  "cfl": {
+    "format": "Dimensionless reported CFL value.",
+    "requirement": "Required",
+    "obtainFrom": "Solver log or control file.",
+    "usedFor": "Checks time-step strategy and related-run consistency.",
+    "missingEffect": "Time-resolution context is incomplete."
+  },
+  "meshCells": {
+    "format": "Positive integer total cell count.",
+    "requirement": "Required",
+    "obtainFrom": "Mesh summary or solver startup log.",
+    "usedFor": "Provides global mesh provenance; it is not treated as local resolution proof.",
+    "missingEffect": "The mesh cannot be traced across related runs."
+  },
+  "minimumCellSizeMm": {
+    "format": "Millimetres; smallest cell dimension in the detonation-front/reaction region.",
+    "requirement": "Required",
+    "obtainFrom": "Mesh metrics at the analyzed region.",
+    "usedFor": "Defines the baseline for the recommended front-region refinement.",
+    "missingEffect": "A spatial-refinement recommendation cannot name the current baseline."
+  },
+  "cellsPerInductionLength": {
+    "format": "Dimensionless estimate at a stated relevant thermochemical state.",
+    "requirement": "Required",
+    "obtainFrom": "Induction-length calculation plus local mesh size.",
+    "usedFor": "Provides physically scaled front-resolution context.",
+    "missingEffect": "Resolution evidence is weaker and mesh-cell count alone is not accepted as proof."
+  },
+  "nearWallCellSizeMm": {
+    "format": "Millimetres; characteristic first-cell height/size at the wall.",
+    "requirement": "Required",
+    "obtainFrom": "Mesh quality report.",
+    "usedFor": "Provides wall-loss/numerical resolution context.",
+    "missingEffect": "Wall-related numerical resolution cannot be assessed."
+  },
+  "meshConvergencePct": {
+    "format": "Percent change in a named validation output between two mesh levels.",
+    "requirement": "Optional",
+    "obtainFrom": "Documented mesh sensitivity study.",
+    "usedFor": "Weakens or supports spatial resolution as the current cause.",
+    "missingEffect": "Mesh convergence remains unknown."
+  },
+  "timeStepConvergencePct": {
+    "format": "Percent change in a named validation output between two flow time steps.",
+    "requirement": "Optional",
+    "obtainFrom": "Documented time-step study.",
+    "usedFor": "Weakens or supports temporal/chemistry resolution as the current cause.",
+    "missingEffect": "Time-step convergence remains unknown."
+  },
+  "chemistryModel": {
+    "format": "Mechanism name and preferably file/version.",
+    "requirement": "Required",
+    "obtainFrom": "Solver input and mechanism repository.",
+    "usedFor": "Provides context for wave-frequency and pressure-energy sensitivities.",
+    "missingEffect": "Chemistry-related recommendations are not reproducible."
+  },
+  "chemistrySpecies": {
+    "format": "Positive integer species count.",
+    "requirement": "Required",
+    "obtainFrom": "Mechanism file or solver startup summary.",
+    "usedFor": "Records mechanism scope for related-case checks.",
+    "missingEffect": "Mechanism identity is incomplete."
+  },
+  "chemistryReactions": {
+    "format": "Positive integer elementary/global reaction count.",
+    "requirement": "Required",
+    "obtainFrom": "Mechanism file or solver startup summary.",
+    "usedFor": "Records mechanism scope for related-case checks.",
+    "missingEffect": "Mechanism identity is incomplete."
+  },
+  "chemistryIntegrator": {
+    "format": "Named source-term integrator and splitting approach.",
+    "requirement": "Required",
+    "obtainFrom": "Solver input deck.",
+    "usedFor": "Defines what may be tightened in a chemistry time-resolution test.",
+    "missingEffect": "Chemistry time-resolution recommendations cannot isolate one control."
+  },
+  "turbulenceModel": {
+    "format": "Named RANS/LES/hybrid closure; enter None when unused.",
+    "requirement": "Required",
+    "obtainFrom": "Solver input deck.",
+    "usedFor": "Provides context for cycle variability and missing unsteadiness.",
+    "missingEffect": "The physics model card is incomplete."
+  },
+  "combustionModel": {
+    "format": "Named turbulence–chemistry/flame model; enter None for direct finite-rate chemistry without another closure.",
+    "requirement": "Required",
+    "obtainFrom": "Solver input deck.",
+    "usedFor": "Separates chemistry mechanism from additional combustion closure.",
+    "missingEffect": "Combustion-model effects cannot be traced."
+  },
+  "wallBoundaryCondition": {
+    "format": "Exact thermal condition, including temperature/profile for isothermal walls or coupling method for CHT.",
+    "requirement": "Required",
+    "obtainFrom": "CFD boundary input and experiment wall condition.",
+    "usedFor": "Defines the baseline for a one-variable wall-loss sensitivity.",
+    "missingEffect": "Wall-loss recommendations cannot name or reproduce the current condition."
+  },
+  "inletBoundaryCondition": {
+    "format": "Exact imposed variables, injector representation, and backflow treatment.",
+    "requirement": "Required",
+    "obtainFrom": "CFD boundary input and hardware/injector description.",
+    "usedFor": "Defines the baseline for an inlet-representation sensitivity.",
+    "missingEffect": "Inlet-related recommendations cannot name or reproduce the current condition."
+  },
+  "outletBoundaryCondition": {
+    "format": "Exact downstream pressure/non-reflecting formulation.",
+    "requirement": "Required",
+    "obtainFrom": "CFD boundary input.",
+    "usedFor": "Records potential reflection/back-pressure context and holds it fixed in inlet tests.",
+    "missingEffect": "Boundary sensitivities are not auditable."
+  },
+  "initializationMethod": {
+    "format": "Ignition kernel, imposed wave, pre-detonator surrogate, or restart procedure.",
+    "requirement": "Required",
+    "obtainFrom": "CFD initial-condition setup.",
+    "usedFor": "Defines the baseline for a mode-selection sensitivity.",
+    "missingEffect": "Initialization-related recommendations cannot be reproduced."
+  },
+  "pressureUncertaintyPct": {
+    "format": "Percent, non-negative one-standard measurement uncertainty including calibration where available.",
+    "requirement": "Required",
+    "obtainFrom": "Calibration certificate and uncertainty budget.",
+    "usedFor": "Determines whether pressure amplitude/mean/peak/impulse differences are resolved.",
+    "missingEffect": "Pressure differences are reported but their significance is inconclusive."
+  },
+  "timingUncertaintyUs": {
+    "format": "Microseconds; combined DAQ clock, synchronization, and sensor-response timing uncertainty.",
+    "requirement": "Required",
+    "obtainFrom": "DAQ specification and timing uncertainty budget.",
+    "usedFor": "Propagates into frequency, phase-related timing, rise time, and impulse significance.",
+    "missingEffect": "Timing-sensitive experiment–CFD differences are inconclusive."
+  },
+  "cfdPressureUncertaintyPct": {
+    "format": "Percent, preferably from mesh/time-step studies rather than an arbitrary allowance.",
+    "requirement": "Required",
+    "obtainFrom": "Numerical uncertainty assessment.",
+    "usedFor": "Combines with measurement uncertainty for pressure mismatch resolution.",
+    "missingEffect": "Pressure differences are reported but not classified as resolved."
+  },
+  "cfdTimingUncertaintyUs": {
+    "format": "Microseconds; numerical uncertainty in wave-arrival timing/phase.",
+    "requirement": "Required",
+    "obtainFrom": "Mesh/time-step timing study.",
+    "usedFor": "Combines with experiment timing uncertainty for supported timing outputs.",
+    "missingEffect": "Timing-sensitive differences are inconclusive."
+  }
+} satisfies Record<CaseInputHelpKey, InputHelpDetails>;
+
+export const CASE_INPUT_HELP: CaseInputHelpGroup[] = CASE_INPUT_HELP_BASE.map((group) => ({
+  ...group,
+  items: group.items.map((item) => ({ ...item, ...INPUT_HELP_DETAILS[item.key] })),
+}));

@@ -36,6 +36,8 @@ test("renders development preview metadata", async () => {
   assert.match(html, /Add first case/);
   assert.match(html, /Load synthetic case history/);
   assert.match(html, />Help</);
+  assert.match(html, /Open workspace/);
+  assert.match(html, /Open saved workspace/);
   assert.match(html, /Return to empty home workspace/);
   assert.doesNotMatch(html, /Synthetic baseline/);
   assert.doesNotMatch(html, /Signal evidence/);
