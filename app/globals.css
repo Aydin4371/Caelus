@@ -157,8 +157,8 @@ button { color: inherit; }
 
 .decision-card { margin: 0 auto 28px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); box-shadow: 0 16px 42px rgba(38, 70, 82, 0.08); }
 .decision-card article { padding: clamp(22px, 3vw, 34px); border-bottom: 1px solid var(--line); }
-.decision-card article > span { color: var(--test); font: 700 10px var(--font-geist-mono), monospace; letter-spacing: 0.14em; }
-.decision-card h2 { max-width: 980px; margin: 10px 0 0; font-size: clamp(25px, 3.3vw, 42px); font-weight: 590; letter-spacing: -0.04em; line-height: 1.12; }
+.decision-card article > span { display: block; color: var(--test); font: 650 clamp(23px, 2.2vw, 30px) var(--font-geist-sans), "Segoe UI", sans-serif; letter-spacing: -0.025em; line-height: 1.15; }
+.decision-card h2 { max-width: 980px; margin: 10px 0 0; font-size: clamp(21px, 1.9vw, 27px); font-weight: 590; letter-spacing: -0.025em; line-height: 1.2; }
 .decision-card article p { max-width: 980px; margin: 9px 0 0; color: var(--muted); font-size: clamp(15px, 1.5vw, 18px); line-height: 1.62; }
 .source-links { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
 .source-links a { padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--test); font: 620 11px var(--font-geist-mono), monospace; text-decoration: none; }
