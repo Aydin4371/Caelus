@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, useMemo, useState } from "react";
+import { PwaInstallButton } from "@/components/pwa-install-button";
 import { PressureFileMapper } from "@/components/pressure-file-mapper";
 import { buildCaseDelta, buildCaseHistoryEvidence, summarizeCase } from "@/lib/case-history";
 import {
@@ -38,7 +39,7 @@ function average(values: number[]) {
 }
 
 function signed(value: number, digits: number) {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) return "Not available";
   if (Math.abs(value) < 0.5 * 10 ** -digits) return (0).toFixed(digits);
   return `${value > 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
 }
@@ -481,16 +482,17 @@ export default function Home() {
     <header className="product-header">
       <a className="brand" href="#top" aria-label="Return to empty home workspace" onClick={(event) => { event.preventDefault(); returnToEmptyWorkspace(); }}><span className="brand-mark">C</span><span><strong>CAEVERA</strong><small>BY CAELUS</small></span></a>
       <p>RDE simulation-to-test intelligence</p>
-      <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><label className="button secondary workspace-file-button">Open workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Add case</button></div>
+      <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><PwaInstallButton /><label className="button secondary workspace-file-button">Open workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Add case</button></div>
     </header>
     {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
 
     <section className="content" id="top">
       {!activeCase || !testMode || !cfdMode || !activeComparison || !assessment ? <section className="empty-workspace">
-        <span className="empty-kicker">CASE WORKSPACE</span><h1>No cases loaded</h1>
-        <p>Add an RDE operating point to assess whether CFD reproduces experimental wave and pressure behavior—and identify the next controlled simulation.</p>
+        <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>Welcome to Caevera</h1>
+        <p>Compare experimental pressure-probe data with CFD to see where the simulated pressure and rotating-wave behavior disagree with measurements. Caevera diagnoses the mismatch and recommends the next CFD run to test the leading explanation and guide the simulation toward better agreement.</p>
+        <span className="empty-status">No cases loaded</span>
         <div className="empty-actions"><button className="button primary" onClick={openNewCase}>Add first case →</button><label className="button secondary workspace-file-button">Open saved workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary" onClick={loadExampleCaseHistory}>Load synthetic case history</button></div>
-        <div className="empty-requirements"><span><b>1</b> Matched experiment + CFD traces</span><span><b>2</b> Full numerical model card + uncertainty</span><span><b>3</b> Evidence-based next-run plan</span></div>
+        <div className="empty-requirements"><span><b>1</b><i><strong>Compare</strong> matched experiment and CFD pressure traces</i></span><span><b>2</b><i><strong>Diagnose</strong> pressure and rotating-wave mismatches</i></span><span><b>3</b><i><strong>Run next</strong> the recommended CFD run</i></span></div>
       </section> : <>
         <section className="case-switcher" aria-label="Loaded cases">
           <div className="case-switcher-label"><span>Cases</span><b>{cases.length}</b></div>
@@ -522,7 +524,7 @@ export default function Home() {
 
           <section className="decision-card" aria-label="Diagnostic recommendation">
             <article><span>LIKELY ISSUE</span><h2>{likelyHypothesis?.title ?? "Cannot assess"}</h2></article>
-            <article><span>RECOMMENDED NEXT RUN</span><h2>{assessment.nextRun.title}</h2><p>{assessment.nextRun.change}</p></article>
+            <article><span>RECOMMENDED NEXT CFD RUN</span><h2>{assessment.nextRun.title}</h2><p className="next-run-purpose">Make one controlled change, or one technically linked set of changes, to test the leading explanation for the mismatch between experiment and CFD.</p><p>{assessment.nextRun.change}</p></article>
             <article><span>WHY</span><p>{likelyEvidence.length ? likelyEvidence.join(" ") : "The loaded evidence does not support a more specific diagnosis."}</p>{likelySources.length > 0 && <div className="source-links" aria-label="Diagnostic sources">{likelySources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>}</article>
             <div className="decision-actions"><button className="button secondary" onClick={openCaseEditor}>Edit case</button><button className="button secondary" onClick={downloadReport}>Download evidence report</button><button className="button secondary" onClick={downloadWorkspace}>Save complete workspace</button>{cases.length > 1 && <button className="button secondary" onClick={() => setWorkspaceView("compare")}>View case history</button>}</div>
           </section>
@@ -564,9 +566,9 @@ export default function Home() {
 
               <section className="result-block causes-block"><div><span className="result-index">06</span><h3>Ranked diagnostic hypotheses</h3></div><ol>{assessment.hypotheses.map((hypothesis, index) => <li key={hypothesis.title}><b>{index + 1}. {hypothesis.title}</b><span>{hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`).join(" ")}</span><small>Model inputs: {hypothesis.modelInputs.filter(Boolean).join(" · ")}</small></li>)}</ol><small>These are transparent sensitivity-test priorities, not causal proof.</small></section>
 
-              <section className="result-block action-block"><div><span className="result-index">07</span><h3>Controlled next-run plan</h3></div><div className="next-run-header"><strong>{assessment.nextRun.title}</strong><span>{assessment.nextRun.evidenceStrength} evidence</span></div><p className="next-change"><b>Change one thing:</b> {assessment.nextRun.change}</p><div className="next-run-grid"><div><span>Why this run</span><p>{assessment.nextRun.reason}</p></div><div><span>Hold fixed</span><p>{assessment.nextRun.holdFixed.join(" · ")}</p></div><div><span>Expected result</span><p>{assessment.nextRun.expectedOutcome}</p></div><div><span>Confirm / reject</span><p><b>Confirm:</b> {assessment.nextRun.confirmationCriterion}<br /><b>Reject:</b> {assessment.nextRun.rejectionCriterion}</p></div></div><p className="alternative"><b>Alternative hypothesis:</b> {assessment.nextRun.alternativeHypothesis}</p></section>
+              <section className="result-block action-block"><div><span className="result-index">07</span><h3>Recommended next CFD run</h3></div><p className="next-run-guidance">Make one controlled change, or one technically linked set of changes, to test the leading explanation for the mismatch between experiment and CFD.</p><div className="next-run-header"><strong>{assessment.nextRun.title}</strong><span>{assessment.nextRun.evidenceStrength} evidence</span></div><p className="next-change"><b>Controlled change:</b> {assessment.nextRun.change}</p><div className="next-run-grid"><div><span>Why this run</span><p>{assessment.nextRun.reason}</p></div><div><span>Hold fixed</span><p>{assessment.nextRun.holdFixed.join(" · ")}</p></div><div><span>Expected result</span><p>{assessment.nextRun.expectedOutcome}</p></div><div><span>Confirm / reject</span><p><b>Confirm:</b> {assessment.nextRun.confirmationCriterion}<br /><b>Reject:</b> {assessment.nextRun.rejectionCriterion}</p></div></div><p className="alternative"><b>Alternative hypothesis:</b> {assessment.nextRun.alternativeHypothesis}</p></section>
 
-              <button className="report-button" onClick={downloadReport}><span><b>08</b><strong>Download traceable report</strong><small>Inputs, validity, uncertainty, metrics, hypotheses, and controlled next run</small></span><i>↓</i></button>
+              <button className="report-button" onClick={downloadReport}><span><b>08</b><strong>Download traceable report</strong><small>Inputs, validity, uncertainty, metrics, hypotheses, and recommended next CFD run</small></span><i>↓</i></button>
             </article>
           </section>
 
