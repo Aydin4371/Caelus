@@ -9,6 +9,9 @@ the predicted response as confirmed, converged, rejected, or inconclusive and
 updates the next recommendation. It also aggregates comparable controlled
 reruns already loaded in the workspace, showing observed outcome counts,
 metric-error improvement, and runtime multiplier without inventing precedent.
+The interface leads with the engineering conclusion and keeps the underlying
+case counts available as a disclosure rather than presenting unexplained raw
+statistics.
 
 The application starts as an empty case workspace and accepts multiple
 operating points. It does not run CFD. Uploaded data and deterministic analysis
@@ -39,6 +42,10 @@ discrepancy.
 - Adds comparable-case intelligence using only loaded, verified controlled
   reruns. Synthetic precedents remain visibly labeled and do not influence
   uploaded cases.
+- Recalculates every recommendation, outcome, metric improvement, and runtime
+  summary from stored pressure arrays and entered case metadata. Workspaces
+  contain inputs and relationships, not cached recommendations or preset
+  conclusions.
 
 ## Version 1.0 product contract
 

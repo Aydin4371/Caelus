@@ -279,12 +279,28 @@ next-run card reports:
 - mean runtime multiplier among confirmed reruns when both baseline and rerun
   wall-clock runtime were supplied.
 
+The interface first translates these values into a direct engineering
+conclusion: whether prior comparable runs support the proposed change, what
+effect was observed, and how that precedent should influence the immediate
+test. Outcome counts remain available in a collapsed evidence disclosure.
+
+No precedent result is embedded in the application or saved as a derived
+workspace output. On every render, Caevera recalculates baseline and rerun
+metrics from the stored experiment and CFD pressure arrays, verifies the
+one-variable relationship from entered metadata, classifies the result, and
+then aggregates it. Runtime multipliers use only user-entered solver hours.
+The engineering rule definitions and decision thresholds are versioned code;
+their application and all displayed numerical results depend on the loaded
+inputs.
+
 One or two uploaded precedents are labeled limited evidence. Three or more are
 labeled a repeated workspace pattern. These summaries are descriptive and
 configuration-specific; they are not calibrated probabilities. Synthetic demo
 cases are labeled as demonstrations and are excluded from precedent used for an
-uploaded case. Caevera never substitutes invented historical counts for missing
-case history.
+uploaded case. The generated demo contains signal arrays and model-card inputs,
+but its metrics and recommendations pass through the same analysis pipeline as
+uploaded files. Caevera never substitutes invented historical counts for
+missing case history.
 
 ## 11. Coverage and traceable report
 
