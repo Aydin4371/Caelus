@@ -67,6 +67,7 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
     items: [
       { key: "solver", label: "Solver", definition: "The CFD code or solver family used to produce the virtual-probe data." },
       { key: "solverVersion", label: "Version", definition: "The exact solver release, commit, or internal build identifier needed to reproduce the run." },
+      { key: "solverRuntimeHours", label: "Runtime (hours) · optional", definition: "Elapsed wall-clock solver time for this case, used to compare the computational cost of successful reruns with their baseline." },
       { key: "dimensionality", label: "Dimensionality", definition: "Whether the modeled domain is two-dimensional or three-dimensional." },
       { key: "spatialScheme", label: "Spatial scheme", definition: "The reconstruction or discretization used for spatial derivatives, such as MUSCL or WENO." },
       { key: "spatialOrder", label: "Spatial order", definition: "The formal order of accuracy of the spatial method in smooth regions." },
@@ -259,6 +260,13 @@ const INPUT_HELP_DETAILS = {
     "obtainFrom": "Solver executable metadata or repository commit.",
     "usedFor": "Distinguishes behavior that may change between solver builds.",
     "missingEffect": "The run cannot be reproduced exactly."
+  },
+  "solverRuntimeHours": {
+    "format": "Positive wall-clock hours for the completed CFD run.",
+    "requirement": "Optional",
+    "obtainFrom": "Scheduler accounting, solver log, or run summary.",
+    "usedFor": "Calculates the runtime multiplier observed in comparable confirmed reruns.",
+    "missingEffect": "The recommendation still works, but comparable-case cost evidence is omitted."
   },
   "dimensionality": {
     "format": "Select 2D or 3D.",

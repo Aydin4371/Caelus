@@ -1,5 +1,12 @@
-import type { CaseMetadata } from "./caevera-types.ts";
+import type { CaseMetadata, SensitivityVariable } from "./caevera-types.ts";
 import { SOURCE_IDS_BY_CAUSE, type DiagnosticCauseId } from "./diagnostic-knowledge.ts";
+import {
+  CONFIRMATION_ERROR_REDUCTION_PCT,
+  CONTROLLED_RERUN_RULES,
+  NUMERICAL_CONVERGENCE_RESPONSE_PCT,
+  REJECTION_ERROR_WORSENING_PCT,
+  type ControlledSensitivityVariable,
+} from "./recommendation-rules.ts";
 import {
   REVIEW_THRESHOLDS,
   type Comparison,
@@ -49,15 +56,25 @@ export type DiagnosticEvidence = {
 
 export type CaseHistoryEvidence = {
   causeId: DiagnosticCauseId;
+  changedVariable?: SensitivityVariable;
   state: "supports" | "weakens" | "unknown";
   strength: "strong" | "moderate";
   caseId: string;
   caseName: string;
+  caseSource?: "uploaded" | "demo";
   detail: string;
   controlled: boolean;
   targetedMetrics?: string[];
   errorReductionPct?: number | null;
   responseMagnitudePct?: number | null;
+  incrementalResponsePct?: number | null;
+  newMismatchMetricIds?: string[];
+  metricErrorReductionPct?: Record<string, number>;
+  baselineMismatchMetricIds?: string[];
+  runtimeMultiplier?: number | null;
+  sequenceStatus?: "effect-confirmed" | "converged" | "rejected" | "inconclusive" | "comparison-only";
+  planDisposition?: "continue" | "advance" | "repeat" | "ignore";
+  caseMetadata?: CaseMetadata;
 };
 
 export type DiagnosticHypothesis = {
@@ -86,10 +103,24 @@ export type ControlledNextRun = {
   ifRejected: string;
   ifInconclusive: string;
   latestControlledResult: {
-    status: "Awaiting result" | "Confirmed" | "Rejected" | "Inconclusive";
+    status: "Awaiting result" | "Confirmed" | "Converged" | "Rejected" | "Inconclusive";
     caseName: string | null;
     detail: string;
   };
+  precedent: ComparableCasePrecedent;
+};
+
+export type ComparableCasePrecedent = {
+  level: "None yet" | "Demonstration" | "Limited" | "Repeated";
+  matchedCount: number;
+  uploadedCount: number;
+  syntheticCount: number;
+  confirmedCount: number;
+  convergedCount: number;
+  rejectedCount: number;
+  inconclusiveCount: number;
+  metricImprovements: Array<{ metricId: string; label: string; meanReductionPct: number; caseCount: number }>;
+  meanRuntimeMultiplier: number | null;
 };
 
 export type CoverageItem = {
@@ -254,7 +285,7 @@ function numeric(value: number | string) {
   return typeof value === "number" ? value : Number.NaN;
 }
 
-function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], validity: CaseAssessment["validity"], dataQuality: CaseAssessment["dataQuality"], caseHistory: CaseHistoryEvidence[]) {
+function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], validity: CaseAssessment["validity"], dataQuality: CaseAssessment["dataQuality"], caseHistory: CaseHistoryEvidence[], precedentHistory: CaseHistoryEvidence[]) {
   const candidates: DiagnosticHypothesis[] = [];
   const frequency = metricById(metrics, "frequency");
   const meanPressure = metricById(metrics, "mean-pressure");
@@ -272,7 +303,7 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
 
   const evidence = (observation: string, state: EvidenceState, strength: EvidenceStrength = "moderate", basis: DiagnosticEvidence["basis"] = "case", sourceIds: string[] = []): DiagnosticEvidence => ({ observation, state, strength, basis, sourceIds });
   const add = (id: DiagnosticCauseId, title: string, observations: DiagnosticEvidence[], modelInputs: string[]) => {
-    const history = caseHistory.filter((item) => item.causeId === id).map((item) => evidence(item.detail, item.state, item.strength, "case-history"));
+    const history = caseHistory.filter((item) => item.controlled && item.causeId === id).map((item) => evidence(item.detail, item.state, item.strength, "case-history"));
     const existing = candidates.find((candidate) => candidate.id === id);
     if (existing) {
       existing.evidence.push(...observations);
@@ -285,10 +316,11 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
   if (validity.status === "Blocked") add("case-validity", "Case matching or data mapping", validity.checks.filter((check) => check.status === "Blocked").map((check) => evidence(check.detail, "supports", "strong")), ["Geometry", "operating point", "probe coordinates", "comparison window"]);
   if (dataQuality.status === "Review") add("data-quality", "Acquisition or export quality", dataQuality.findings.map((finding) => evidence(finding, "supports", "strong")), ["Sample rate", "record duration", "timestamps", "sensor range"]);
   if (isMismatch(peakPressure) && numeric(peakPressure!.cfd) < numeric(peakPressure!.experiment) && numeric(riseTime?.cfd ?? Number.NaN) > numeric(riseTime?.experiment ?? Number.NaN)) {
+    const hasControlledMeshEvidence = caseHistory.some((item) => item.controlled && item.causeId === "spatial-resolution");
     add("spatial-resolution", "Spatial resolution or numerical dissipation", [
       evidence(`CFD peak pressure is ${Math.abs(peakPressure!.percentDifference ?? 0).toFixed(1)}% low.`, "supports", "moderate"),
       evidence(`CFD pressure rise is ${Math.abs(riseTime?.percentDifference ?? 0).toFixed(1)}% longer.`, "supports", "moderate"),
-      evidence(Number.isFinite(metadata.meshConvergencePct) ? `Latest mesh-change effect is ${metadata.meshConvergencePct.toFixed(1)}%.` : "No mesh-convergence result was supplied.", Number.isFinite(metadata.meshConvergencePct) ? (metadata.meshConvergencePct > 2 ? "supports" : "weakens") : "unknown", "strong"),
+      ...(!hasControlledMeshEvidence ? [evidence(Number.isFinite(metadata.meshConvergencePct) ? `User-entered mesh-change effect is ${metadata.meshConvergencePct.toFixed(1)}%.` : "No controlled mesh-convergence result was supplied.", Number.isFinite(metadata.meshConvergencePct) ? (metadata.meshConvergencePct > NUMERICAL_CONVERGENCE_RESPONSE_PCT ? "supports" : "weakens") : "unknown", "strong")] : []),
     ], [`${metadata.minimumCellSizeMm} mm minimum cell`, `${metadata.cellsPerInductionLength} cells/induction length`, metadata.numericalFlux, metadata.limiterFilter]);
   }
   if (isMismatch(frequency)) {
@@ -330,7 +362,7 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
     "initialization-mode": "Initialization or domain-mode sensitivity",
     "missing-unsteadiness": "Missing unsteadiness in the CFD setup",
   };
-  for (const item of caseHistory) {
+  for (const item of caseHistory.filter((entry) => entry.controlled)) {
     if (!candidates.some((candidate) => candidate.id === item.causeId)) {
       add(item.causeId, historyTitles[item.causeId] ?? "Related-case sensitivity", [], [item.detail]);
     }
@@ -341,11 +373,19 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
   }
   const rank = (candidate: DiagnosticHypothesis) => {
     const states = candidate.evidence;
+    const latest = caseHistory.filter((item) => item.controlled && item.causeId === candidate.id).at(-1);
+    const completed = latest?.planDisposition === "advance" || latest?.planDisposition === "ignore";
+    const actionPriority = latest?.planDisposition === "repeat" ? 2 : completed ? 0 : 1;
+    const precedents = comparableHistory(candidate.id, metrics, precedentHistory);
+    const precedentNet = precedents.filter((item) => item.sequenceStatus === "effect-confirmed" || !item.sequenceStatus && item.state === "supports").length
+      - precedents.filter((item) => item.sequenceStatus === "rejected" || !item.sequenceStatus && item.state === "weakens").length;
     return [
-      candidate.id === "case-validity" ? 1 : 0,
+      candidate.id === "case-validity" ? 2 : candidate.id === "data-quality" ? 1 : 0,
+      actionPriority,
       states.filter((item) => item.basis === "case-history" && item.state === "supports").length,
       states.filter((item) => item.state === "supports").length - states.filter((item) => item.state === "weakens").length,
       states.filter((item) => item.strength === "strong" && item.state === "supports").length,
+      precedentNet,
       -states.filter((item) => item.state === "unknown" || item.state === "cannot-assess").length,
     ];
   };
@@ -357,17 +397,28 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
 }
 
 type CoreNextRun = Omit<ControlledNextRun,
-  "stage" | "whyThisRunFirst" | "inconclusiveCriterion" | "ifConfirmed" | "ifRejected" | "ifInconclusive" | "latestControlledResult"
+  "stage" | "whyThisRunFirst" | "inconclusiveCriterion" | "ifConfirmed" | "ifRejected" | "ifInconclusive" | "latestControlledResult" | "precedent"
 >;
 
-function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata): CoreNextRun {
+function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, latest?: CaseHistoryEvidence): CoreNextRun {
   const supporting = hypothesis.evidence.filter((item) => item.state === "supports");
   const common = {
     evidence: hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`),
     evidenceStrength: supporting.some((item) => item.strength === "strong") ? "High" as const : supporting.length ? "Moderate" as const : "Exploratory" as const,
   };
-  const uncertaintyCriterion = "The targeted discrepancy decreases beyond its combined uncertainty without creating a new resolved pressure or wave mismatch.";
-  const uncertaintyRejection = "The targeted change is smaller than combined uncertainty, moves away from experiment, or worsens another resolved metric.";
+  const flowTimeStepReady = Number.isFinite(metadata.timeStepConvergencePct) && metadata.timeStepConvergencePct <= NUMERICAL_CONVERGENCE_RESPONSE_PCT
+    || latest?.changedVariable === "time-step" && latest.sequenceStatus === "converged";
+  const variableByCause: Partial<Record<DiagnosticCauseId, ControlledSensitivityVariable>> = {
+    "spatial-resolution": "mesh",
+    "chemistry-timescale": flowTimeStepReady || latest?.changedVariable === "chemistry" ? "chemistry" : "time-step",
+    "inlet-boundary": "inlet",
+    "wall-loss": "wall",
+    "initialization-mode": "initialization",
+    "missing-unsteadiness": "unsteadiness",
+  };
+  const plannedRule = variableByCause[hypothesis.id] ? CONTROLLED_RERUN_RULES[variableByCause[hypothesis.id]!] : null;
+  const confirmationCriterion = `Mean targeted error falls by at least ${CONFIRMATION_ERROR_REDUCTION_PCT}% from the baseline and no new resolved mismatch appears.`;
+  const rejectionCriterion = `The targeted response stays below ${plannedRule?.minimumResponsePct ?? 2}%, mean targeted error worsens by at least ${REJECTION_ERROR_WORSENING_PCT}%, or a new resolved mismatch appears.`;
 
   if (hypothesis.id === "case-validity") return {
     ...common,
@@ -403,9 +454,9 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata): C
         ? "A verified one-variable related case already moved the targeted pressure error toward experiment."
         : "The mismatch pattern makes front resolution a discriminating sensitivity, but the current case history does not yet show a controlled mesh response.",
       holdFixed: ["Chemical mechanism and chemistry integration", "time step and CFL", "boundaries and wall treatment", "initialization"],
-      expectedOutcome: "Peak pressure and rise time move together if spatial smearing is controlling the discrepancy.",
-      confirmationCriterion: supportedByRerun ? "The fine-to-finer response is smaller than the previous refinement and the targeted discrepancy remains reduced beyond uncertainty." : uncertaintyCriterion,
-      rejectionCriterion: uncertaintyRejection,
+      expectedOutcome: `Peak pressure and rise time move together. An adjacent-level response at or below ${NUMERICAL_CONVERGENCE_RESPONSE_PCT}% completes mesh convergence.`,
+      confirmationCriterion,
+      rejectionCriterion,
       alternativeHypothesis: "If the response is unresolved, test chemistry time integration or wall-loss treatment according to the remaining evidence.",
     };
   }
@@ -422,14 +473,25 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata): C
   };
   if (hypothesis.id === "chemistry-timescale") return {
     ...common,
-    title: "Tighten only chemistry time integration",
-    change: `Keep the ${metadata.timeStepUs.toFixed(3)} µs flow step fixed and advance the ${metadata.chemistryIntegrator} internal tolerance or substep by one documented refinement level.`,
-    reason: "This isolates chemistry time resolution from flow time-step and mechanism changes.",
-    holdFixed: ["Mesh", "flow time step and CFL", "chemical mechanism", "boundaries", "wall treatment", "initialization"],
-    expectedOutcome: "Wave frequency moves toward experiment without changing an already identified wave mode.",
-    confirmationCriterion: uncertaintyCriterion,
-    rejectionCriterion: uncertaintyRejection,
-    alternativeHypothesis: "If chemistry integration is insensitive, test the current inlet representation next.",
+    ...(flowTimeStepReady ? {
+      title: "Tighten only chemistry time integration",
+      change: `Keep the converged ${metadata.timeStepUs.toFixed(3)} µs flow step fixed and advance the ${metadata.chemistryIntegrator} internal tolerance or substep by one documented refinement level.`,
+      reason: "Flow time-step sensitivity is complete, so this isolates chemistry integration without changing the mechanism.",
+      holdFixed: ["Mesh", "flow time step and CFL", "chemical mechanism", "boundaries", "wall treatment", "initialization"],
+      expectedOutcome: "Wave frequency moves toward experiment without changing an already identified wave mode.",
+      confirmationCriterion,
+      rejectionCriterion,
+      alternativeHypothesis: "If chemistry integration is insensitive, test the current inlet representation next.",
+    } : {
+      title: latest?.changedVariable === "time-step" && latest.state === "supports" ? "Complete the documented time-step sequence" : "Add one flow-time-step refinement",
+      change: `Reduce only the current ${metadata.timeStepUs.toFixed(3)} µs flow step by one documented refinement level; keep the temporal scheme and chemistry integrator unchanged.`,
+      reason: "Flow time-step independence must be established before a chemistry-timescale mismatch can be assigned to chemistry integration or the mechanism.",
+      holdFixed: ["Mesh", "temporal scheme", "chemistry integrator and mechanism", "boundaries", "wall treatment", "initialization"],
+      expectedOutcome: `Frequency and rise time respond together. An adjacent-level response at or below ${NUMERICAL_CONVERGENCE_RESPONSE_PCT}% completes time-step convergence.`,
+      confirmationCriterion,
+      rejectionCriterion,
+      alternativeHypothesis: "After time-step convergence, isolate chemistry integration before changing the chemical mechanism.",
+    }),
   };
   if (hypothesis.id === "inlet-boundary") return {
     ...common,
@@ -438,8 +500,8 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata): C
     reason: "The cited RDE evidence makes inlet injection and detonation-driven backflow a relevant sensitivity, but the pressure data alone do not identify a unique inlet mechanism.",
     holdFixed: ["Mesh", "time step", "chemistry", "outlet", "wall treatment", "initialization"],
     expectedOutcome: "The targeted mean-pressure, frequency, or amplitude discrepancy responds while unrelated outputs remain within uncertainty.",
-    confirmationCriterion: uncertaintyCriterion,
-    rejectionCriterion: uncertaintyRejection,
+    confirmationCriterion,
+    rejectionCriterion,
     alternativeHypothesis: "If inlet representation is insensitive, examine wall loss or front resolution according to the remaining evidence.",
   };
   if (hypothesis.id === "wall-loss") return {
@@ -449,8 +511,8 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata): C
     reason: "Amplitude and impulse disagreement can respond to total wall loss even when frequency and mode agree.",
     holdFixed: ["Mesh", "time step", "chemistry", "inlet and outlet", "initialization", "numerical flux"],
     expectedOutcome: "Amplitude and impulse move together while the identified frequency and mode remain unchanged within uncertainty.",
-    confirmationCriterion: uncertaintyCriterion,
-    rejectionCriterion: uncertaintyRejection,
+    confirmationCriterion,
+    rejectionCriterion,
     alternativeHypothesis: "If the pressure response is unresolved, test chemistry integration or front resolution next.",
   };
   if (hypothesis.id === "missing-unsteadiness") return {
@@ -460,8 +522,8 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata): C
     reason: "CFD cycle variability cannot be attributed to inlet forcing from pressure probes alone, and an invented fluctuation would not be evidence.",
     holdFixed: ["Mean inlet state", "mesh", "time step", "chemistry", "walls", "initialization"],
     expectedOutcome: "Cycle variability approaches experiment without shifting the mean identified mode.",
-    confirmationCriterion: uncertaintyCriterion,
-    rejectionCriterion: uncertaintyRejection,
+    confirmationCriterion,
+    rejectionCriterion,
     alternativeHypothesis: "If measured forcing is weak, examine turbulence/combustion coupling and three-dimensional effects.",
   };
   return {
@@ -493,9 +555,33 @@ function latestControlledResult(caseHistory: CaseHistoryEvidence[], currentCause
     detail: "No controlled rerun result has been linked to this baseline yet.",
   };
   return {
-    status: latest.state === "supports" ? "Confirmed" : latest.state === "weakens" ? "Rejected" : "Inconclusive",
+    status: latest.sequenceStatus === "converged" ? "Converged" : latest.state === "supports" ? "Confirmed" : latest.state === "weakens" ? "Rejected" : "Inconclusive",
     caseName: latest.caseName,
     detail: latest.detail,
+  };
+}
+
+function inferredDisposition(item: CaseHistoryEvidence | undefined): "continue" | "advance" | "repeat" | "ignore" | null {
+  if (!item) return null;
+  if (item.planDisposition) return item.planDisposition;
+  if (!item.controlled) return "ignore";
+  if (item.state === "unknown") return "repeat";
+  if (item.state === "weakens") return "advance";
+  return ["spatial-resolution", "chemistry-timescale", "initialization-mode"].includes(item.causeId) ? "continue" : "advance";
+}
+
+function latestForCause(caseHistory: CaseHistoryEvidence[], causeId: DiagnosticCauseId) {
+  return caseHistory.filter((item) => item.controlled && item.causeId === causeId).at(-1);
+}
+
+function repeatRun(core: CoreNextRun, latest: CaseHistoryEvidence): CoreNextRun {
+  const variable = latest.changedVariable === "time-step" ? "time-step" : latest.changedVariable ?? "selected";
+  return {
+    ...core,
+    title: `Repeat the ${variable} test with a wider controlled bracket`,
+    change: `From ${latest.caseName}, change only the ${variable} setting by one larger documented adjacent level, or reduce the uncertainty that made the first result inconclusive.`,
+    reason: `${latest.detail} A stronger one-variable contrast is required before another hypothesis is tested.`,
+    expectedOutcome: "The targeted outputs respond enough to meet a confirmation or rejection rule while all unrelated outputs remain stable.",
   };
 }
 
@@ -510,32 +596,118 @@ function confirmationBranch(causeId: DiagnosticCauseId) {
   return "Add the next nearest operating condition to expand the demonstrated validation envelope.";
 }
 
+function comparableHistory(
+  causeId: DiagnosticCauseId,
+  metrics: MetricAssessment[],
+  precedentHistory: CaseHistoryEvidence[],
+): CaseHistoryEvidence[] {
+  const currentMismatchIds = new Set(metrics.filter((result) => result.tone === "review").map((result) => result.id));
+  const seen = new Set<string>();
+  return precedentHistory.filter((item) => {
+    if (!item.controlled || item.causeId !== causeId || item.sequenceStatus === "comparison-only") return false;
+    const key = `${item.caseId}:${item.caseName}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    const priorSignature = item.baselineMismatchMetricIds ?? [];
+    return currentMismatchIds.size === 0 || priorSignature.length === 0 || priorSignature.some((id) => currentMismatchIds.has(id));
+  });
+}
+
+function buildComparablePrecedent(
+  causeId: DiagnosticCauseId,
+  metrics: MetricAssessment[],
+  precedentHistory: CaseHistoryEvidence[],
+): ComparableCasePrecedent {
+  const matched = comparableHistory(causeId, metrics, precedentHistory);
+  const confirmed = matched.filter((item) => item.sequenceStatus === "effect-confirmed" || !item.sequenceStatus && item.state === "supports");
+  const metricLabels = new Map(metrics.map((result) => [result.id, result.label]));
+  const metricValues = new Map<string, number[]>();
+  for (const item of confirmed) {
+    for (const [metricId, reduction] of Object.entries(item.metricErrorReductionPct ?? {})) {
+      if (!Number.isFinite(reduction)) continue;
+      metricValues.set(metricId, [...(metricValues.get(metricId) ?? []), reduction]);
+    }
+  }
+  const metricImprovements = [...metricValues.entries()]
+    .map(([metricId, reductions]) => ({
+      metricId,
+      label: metricLabels.get(metricId) ?? metricId.replaceAll("-", " "),
+      meanReductionPct: average(reductions),
+      caseCount: reductions.length,
+    }))
+    .sort((left, right) => right.caseCount - left.caseCount || right.meanReductionPct - left.meanReductionPct)
+    .slice(0, 3);
+  const runtimes = confirmed.map((item) => item.runtimeMultiplier ?? Number.NaN).filter(Number.isFinite);
+  const meanRuntimeMultiplier = runtimes.length ? average(runtimes) : null;
+  const uploadedCount = matched.filter((item) => item.caseSource !== "demo").length;
+  const syntheticCount = matched.length - uploadedCount;
+  return {
+    level: uploadedCount >= 3 ? "Repeated" : uploadedCount ? "Limited" : syntheticCount ? "Demonstration" : "None yet",
+    matchedCount: matched.length,
+    uploadedCount,
+    syntheticCount,
+    confirmedCount: confirmed.length,
+    convergedCount: matched.filter((item) => item.sequenceStatus === "converged").length,
+    rejectedCount: matched.filter((item) => item.sequenceStatus === "rejected" || !item.sequenceStatus && item.state === "weakens").length,
+    inconclusiveCount: matched.filter((item) => item.sequenceStatus === "inconclusive" || !item.sequenceStatus && item.state === "unknown").length,
+    metricImprovements,
+    meanRuntimeMultiplier,
+  };
+}
+
 function buildAdaptiveRunPlan(
   hypotheses: DiagnosticHypothesis[],
   metadata: CaseMetadata,
+  metrics: MetricAssessment[],
   caseHistory: CaseHistoryEvidence[],
+  precedentHistory: CaseHistoryEvidence[],
 ): ControlledNextRun {
-  const primary = hypotheses[0];
-  const alternative = hypotheses[1];
-  const core = nextRunFor(primary, metadata);
+  const acceptedCase = [...caseHistory].reverse().find((item) => item.controlled && (item.sequenceStatus === "effect-confirmed" || item.sequenceStatus === "converged"));
+  const currentMetadata = acceptedCase?.caseMetadata ?? metadata;
+  const gate = hypotheses.find((hypothesis) => stageFor(hypothesis.id) === "Evidence gate");
+  const actionable = hypotheses.find((hypothesis) => {
+    if (stageFor(hypothesis.id) === "Evidence gate") return true;
+    const latest = latestForCause(caseHistory, hypothesis.id);
+    const disposition = inferredDisposition(latest);
+    if (disposition === "advance" || disposition === "ignore") return false;
+    if (hypothesis.id === "chemistry-timescale"
+      && latest?.changedVariable === "time-step"
+      && latest.sequenceStatus === "converged"
+      && !hypothesis.evidence.some((item) => item.basis === "case" && item.state === "supports")) return false;
+    if (hypothesis.id === "spatial-resolution" && !latest && Number.isFinite(currentMetadata.meshConvergencePct) && currentMetadata.meshConvergencePct <= NUMERICAL_CONVERGENCE_RESPONSE_PCT) return false;
+    return true;
+  });
+  const primary = gate ?? actionable ?? {
+    id: "validation-coverage" as const,
+    title: "Validation-envelope coverage",
+    evidence: [{ state: "supports" as const, strength: "context" as const, observation: "Every currently ranked sensitivity is complete or rejected; no unresolved actionable cause remains in the loaded pressure evidence.", basis: "case" as const, sourceIds: [] }],
+    modelInputs: [`${currentMetadata.inletPressureBar} bar`, `${currentMetadata.inletTemperatureK} K`, `φ ${currentMetadata.equivalenceRatio}`],
+    sourceIds: SOURCE_IDS_BY_CAUSE["validation-coverage"],
+  };
+  const alternative = hypotheses.find((hypothesis) => hypothesis.id !== primary.id && inferredDisposition(latestForCause(caseHistory, hypothesis.id)) !== "advance");
+  const latest = latestForCause(caseHistory, primary.id);
+  const baseCore = nextRunFor(primary, currentMetadata, latest);
+  const core = inferredDisposition(latest) === "repeat" ? repeatRun(baseCore, latest!) : baseCore;
+  const precedent = buildComparablePrecedent(primary.id, metrics, precedentHistory);
   const supporting = primary.evidence.filter((item) => item.state === "supports").length;
   const strong = primary.evidence.filter((item) => item.state === "supports" && item.strength === "strong").length;
   const controlled = primary.evidence.filter((item) => item.state === "supports" && item.basis === "case-history").length;
-  const gate = stageFor(primary.id) === "Evidence gate";
-  const whyThisRunFirst = gate
+  const evidenceGate = stageFor(primary.id) === "Evidence gate";
+  const whyThisRunFirst = evidenceGate
     ? `${primary.title} is a prerequisite. Caevera does not rank model changes until this evidence gate is resolved.`
-    : `${primary.title} is first because it has ${supporting} supporting observation${supporting === 1 ? "" : "s"}${strong ? `, including ${strong} strong` : ""}${controlled ? ` and ${controlled} from a controlled rerun` : ""}. Caevera ranks prerequisite gates, controlled-rerun evidence, net supporting evidence, strong evidence, and then fewer unknowns.${alternative ? ` This places it ahead of ${alternative.title}.` : ""}`;
+    : `${primary.title} is first because it has ${supporting} supporting observation${supporting === 1 ? "" : "s"}${strong ? `, including ${strong} strong` : ""}${controlled ? ` and ${controlled} from a controlled rerun` : ""}${precedent.matchedCount ? `. ${precedent.confirmedCount} of ${precedent.matchedCount} comparable loaded reruns confirmed this response` : ""}. Caevera ranks prerequisite gates, required repeats, unfinished sensitivities, controlled-rerun evidence, net supporting evidence, and then fewer unknowns.${alternative ? ` This places it ahead of ${alternative.title}.` : ""}`;
   return {
     ...core,
     stage: stageFor(primary.id),
     whyThisRunFirst,
-    inconclusiveCriterion: "The targeted outputs respond, but the result neither meets the confirmation nor rejection criterion, or the difference remains unresolved within uncertainty.",
+    inconclusiveCriterion: `The result reaches neither ${CONFIRMATION_ERROR_REDUCTION_PCT}% mean error reduction nor a rejection rule, and it does not reach the ${NUMERICAL_CONVERGENCE_RESPONSE_PCT}% adjacent-level convergence limit when that limit applies.`,
     ifConfirmed: confirmationBranch(primary.id),
-    ifRejected: gate
+    ifRejected: evidenceGate
       ? "Keep the comparison blocked and repair the unresolved evidence before changing CFD."
       : `${core.alternativeHypothesis}${alternative ? ` The next ranked hypothesis is ${alternative.title}.` : ""}`,
     ifInconclusive: "Increase the controlled perturbation or reduce the relevant uncertainty, then repeat without changing additional model settings.",
     latestControlledResult: latestControlledResult(caseHistory, primary.id),
+    precedent,
   };
 }
 
@@ -545,6 +717,7 @@ export function buildCaseAssessment(
   testMode: RdeModeResult,
   cfdMode: RdeModeResult,
   caseHistory: CaseHistoryEvidence[] = [],
+  precedentHistory: CaseHistoryEvidence[] = caseHistory,
 ): CaseAssessment {
   const durationTest = average(comparisons.map((comparison) => comparison.testQuality.durationMs));
   const durationCfd = average(comparisons.map((comparison) => comparison.cfdQuality.durationMs));
@@ -697,6 +870,6 @@ export function buildCaseAssessment(
     { module: "Thermal", status: "Not assessed", detail: "No temperature or heat-flux data loaded" },
     { module: "Performance", status: "Not assessed", detail: "No thrust or total-pressure data loaded" },
   ];
-  const hypotheses = buildHypotheses(metadata, metrics, validity, dataQuality, caseHistory);
-  return { validity, dataQuality, metrics, coverage, hypotheses, nextRun: buildAdaptiveRunPlan(hypotheses, metadata, caseHistory) };
+  const hypotheses = buildHypotheses(metadata, metrics, validity, dataQuality, caseHistory, precedentHistory);
+  return { validity, dataQuality, metrics, coverage, hypotheses, nextRun: buildAdaptiveRunPlan(hypotheses, metadata, metrics, caseHistory, precedentHistory) };
 }

@@ -3,7 +3,7 @@ import type { FileImportProvenance } from "./data-import.ts";
 
 export type Dimensionality = "2D" | "3D" | "";
 
-export type SensitivityVariable = "mesh" | "time-step" | "chemistry" | "inlet" | "wall" | "initialization" | "other";
+export type SensitivityVariable = "mesh" | "time-step" | "chemistry" | "inlet" | "wall" | "initialization" | "unsteadiness" | "other";
 
 export type CaseRelationship = {
   baselineCaseId: string;
@@ -46,6 +46,7 @@ export type CaseMetadata = {
   cellsPerInductionLength: number;
   nearWallCellSizeMm: number;
   timeStepUs: number;
+  solverRuntimeHours: number;
   wallBoundaryCondition: string;
   inletBoundaryCondition: string;
   outletBoundaryCondition: string;
@@ -103,6 +104,7 @@ export const EMPTY_METADATA: CaseMetadata = {
   cellsPerInductionLength: Number.NaN,
   nearWallCellSizeMm: Number.NaN,
   timeStepUs: Number.NaN,
+  solverRuntimeHours: Number.NaN,
   wallBoundaryCondition: "",
   inletBoundaryCondition: "",
   outletBoundaryCondition: "",

@@ -1,8 +1,13 @@
 import type { AnalysisCase, CaseMetadata, SensitivityVariable } from "./caevera-types.ts";
 import { buildCaseAssessment, type CaseAssessment, type MetricAssessment } from "./diagnostics.ts";
 import type { DiagnosticCauseId } from "./diagnostic-knowledge.ts";
+import {
+  CONFIRMATION_ERROR_REDUCTION_PCT,
+  CONTROLLED_RERUN_RULES,
+  REJECTION_ERROR_WORSENING_PCT,
+  type ControlledSensitivityVariable,
+} from "./recommendation-rules.ts";
 import { compareProbeSets, analyzeRdeProbeSet, type RdeModeResult } from "./wave-dynamics.ts";
-import type { Signal } from "./rde-analysis.ts";
 
 export type CaseSummary = {
   item: AnalysisCase;
@@ -18,53 +23,58 @@ export type CaseDelta = {
   cfdAgreement: { frequencyErrorPointChange: number; peakPressureErrorPointChange: number; amplitudeErrorPointChange: number };
 };
 
+export type RerunSequenceStatus = "effect-confirmed" | "converged" | "rejected" | "inconclusive" | "comparison-only";
+export type PlanDisposition = "continue" | "advance" | "repeat" | "ignore";
+
 export type CaseHistoryEvidence = {
   causeId: DiagnosticCauseId;
+  changedVariable: SensitivityVariable;
   state: "supports" | "weakens" | "unknown";
   strength: "strong" | "moderate";
   caseId: string;
   caseName: string;
+  caseSource: AnalysisCase["source"];
+  referenceCaseId: string;
+  referenceCaseName: string;
+  caseMetadata: CaseMetadata;
   detail: string;
   controlled: boolean;
   targetedMetrics: string[];
   errorReductionPct: number | null;
   responseMagnitudePct: number | null;
-};
-
-const CAUSE_BY_CHANGE: Record<SensitivityVariable, DiagnosticCauseId | null> = {
-  mesh: "spatial-resolution",
-  "time-step": "chemistry-timescale",
-  chemistry: "chemistry-timescale",
-  inlet: "inlet-boundary",
-  wall: "wall-loss",
-  initialization: "initialization-mode",
-  other: null,
+  incrementalResponsePct: number | null;
+  metricErrorReductionPct: Record<string, number>;
+  baselineMismatchMetricIds: string[];
+  runtimeMultiplier: number | null;
+  newMismatchMetricIds: string[];
+  sequenceStatus: RerunSequenceStatus;
+  planDisposition: PlanDisposition;
 };
 
 const GROUP_FIELDS: Record<SensitivityVariable, (keyof CaseMetadata)[]> = {
   mesh: ["meshCells", "minimumCellSizeMm", "cellsPerInductionLength", "nearWallCellSizeMm", "spatialScheme", "spatialOrder", "numericalFlux", "limiterFilter"],
-  "time-step": ["timeStepUs", "cfl", "temporalScheme", "temporalOrder", "chemistryIntegrator"],
-  chemistry: ["chemistryModel", "chemistrySpecies", "chemistryReactions", "combustionModel"],
+  "time-step": ["timeStepUs", "cfl", "temporalScheme", "temporalOrder"],
+  chemistry: ["chemistryModel", "chemistrySpecies", "chemistryReactions", "chemistryIntegrator", "combustionModel"],
   inlet: ["inletBoundaryCondition"],
   wall: ["wallBoundaryCondition"],
   initialization: ["initializationMethod"],
-  other: [],
+  unsteadiness: ["inletBoundaryCondition"],
+  other: ["solver", "solverVersion", "dimensionality", "turbulenceModel", "outletBoundaryCondition", "cfdPressureUncertaintyPct", "cfdTimingUncertaintyUs"],
 };
+
+const PHYSICAL_CASE_FIELDS: (keyof CaseMetadata)[] = [
+  "annulusMeanDiameterMm", "annulusDiameterUncertaintyMm", "probePositionsDeg", "maximumWaveCount",
+  "probeSynchronizationConfirmed", "experimentSensorBandwidthKHz", "experimentFilterCutoffKHz",
+  "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS", "comparisonMatchConfirmed",
+  "pressureUncertaintyPct", "timingUncertaintyUs",
+];
 
 function metric(summary: CaseSummary, id: string) { return summary.metrics[id]; }
 function numberValue(value: number | string) { return typeof value === "number" ? value : Number.NaN; }
-function valueEqual(left: unknown, right: unknown) { return Array.isArray(left) && Array.isArray(right) ? JSON.stringify(left) === JSON.stringify(right) : left === right; }
+function valueEqual(left: unknown, right: unknown) { return Array.isArray(left) && Array.isArray(right) ? JSON.stringify(left) === JSON.stringify(right) : Object.is(left, right); }
 
-const OUTCOME_RULES: Record<Exclude<SensitivityVariable, "other">, { targets: string[]; minimumResponsePct: number }> = {
-  mesh: { targets: ["peak-pressure", "rise-time", "harmonics"], minimumResponsePct: 5 },
-  "time-step": { targets: ["frequency", "rise-time"], minimumResponsePct: 1 },
-  chemistry: { targets: ["frequency", "amplitude", "impulse"], minimumResponsePct: 2 },
-  inlet: { targets: ["mean-pressure", "frequency"], minimumResponsePct: 2 },
-  wall: { targets: ["amplitude", "impulse"], minimumResponsePct: 2 },
-  initialization: { targets: ["wave-count", "direction", "mode-transitions"], minimumResponsePct: 1 },
-};
-
-function metricError(result: MetricAssessment) {
+function metricError(result: MetricAssessment | undefined) {
+  if (!result) return Number.NaN;
   if (typeof result.difference === "string") {
     if (result.difference === "No difference") return 0;
     if (result.difference === "Different") return 100;
@@ -73,32 +83,45 @@ function metricError(result: MetricAssessment) {
   return Number.isFinite(result.percentDifference) ? Math.abs(result.percentDifference!) : Number.NaN;
 }
 
-function relativeError(result: MetricAssessment) {
-  return metricError(result);
+function relativeError(result: MetricAssessment) { return metricError(result); }
+
+function simulationResponse(reference: MetricAssessment | undefined, candidate: MetricAssessment | undefined) {
+  if (!reference || !candidate) return Number.NaN;
+  if (typeof reference.cfd === "string" || typeof candidate.cfd === "string") return reference.cfd === candidate.cfd ? 0 : 100;
+  if (!Number.isFinite(reference.cfd) || !Number.isFinite(candidate.cfd)) return Number.NaN;
+  return 100 * Math.abs(candidate.cfd - reference.cfd) / Math.max(Math.abs(reference.cfd), 1e-12);
 }
 
-function simulationResponse(baseline: MetricAssessment, candidate: MetricAssessment) {
-  if (typeof baseline.cfd === "string" || typeof candidate.cfd === "string") {
-    return baseline.cfd === candidate.cfd ? 0 : 100;
-  }
-  if (!Number.isFinite(baseline.cfd) || !Number.isFinite(candidate.cfd)) return Number.NaN;
-  return 100 * Math.abs(candidate.cfd - baseline.cfd) / Math.max(Math.abs(baseline.cfd), 1e-12);
+function signalsEqual(left: AnalysisCase["testSignals"], right: AnalysisCase["testSignals"]) {
+  return left.length === right.length && left.every((signal, index) => {
+    const other = right[index];
+    return Boolean(other)
+      && signal.time.length === other.time.length
+      && signal.pressure.length === other.pressure.length
+      && signal.time.every((value, sample) => Object.is(value, other.time[sample]))
+      && signal.pressure.every((value, sample) => Object.is(value, other.pressure[sample]));
+  });
 }
 
-function signalFingerprint(signals: Signal[]) {
-  return signals.map((signal) => `${signal.time.length}:${signal.time[0]}:${signal.time.at(-1)}:${signal.pressure.slice(0, 12).map((value) => value.toPrecision(8)).join(",")}`).join("|");
-}
-
-function changedGroups(baseline: CaseMetadata, candidate: CaseMetadata) {
-  return (Object.entries(GROUP_FIELDS) as [SensitivityVariable, (keyof CaseMetadata)[]][])
-    .filter(([group, fields]) => group !== "other" && fields.some((field) => !valueEqual(baseline[field], candidate[field])))
-    .map(([group]) => group);
+function changedCfdSettings(baseline: CaseMetadata, candidate: CaseMetadata) {
+  const fields = [...new Set(Object.values(GROUP_FIELDS).flat())];
+  return fields.filter((field) => !valueEqual(baseline[field], candidate[field]));
 }
 
 function samePhysicalCase(baseline: AnalysisCase, candidate: AnalysisCase) {
-  const keys: (keyof CaseMetadata)[] = ["annulusMeanDiameterMm", "annulusDiameterUncertaintyMm", "probePositionsDeg", "maximumWaveCount", "probeSynchronizationConfirmed", "experimentSensorBandwidthKHz", "experimentFilterCutoffKHz", "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS"];
-  return keys.every((key) => valueEqual(baseline.metadata[key], candidate.metadata[key]))
-    && signalFingerprint(baseline.testSignals) === signalFingerprint(candidate.testSignals);
+  return PHYSICAL_CASE_FIELDS.every((key) => valueEqual(baseline.metadata[key], candidate.metadata[key]))
+    && signalsEqual(baseline.testSignals, candidate.testSignals);
+}
+
+function newMismatchIds(baseline: CaseSummary, candidate: CaseSummary) {
+  return candidate.assessment.metrics
+    .filter((candidateMetric) => candidateMetric.tone === "review" && metric(baseline, candidateMetric.id)?.tone !== "review")
+    .map((candidateMetric) => candidateMetric.id);
+}
+
+function mean(values: number[]) {
+  const finite = values.filter(Number.isFinite);
+  return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : Number.NaN;
 }
 
 export function summarizeCase(item: AnalysisCase): CaseSummary {
@@ -137,57 +160,130 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
   const baseline = cases.find((item) => item.id === baselineCaseId);
   if (!baseline) return [];
   const baselineSummary = summarizeCase(baseline);
+  const previousControlled = new Map<ControlledSensitivityVariable, { item: AnalysisCase; summary: CaseSummary; evidence: CaseHistoryEvidence }>();
+
   return cases.filter((item) => item.relationship?.baselineCaseId === baselineCaseId).map((candidate) => {
     const relation = candidate.relationship!;
-    const groups = changedGroups(baseline.metadata, candidate.metadata);
-    const causeId = CAUSE_BY_CHANGE[relation.changedVariable];
-    const controlled = Boolean(causeId) && samePhysicalCase(baseline, candidate) && groups.length === 1 && groups[0] === relation.changedVariable;
-    if (!controlled || !causeId) return {
-      causeId: causeId ?? "validation-coverage",
+    const changedSettings = changedCfdSettings(baseline.metadata, candidate.metadata);
+    const variable = relation.changedVariable;
+    const rule = variable === "other" ? null : CONTROLLED_RERUN_RULES[variable];
+    const physicalCaseMatches = samePhysicalCase(baseline, candidate);
+    const controlled = Boolean(rule)
+      && physicalCaseMatches
+      && changedSettings.length > 0
+      && changedSettings.every((field) => GROUP_FIELDS[variable].includes(field));
+    const fallbackCause = rule?.causeId ?? "validation-coverage";
+
+    if (!controlled || !rule || variable === "other") return {
+      causeId: fallbackCause,
+      changedVariable: variable,
       state: "unknown" as const,
       strength: "moderate" as const,
       caseId: candidate.id,
       caseName: candidate.metadata.name,
+      caseSource: candidate.source,
+      referenceCaseId: baseline.id,
+      referenceCaseName: baseline.metadata.name,
+      caseMetadata: candidate.metadata,
       controlled: false,
       targetedMetrics: [],
       errorReductionPct: null,
       responseMagnitudePct: null,
-      detail: `Comparison only: ${samePhysicalCase(baseline, candidate) ? "the physical case matches" : "the physical case or experiment trace changed"}; detected CFD change groups: ${groups.join(", ") || "none"}.`,
+      incrementalResponsePct: null,
+      metricErrorReductionPct: {},
+      baselineMismatchMetricIds: baselineSummary.assessment.metrics.filter((result) => result.tone === "review").map((result) => result.id),
+      runtimeMultiplier: null,
+      newMismatchMetricIds: [],
+      sequenceStatus: "comparison-only" as const,
+      planDisposition: "ignore" as const,
+      detail: `Comparison only: ${physicalCaseMatches ? "the physical case matches" : "the physical case, experiment trace, or uncertainty definition changed"}; detected CFD setting changes: ${changedSettings.join(", ") || "none"}.`,
     };
 
     const candidateSummary = summarizeCase(candidate);
-    const rule = OUTCOME_RULES[relation.changedVariable as Exclude<SensitivityVariable, "other">];
-    const targets = rule.targets;
-    const baselineErrors = targets.map((id) => metricError(metric(baselineSummary, id))).filter(Number.isFinite);
-    const candidateErrors = targets.map((id) => metricError(metric(candidateSummary, id))).filter(Number.isFinite);
-    const responses = targets.map((id) => simulationResponse(metric(baselineSummary, id), metric(candidateSummary, id))).filter(Number.isFinite);
-    const baselineMean = baselineErrors.length ? baselineErrors.reduce((sum, value) => sum + value, 0) / baselineErrors.length : 0;
-    const candidateMean = candidateErrors.length ? candidateErrors.reduce((sum, value) => sum + value, 0) / candidateErrors.length : 0;
-    const errorReductionPct = baselineMean > 1e-9 ? 100 * (baselineMean - candidateMean) / baselineMean : 0;
-    const responseMagnitudePct = responses.length ? responses.reduce((sum, value) => sum + value, 0) / responses.length : 0;
-    const state = errorReductionPct >= 25
-      ? "supports" as const
-      : responseMagnitudePct < rule.minimumResponsePct || errorReductionPct <= -5
-        ? "weakens" as const
-        : "unknown" as const;
-    const detail = state === "supports"
-      ? `${relation.description || relation.changedVariable} produced the predicted response: targeted error across ${targets.join(", ")} fell by ${errorReductionPct.toFixed(1)}%.`
-      : state === "weakens" && responseMagnitudePct < rule.minimumResponsePct
-        ? `${relation.description || relation.changedVariable} rejected the predicted response: targeted CFD outputs changed by only ${responseMagnitudePct.toFixed(1)}%, below the ${rule.minimumResponsePct.toFixed(1)}% response threshold.`
-        : state === "weakens"
-          ? `${relation.description || relation.changedVariable} rejected the predicted response: targeted error across ${targets.join(", ")} increased by ${Math.abs(errorReductionPct).toFixed(1)}%.`
-          : `${relation.description || relation.changedVariable} was inconclusive: targeted error changed by ${Math.abs(errorReductionPct).toFixed(1)}% and did not meet the confirmation or rejection rule.`;
-    return {
-      causeId,
+    const previous = previousControlled.get(variable);
+    const reference = previous?.summary ?? baselineSummary;
+    const targets = rule.targets.filter((id) => metric(baselineSummary, id) && metric(candidateSummary, id));
+    const pairedErrors = targets.map((id) => ({ id, base: metricError(metric(baselineSummary, id)), next: metricError(metric(candidateSummary, id)) })).filter(({ base, next }) => Number.isFinite(base) && Number.isFinite(next));
+    const baselineMean = mean(pairedErrors.map(({ base }) => base));
+    const candidateMean = mean(pairedErrors.map(({ next }) => next));
+    const errorReductionPct = Number.isFinite(baselineMean) && baselineMean > 1e-9 ? 100 * (baselineMean - candidateMean) / baselineMean : Number.NaN;
+    const metricErrorReductionPct = Object.fromEntries(pairedErrors
+      .map(({ id, base, next }) => [id, base > 1e-9 ? 100 * (base - next) / base : Number.NaN] as const)
+      .filter(([, value]) => Number.isFinite(value)));
+    const responseMagnitudePct = mean(targets.map((id) => simulationResponse(metric(baselineSummary, id), metric(candidateSummary, id))));
+    const incrementalResponsePct = mean(targets.map((id) => simulationResponse(metric(reference, id), metric(candidateSummary, id))));
+    const newMismatches = newMismatchIds(baselineSummary, candidateSummary);
+    const hasNewMismatch = newMismatches.length > 0;
+    const numerical = rule.convergenceResponsePct !== null;
+    const converged = numerical
+      && Number.isFinite(incrementalResponsePct)
+      && incrementalResponsePct <= rule.convergenceResponsePct!
+      && !hasNewMismatch
+      && (!previous || previous.evidence.state === "supports" || errorReductionPct >= 0);
+    const confirmed = Number.isFinite(errorReductionPct)
+      && errorReductionPct >= CONFIRMATION_ERROR_REDUCTION_PCT
+      && !hasNewMismatch;
+    const rejectedForResponse = Number.isFinite(responseMagnitudePct) && responseMagnitudePct < rule.minimumResponsePct;
+    const rejectedForError = Number.isFinite(errorReductionPct) && errorReductionPct <= -REJECTION_ERROR_WORSENING_PCT;
+
+    let state: CaseHistoryEvidence["state"] = "unknown";
+    let sequenceStatus: RerunSequenceStatus = "inconclusive";
+    let planDisposition: PlanDisposition = "repeat";
+    if (converged) {
+      state = "weakens";
+      sequenceStatus = "converged";
+      planDisposition = variable === "time-step" ? "continue" : "advance";
+    } else if (confirmed) {
+      state = "supports";
+      sequenceStatus = "effect-confirmed";
+      planDisposition = numerical || variable === "initialization" ? "continue" : "advance";
+    } else if (rejectedForResponse || rejectedForError || hasNewMismatch) {
+      state = "weakens";
+      sequenceStatus = "rejected";
+      planDisposition = "advance";
+    }
+
+    const change = relation.description || relation.changedVariable;
+    const detail = sequenceStatus === "converged"
+      ? `${change} completed the numerical check: the incremental targeted response was ${incrementalResponsePct.toFixed(1)}%, at or below the ${rule.convergenceResponsePct!.toFixed(1)}% convergence limit, with no new resolved mismatch.`
+      : sequenceStatus === "effect-confirmed"
+        ? `${change} produced the predicted response: mean targeted error across ${targets.join(", ")} fell by ${errorReductionPct.toFixed(1)}%, with no new resolved mismatch.`
+        : sequenceStatus === "rejected" && hasNewMismatch
+          ? `${change} was rejected because it created a new resolved mismatch in ${newMismatches.join(", ")}.`
+          : sequenceStatus === "rejected" && rejectedForResponse
+            ? `${change} rejected the predicted response: targeted CFD outputs changed by only ${responseMagnitudePct.toFixed(1)}%, below the ${rule.minimumResponsePct.toFixed(1)}% response threshold.`
+            : sequenceStatus === "rejected"
+              ? `${change} rejected the predicted response: mean targeted error increased by ${Math.abs(errorReductionPct).toFixed(1)}%.`
+              : `${change} was inconclusive: mean targeted error changed by ${Number.isFinite(errorReductionPct) ? Math.abs(errorReductionPct).toFixed(1) : "an unresolvable amount"}% and did not meet a confirmation, rejection, or convergence rule.`;
+
+    const evidence: CaseHistoryEvidence = {
+      causeId: rule.causeId,
+      changedVariable: variable,
       state,
-      strength: "strong" as const,
+      strength: "strong",
       caseId: candidate.id,
       caseName: candidate.metadata.name,
+      caseSource: candidate.source,
+      referenceCaseId: reference.item.id,
+      referenceCaseName: reference.item.metadata.name,
+      caseMetadata: candidate.metadata,
       controlled: true,
       targetedMetrics: targets,
-      errorReductionPct,
-      responseMagnitudePct,
+      errorReductionPct: Number.isFinite(errorReductionPct) ? errorReductionPct : null,
+      responseMagnitudePct: Number.isFinite(responseMagnitudePct) ? responseMagnitudePct : null,
+      incrementalResponsePct: Number.isFinite(incrementalResponsePct) ? incrementalResponsePct : null,
+      metricErrorReductionPct,
+      baselineMismatchMetricIds: baselineSummary.assessment.metrics.filter((result) => result.tone === "review").map((result) => result.id),
+      runtimeMultiplier: Number.isFinite(candidate.metadata.solverRuntimeHours) && candidate.metadata.solverRuntimeHours > 0
+        && Number.isFinite(baseline.metadata.solverRuntimeHours) && baseline.metadata.solverRuntimeHours > 0
+        ? candidate.metadata.solverRuntimeHours / baseline.metadata.solverRuntimeHours
+        : null,
+      newMismatchMetricIds: newMismatches,
+      sequenceStatus,
+      planDisposition,
       detail,
     };
+    previousControlled.set(variable, { item: candidate, summary: candidateSummary, evidence });
+    return evidence;
   });
 }
