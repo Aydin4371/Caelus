@@ -61,21 +61,24 @@ test("ships an installable Caevera app manifest and service worker", async () =>
   assert.match(serviceWorker, /request\.mode === "navigate"/);
 });
 
-test("uses inline labels for the diagnostic recommendation", async () => {
+test("separates each rerun outcome from a clear next-run plan", async () => {
   const { readFile } = await import("node:fs/promises");
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(css, /\.decision-card \.decision-line > span[^}]*clamp\(23px, 2\.2vw, 30px\)/s);
   assert.match(css, /\.decision-card h2[^}]*clamp\(21px, 1\.9vw, 27px\)/s);
   assert.match(page, /<span>Likely issue:<\/span> \{likelyHypothesis/);
-  assert.match(page, /<span>Recommended next CFD run:<\/span> \{assessment\.nextRun\.title\}/);
-  assert.match(page, /<strong>Why:<\/strong> \{likelyEvidence/);
-  assert.match(page, /Adaptive CFD run plan/);
-  assert.match(page, /If confirmed/);
-  assert.match(page, /If rejected/);
-  assert.match(page, /If inconclusive/);
+  assert.match(page, /Result of this rerun/);
+  assert.match(page, /What this means:/);
+  assert.match(page, /Run this next/);
+  assert.match(page, /Change only this/);
+  assert.match(page, /Keep fixed/);
+  assert.match(page, /Success looks like/);
+  assert.match(page, /What happens after you upload the result/);
   assert.match(page, /nextRun\.latestControlledResult\.status/);
-  assert.match(page, /<AdaptivePlanPanel nextRun=\{assessment\.nextRun\} \/>/);
+  assert.match(page, /caseTabSummary\(item\)/);
+  assert.match(page, /<AdaptivePlanPanel nextRun=\{planAssessment\.nextRun\} showLatestResult=\{!activeCaseEvidence\} \/>/);
+  assert.doesNotMatch(page, /<span>Recommended next CFD run:<\/span>/);
   assert.doesNotMatch(page, /Make one controlled change, or one technically linked set of changes/);
 });
 
