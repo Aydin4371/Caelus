@@ -284,6 +284,13 @@ conclusion: whether prior comparable runs support the proposed change, what
 effect was observed, and how that precedent should influence the immediate
 test. Outcome counts remain available in a collapsed evidence disclosure.
 
+The primary interface combines that conclusion with the diagnosis, single next
+run, controlled variables, expected result, and input provenance in one
+engineering-decision card. Detailed ranking logic and conditional outcomes are
+collapsed by default. Evidence is labeled by support level or as a
+demonstration; no percentage confidence is shown because the prototype has not
+been calibrated against a sufficiently large independent case set.
+
 No precedent result is embedded in the application or saved as a derived
 workspace output. On every render, Caevera recalculates baseline and rerun
 metrics from the stored experiment and CFD pressure arrays, verifies the
