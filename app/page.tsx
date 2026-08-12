@@ -18,7 +18,7 @@ import { KNOWLEDGE_BASE_VERSION, sourcesFor } from "@/lib/diagnostic-knowledge";
 import { CASE_INPUT_HELP } from "@/lib/case-input-help";
 import { WAVE_METHOD_SOURCES } from "@/lib/wave-method-sources";
 import type { MappedProbeImport } from "@/lib/data-import";
-import { PUBLISHED_VALIDATION_SOURCES } from "@/lib/published-benchmarks";
+import { PUBLISHED_VALIDATION_SOURCES, PUBLISHED_VALIDATION_SUMMARY, RAW_DATASET_VALIDATION_CASES } from "@/lib/published-benchmarks";
 import { deserializeWorkspace, serializeWorkspace, workspaceFileName } from "@/lib/workspace";
 import {
   ANALYSIS_VERSION,
@@ -329,6 +329,7 @@ function EngineeringDecisionPanel({
   showLatestResult,
   analysisInput,
   publishedSourceCount,
+  publishedValidation,
   onEdit,
   onDownloadReport,
   onSaveWorkspace,
@@ -339,6 +340,7 @@ function EngineeringDecisionPanel({
   showLatestResult: boolean;
   analysisInput: AnalysisInputSummary;
   publishedSourceCount: number;
+  publishedValidation: typeof PUBLISHED_VALIDATION_SUMMARY;
   onEdit: () => void;
   onDownloadReport: () => void;
   onSaveWorkspace: () => void;
@@ -375,14 +377,14 @@ function EngineeringDecisionPanel({
       </>}
     </div>
     <div className="decision-evidence">
-      <div><span>Evidence used</span><small>Recalculated from inputs, never stored as a preset result</small></div>
+      <div><span>What this decision actually used</span><small>No preset result or public benchmark votes on this case</small></div>
       <ul>
-        <li><i>✓</i><strong>{isDemo ? "Generated demo experiment" : "Uploaded experiment"}</strong><small>{analysisInput.experimentName} · {analysisInput.experimentSamples.toLocaleString()} values across {analysisInput.probeCount} probes</small></li>
-        <li><i>✓</i><strong>{isDemo ? "Generated demo CFD" : "Uploaded CFD"}</strong><small>{analysisInput.cfdName} · {analysisInput.cfdSamples.toLocaleString()} values across {analysisInput.probeCount} probes</small></li>
+        <li><i>✓</i><strong>{isDemo ? "Generated demonstration data" : "Uploaded case data"}</strong><small>Directly analyzed: {analysisInput.experimentName} ({analysisInput.experimentSamples.toLocaleString()} experiment values) versus {analysisInput.cfdName} ({analysisInput.cfdSamples.toLocaleString()} CFD values), across {analysisInput.probeCount} probes</small></li>
         <li className={precedent.uploadedCount ? "" : "evidence-missing"}><i>{precedent.uploadedCount ? "✓" : "–"}</i><strong>Previous company runs</strong><small>{precedent.uploadedCount ? `${precedent.uploadedCount} comparable controlled rerun${precedent.uploadedCount === 1 ? "" : "s"}` : "None loaded for this mismatch"}</small></li>
-        <li className={publishedSourceCount ? "" : "evidence-missing"}><i>{publishedSourceCount ? "✓" : "–"}</i><strong>Published engineering sources</strong><small>{publishedSourceCount ? `${publishedSourceCount} source${publishedSourceCount === 1 ? "" : "s"} mapped to this diagnosis` : "No directly mapped source"}</small></li>
+        <li className={publishedSourceCount ? "" : "evidence-missing"}><i>{publishedSourceCount ? "✓" : "–"}</i><strong>Engineering rule support</strong><small>{publishedSourceCount ? `${publishedSourceCount} reviewed published engineering source${publishedSourceCount === 1 ? "" : "s"} support this diagnostic rule; they do not replace the uploaded measurements` : "No published engineering source is directly mapped to this rule"}</small></li>
+        <li><i>✓</i><strong>Analyzer validation</strong><small>{publishedValidation.waveSpeedCases} published wave-speed checks and {publishedValidation.pressureFixtureCases} Zenodo pressure-record checks run in mandatory tests; validation only, not evidence about this engine</small></li>
       </ul>
-      <p><strong>Evidence level:</strong> {isDemo ? "Demonstration only." : `${nextRun.evidenceStrength}.`} This is priority strength, not a calibrated probability of success.</p>
+      <p><strong>Recommendation support:</strong> {isDemo ? "Demonstration only." : `${nextRun.evidenceStrength}.`} This ranks the next discriminating run; it is not a calibrated probability of success.</p>
     </div>
     <div className="decision-details"><details><summary>Why this is the fastest discriminating run</summary><p>{nextRun.reason}</p><p>{nextRun.whyThisRunFirst}</p><p><strong>{nextRun.stage}:</strong> {stageMeaning(nextRun.stage)} <strong>{nextRun.evidenceStrength} support:</strong> {evidenceMeaning(nextRun.evidenceStrength)}</p></details><details><summary>What happens after you upload the result</summary><p className="branch-intro">Caevera will classify the rerun using these three outcomes. A numerical sequence closes as converged when its adjacent-level response is 2% or less.</p><div className="adaptive-branches" aria-label="How the plan updates"><article className="branch-confirmed"><span>Confirmed</span><small>The expected result clearly occurred.</small><p><b>How Caevera decides:</b> {nextRun.confirmationCriterion}</p><p><b>Then:</b> {nextRun.ifConfirmed}</p></article><article className="branch-rejected"><span>Rejected</span><small>The result moved the wrong way or did not respond.</small><p><b>How Caevera decides:</b> {nextRun.rejectionCriterion}</p><p><b>Then:</b> {nextRun.ifRejected}</p></article><article className="branch-inconclusive"><span>Inconclusive</span><small>The result changed, but not enough to decide.</small><p><b>How Caevera decides:</b> {nextRun.inconclusiveCriterion}</p><p><b>Then:</b> {nextRun.ifInconclusive}</p></article></div></details>{precedent.matchedCount > 0 && <details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details>}</div>
     <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit case</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View case history</button>}</div>
@@ -628,6 +630,16 @@ export default function Home() {
       citedSources: sourcesFor([...new Set(assessment.hypotheses.flatMap((hypothesis) => hypothesis.sourceIds))]),
       methodSources: WAVE_METHOD_SOURCES,
       publishedValidationSources: PUBLISHED_VALIDATION_SOURCES,
+      evidenceRoles: {
+        directCaseEvidence: "Uploaded experiment and CFD arrays, entered metadata, declared uncertainties, and verified controlled relationships determine the calculated metrics and recommendation.",
+        diagnosticRuleSources: likelySources,
+        methodSources: WAVE_METHOD_SOURCES,
+        publicAnalyzerValidation: {
+          summary: PUBLISHED_VALIDATION_SUMMARY,
+          cases: RAW_DATASET_VALIDATION_CASES,
+          role: "Regression validation only. Public cases do not count as company precedent and do not determine the recommendation for this uploaded case.",
+        },
+      },
       perProbe: comparisons,
       methods: ["shared bounded cross-correlation", "Hann-windowed FFT pressure spectrum", "cycle-by-cycle passage tracking", "sliding-window circumferential phase-mode fit", "uncertainty resolution by RSS", "structured diagnostic rules", "adaptive controlled-rerun outcome classification"],
       limitations: ["Hypotheses prioritize controlled sensitivity runs; they do not prove causality.", "Adaptive confirmation and rejection limits are explicit prototype rules and are not calibrated probabilities.", "Pressure and timing uncertainty are propagated only into supported scalar outputs.", "Mode inference assumes synchronized probes and one dominant rotating mode; ambiguous and simultaneous modes are reported as not identifiable.", "Thermal, performance, combustion, and flowfield agreement are outside this pressure-and-wave product scope."],
@@ -742,7 +754,7 @@ export default function Home() {
         </section> : <>
           <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div><h1>{activeCase.metadata.name}</h1><p>{activeCase.relationship ? `Controlled ${changeLabel(activeCase.relationship.changedVariable).toLowerCase()} rerun of ${baselineCaseName ?? "the baseline"}` : `Baseline for ${caseHistoryEvidence.length} controlled rerun${caseHistoryEvidence.length === 1 ? "" : "s"}`} · deterministic local analysis</p></div>
 
-          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} analysisInput={planningInput} publishedSourceCount={likelySources.length} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
+          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} analysisInput={planningInput} publishedSourceCount={likelySources.length} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
 
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">

@@ -17,6 +17,12 @@ export type ModeCandidate = {
   phaseResidualDeg: number;
 };
 
+export type SpectralPeak = {
+  frequencyKHz: number;
+  relativeAmplitude: number;
+  harmonicOfPrimary: boolean;
+};
+
 export type CycleSeriesPoint = {
   timeMs: number;
   frequencyKHz: number;
@@ -43,6 +49,8 @@ export type RdeModeResult = {
   alternativeDirection: RotationDirection;
   alternativeResidualDeg: number;
   candidateModes: ModeCandidate[];
+  spectralPeaks: SpectralPeak[];
+  complexModeDetected: boolean;
   probePhasesDeg: number[];
   fittedProbePhasesDeg: number[];
   cycleSeries: CycleSeriesPoint[];
@@ -188,6 +196,57 @@ function equalSpacingRisk(positionsDeg: number[]) {
 }
 
 /**
+ * Builds one robust spectrum from every synchronized probe. Each probe is
+ * normalized before averaging so one high-gain channel cannot hide a real
+ * component seen by the rest of the annulus.
+ */
+function sharedSpectralPeaks(signals: Signal[], primaryFrequencyKHz: number) {
+  const spectra = signals.map((signal) => {
+    const dt = median(signal.time.slice(1).map((value, index) => value - signal.time[index]));
+    return spectrum(signal.pressure, dt);
+  });
+  const length = Math.min(...spectra.map((item) => item.amplitude.length));
+  const frequency = spectra[0].frequency.slice(0, length);
+  const normalized = spectra.map((item) => {
+    const maximum = Math.max(...item.amplitude.slice(0, length), 1e-16);
+    return item.amplitude.slice(0, length).map((value) => value / maximum);
+  });
+  const amplitude = frequency.map((_, index) => mean(normalized.map((item) => item[index])));
+  const localMaxima = amplitude.flatMap((value, index) =>
+    index > 0 && index < amplitude.length - 1 && value >= amplitude[index - 1] && value > amplitude[index + 1]
+      ? [{ index, value }]
+      : []);
+  const maximum = Math.max(...localMaxima.map((item) => item.value), 1e-16);
+  const binWidth = frequency.length > 1 ? frequency[1] - frequency[0] : Number.NaN;
+  const selected: SpectralPeak[] = [];
+  for (const peak of localMaxima.sort((left, right) => right.value - left.value)) {
+    const peakFrequency = frequency[peak.index];
+    if (selected.some((item) => Math.abs(item.frequencyKHz - peakFrequency) <= 2 * binWidth)) continue;
+    const harmonicNumber = Math.round(peakFrequency / Math.max(primaryFrequencyKHz, 1e-12));
+    const harmonicTolerance = Math.max(2.5 * binWidth, 0.012 * Math.max(harmonicNumber, 1) * primaryFrequencyKHz);
+    const harmonicOfPrimary = harmonicNumber >= 2
+      && harmonicNumber <= 5
+      && Math.abs(peakFrequency - harmonicNumber * primaryFrequencyKHz) <= harmonicTolerance;
+    selected.push({ frequencyKHz: peakFrequency, relativeAmplitude: peak.value / maximum, harmonicOfPrimary });
+    if (selected.length >= 8) break;
+  }
+  const significantNonHarmonic = selected.find((peak) =>
+    !peak.harmonicOfPrimary
+    && peak.frequencyKHz >= 0.5 * primaryFrequencyKHz
+    && peak.frequencyKHz <= 1.5 * primaryFrequencyKHz
+    && Math.abs(peak.frequencyKHz - primaryFrequencyKHz) > Math.max(2.5 * binWidth, 0.015 * primaryFrequencyKHz)
+    && peak.relativeAmplitude >= 0.25);
+  return { peaks: selected, significantNonHarmonic };
+}
+
+export function circumferentialWaveSpeedMps(annulusMeanDiameterMm: number, passageFrequencyKHz: number, waveCount: number) {
+  if (![annulusMeanDiameterMm, passageFrequencyKHz, waveCount].every(Number.isFinite) || annulusMeanDiameterMm <= 0 || passageFrequencyKHz <= 0 || !Number.isInteger(waveCount) || waveCount < 1) {
+    return Number.NaN;
+  }
+  return waveSpeedFromPassageFrequency(passageFrequencyKHz, annulusMeanDiameterMm, waveCount);
+}
+
+/**
  * Infers the dominant circumferential traveling mode from synchronized pressure
  * probes. A mode is explicitly downgraded when the probe geometry or the data
  * cannot separate it from the next-best count/direction candidate.
@@ -218,6 +277,8 @@ export function analyzeRdeProbeSet(
     return dominantFrequency(spectrum(signal.pressure, dt));
   });
   const waveFrequencyKHz = median(frequencies);
+  const spectralResult = sharedSpectralPeaks(signals, waveFrequencyKHz);
+  const complexModeDetected = Boolean(spectralResult.significantNonHarmonic);
   const phases = relativePhases(signals, waveFrequencyKHz);
   const candidates = fitCandidates(phases, positionsDeg, maximumWaveCount);
   const best = candidates[0];
@@ -265,7 +326,7 @@ export function analyzeRdeProbeSet(
       ? "Candidate"
       : "Not identifiable";
   const phaseQualityUsable = qualities.every((quality) => quality.phaseUsable);
-  if (options.synchronizationConfirmed === false || !phaseQualityUsable || modeTransitions > Math.max(1, Math.floor(windowModes.length / 3))) {
+  if (options.synchronizationConfirmed === false || !phaseQualityUsable || complexModeDetected || modeTransitions > Math.max(1, Math.floor(windowModes.length / 3))) {
     identifiability = "Not identifiable";
   }
   const phaseFit = Math.max(0, 1 - (best.phaseResidualDeg * Math.PI / 180) / Math.PI);
@@ -287,6 +348,7 @@ export function analyzeRdeProbeSet(
   if (equalSpacingRisk(positionsDeg)) warnings.push("Equal circumferential spacing can alias wave count and direction.");
   if (options.synchronizationConfirmed === false) warnings.push("Probe synchronization was not confirmed, so wave count and direction are not identifiable.");
   if (!phaseQualityUsable) warnings.push("At least one probe fails the phase-quality gate; wave count, direction, propagation speed, and phase jitter are not identifiable.");
+  if (complexModeDetected && spectralResult.significantNonHarmonic) warnings.push(`A second non-harmonic pressure component at ${spectralResult.significantNonHarmonic.frequencyKHz.toFixed(2)} kHz is ${(100 * spectralResult.significantNonHarmonic.relativeAmplitude).toFixed(0)}% of the shared spectral peak; a single-mode phase fit is not a complete mode description.`);
   if (identifiability !== "Identified") warnings.push(`Dominant mode is ${identifiability.toLowerCase()}; the next candidate is ${alternative.waveCount}-wave ${alternative.direction.toLowerCase()}.`);
   const minimumNyquist = Math.min(...qualities.map((quality) => quality.nyquistKHz));
   if (minimumNyquist < 3 * waveFrequencyKHz) warnings.push("Sampling Nyquist frequency does not cover the third harmonic of the passage frequency.");
@@ -296,7 +358,9 @@ export function analyzeRdeProbeSet(
 
   return {
     waveFrequencyKHz,
-    waveSpeedMps: waveSpeedFromPassageFrequency(waveFrequencyKHz, annulusMeanDiameterMm, best.waveCount),
+    waveSpeedMps: identifiability === "Not identifiable"
+      ? Number.NaN
+      : circumferentialWaveSpeedMps(annulusMeanDiameterMm, waveFrequencyKHz, best.waveCount),
     waveCount: best.waveCount,
     direction: best.direction,
     stability,
@@ -314,6 +378,8 @@ export function analyzeRdeProbeSet(
     alternativeDirection: alternative.direction,
     alternativeResidualDeg: alternative.phaseResidualDeg,
     candidateModes: candidates.slice(0, 4),
+    spectralPeaks: spectralResult.peaks,
+    complexModeDetected,
     probePhasesDeg: phases.map(radiansToDegrees),
     fittedProbePhasesDeg,
     cycleSeries: series,

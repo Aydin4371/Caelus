@@ -25,8 +25,8 @@ export const PUBLISHED_VALIDATION_SOURCES = {
     year: 2026,
     doi: "10.5281/zenodo.18886925",
     url: "https://doi.org/10.5281/zenodo.18886925",
-    validationUse: "Open raw and processed MATLAB pressure records with simultaneous mode labels provide a future real-noise benchmark for ambiguous counter-rotating modes.",
-    limitation: "The 3.4 GB archive is experiment-only and is registered for manual/fixture extraction; it is not represented as complete paired experiment–CFD validation.",
+    validationUse: "Two traceable 4,096-sample, eight-probe fixtures extracted from the published pressure records are mandatory regression tests for ambiguous counter-rotating modes.",
+    limitation: "The archive is experiment-only. These fixtures validate conservative mode ambiguity detection; they are not company precedent and cannot validate an experiment–CFD recommendation.",
   },
 } as const;
 
@@ -52,7 +52,38 @@ export const PUBLISHED_WAVE_SPEED_BENCHMARKS: PublishedWaveSpeedBenchmark[] = [
 ];
 
 export const RAW_DATASET_VALIDATION_CASES = [
-  { id: "BD0041", expectedMode: "two counter-rotating waves at similar speed", sourceId: "oexle-bohon-2026", automationStatus: "registered-not-embedded" },
-  { id: "BD0038", expectedMode: "two counter-rotating waves at different speeds", sourceId: "oexle-bohon-2026", automationStatus: "registered-not-embedded" },
-  { id: "CE2029", expectedMode: "one dominant wave plus two counter-rotating traveling waves", sourceId: "oexle-bohon-2026", automationStatus: "registered-not-embedded" },
+  {
+    id: "BD0041",
+    expectedMode: "two counter-rotating waves at similar speed",
+    sourceId: "oexle-bohon-2026",
+    validationStatus: "mandatory-fixture",
+    fixturePath: "tests/fixtures/zenodo-bd0041.json",
+    fixtureSha256: "64ceb3a5b27a806ec8011ca68b21a06e82ca26cef0f2b3d6cd236b8f544fdb7f",
+    validatedBehavior: "The analyzer must withhold a unique single-mode result because the one-mode spatial phase residual is too large.",
+  },
+  {
+    id: "BD0038",
+    expectedMode: "two counter-rotating waves at different speed",
+    sourceId: "oexle-bohon-2026",
+    validationStatus: "mandatory-fixture",
+    fixturePath: "tests/fixtures/zenodo-bd0038.json",
+    fixtureSha256: "90758839db36e792911f3277a1a675881932f3a2256d8500f16c6e9aab040066",
+    validatedBehavior: "The analyzer must detect the second non-harmonic component and withhold a unique single-mode result.",
+  },
+  {
+    id: "CE2029",
+    expectedMode: "one dominant wave plus two counter-rotating traveling waves",
+    sourceId: "oexle-bohon-2026",
+    validationStatus: "registered-not-embedded",
+    fixturePath: null,
+    fixtureSha256: null,
+    validatedBehavior: "Pending a traceable compact fixture; no automated claim is made for this record.",
+  },
 ] as const;
+
+export const PUBLISHED_VALIDATION_SUMMARY = {
+  waveSpeedCases: PUBLISHED_WAVE_SPEED_BENCHMARKS.length,
+  pressureFixtureCases: RAW_DATASET_VALIDATION_CASES.filter((item) => item.validationStatus === "mandatory-fixture").length,
+  pendingPressureCases: RAW_DATASET_VALIDATION_CASES.filter((item) => item.validationStatus === "registered-not-embedded").length,
+  claim: "Published benchmarks test analyzer behavior only; recommendations are calculated from the active uploaded case and qualifying workspace reruns.",
+} as const;

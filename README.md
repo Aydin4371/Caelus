@@ -167,9 +167,10 @@ No LLM is used in v0.7.
 - Replaces arbitrary next-run percentages with recommendations tied to the
   current model-card values, combined uncertainty, and documented sensitivity
   sequence.
-- Reproduces published RDE frequency/wave-count/geometry-to-speed values and
-  separately registers raw experimental datasets without presenting them as
-  paired experiment–CFD validation.
+- Reproduces five published RDE frequency/wave-count/geometry-to-speed values
+  and runs two checksum-locked Zenodo pressure fixtures through the same
+  multimode analyzer used for uploads. These are analyzer regression tests,
+  never paired experiment–CFD evidence or company precedent.
 
 No heat, thrust, LLM, or automatic CFD execution is included in v1.0.
 
