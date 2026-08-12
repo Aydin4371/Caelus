@@ -521,9 +521,11 @@ test("diagnostic source records are complete and mapped", () => {
     assert.deepEqual([source.doi, source.title], expectedCitations.get(source.id), `citation drift for ${source.id}`);
   }
   const sourceIds = new Set(DIAGNOSTIC_SOURCES.map((source) => source.id));
+  const mappedSourceIds = new Set(Object.values(SOURCE_IDS_BY_CAUSE).flat());
   for (const mappedIds of Object.values(SOURCE_IDS_BY_CAUSE)) {
     for (const id of mappedIds) assert.ok(sourceIds.has(id), `unknown mapped source ${id}`);
   }
+  for (const id of sourceIds) assert.ok(mappedSourceIds.has(id), `diagnostic source ${id} is retained but not used by any rule`);
   assert.ok(SOURCE_IDS_BY_CAUSE["spatial-resolution"].length >= 2);
   assert.deepEqual(SOURCE_IDS_BY_CAUSE["initialization-mode"], ["yao-wang-2016"]);
   assert.deepEqual(SOURCE_IDS_BY_CAUSE["missing-unsteadiness"], []);
@@ -672,5 +674,5 @@ test("published RDE wave-speed values are reproduced without treating them as pa
   assert.equal(PUBLISHED_VALIDATION_SOURCES["xue-et-al-2023"].doi, "10.3389/fenrg.2023.1136156");
   assert.match(PUBLISHED_VALIDATION_SOURCES["xue-et-al-2023"].limitation, /does not release a paired/i);
   assert.deepEqual(RAW_DATASET_VALIDATION_CASES.map((item) => item.id), ["BD0041", "BD0038", "CE2029"]);
-  assert.ok(RAW_DATASET_VALIDATION_CASES.every((item) => item.automationStatus === "registered-not-embedded"));
+  assert.deepEqual(RAW_DATASET_VALIDATION_CASES.map((item) => item.validationStatus), ["mandatory-fixture", "mandatory-fixture", "registered-not-embedded"]);
 });

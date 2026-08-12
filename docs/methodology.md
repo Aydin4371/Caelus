@@ -400,8 +400,10 @@ cannot become detached from the saved raw evidence.
 ## 16. Published validation boundary
 
 Exact published frequency, wave-count, annulus-diameter, and wave-speed values
-are used as deterministic calculation benchmarks. Registered raw experimental
-archives are kept separate until a compact fixture is extracted with hashes,
-variable names, time windows, probe coordinates, and processing provenance.
-Neither level is described as full experiment–CFD validation unless matching
-numeric arrays from both sides exist.
+are used as deterministic calculation benchmarks. Two checksum-locked compact
+pressure fixtures from the registered Zenodo archive are also analyzed in the
+mandatory suite. They verify that similar-speed counter-rotation is not falsely
+collapsed into one mode and that a separated secondary traveling component is
+detected. CE2029 remains registered but unembedded. None of these public cases
+is described as full experiment–CFD validation because matching numeric arrays
+from both sides do not exist.
