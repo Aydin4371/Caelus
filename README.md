@@ -5,8 +5,10 @@ compares three or more synchronized experimental pressure traces with matching
 CFD virtual probes, determines whether differences are resolved beyond the stated
 uncertainty, orders traceable diagnostic hypotheses by evidence state, and recommends one
 controlled next simulation. When a related rerun is added, Caevera classifies
-the predicted response as confirmed, rejected, or inconclusive and updates the
-next recommendation.
+the predicted response as confirmed, converged, rejected, or inconclusive and
+updates the next recommendation. It also aggregates comparable controlled
+reruns already loaded in the workspace, showing observed outcome counts,
+metric-error improvement, and runtime multiplier without inventing precedent.
 
 The application starts as an empty case workspace and accepts multiple
 operating points. It does not run CFD. Uploaded data and deterministic analysis
@@ -20,6 +22,23 @@ case rather than embedded examples.
 The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
+
+## v1.3 reasoning-engine update
+
+- Uses the latest accepted rerun settings, so a follow-up mesh recommendation
+  starts from the actual fine mesh rather than stale baseline metadata.
+- Treats each result as an explicit state transition: continue, advance,
+  repeat, or ignore.
+- Closes mesh and flow-time-step sequences at a documented 2% adjacent-level
+  response, advances after rejected/completed sensitivities, and repeats an
+  inconclusive one-variable bracket.
+- Requires exact experiment-trace equality and rejects hidden multi-setting
+  changes before a related rerun can affect the plan.
+- Adds a classifiable measured-unsteadiness branch and makes data-quality gates
+  outrank CFD tuning.
+- Adds comparable-case intelligence using only loaded, verified controlled
+  reruns. Synthetic precedents remain visibly labeled and do not influence
+  uploaded cases.
 
 ## Version 1.0 product contract
 

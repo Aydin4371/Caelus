@@ -74,6 +74,10 @@ test("separates each rerun outcome from a clear next-run plan", async () => {
   assert.match(page, /Change only this/);
   assert.match(page, /Keep fixed/);
   assert.match(page, /Success looks like/);
+  assert.match(page, /What comparable cases show/);
+  assert.match(page, /comparable controlled rerun/);
+  assert.match(page, /Synthetic demonstration only/);
+  assert.match(page, /fastest discriminating run/);
   assert.match(page, /What happens after you upload the result/);
   assert.match(page, /nextRun\.latestControlledResult\.status/);
   assert.match(page, /caseTabSummary\(item\)/);

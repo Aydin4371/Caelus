@@ -2,7 +2,7 @@
 
 ## Scope
 
-Version 0.7 analyzes one matched RDE operating point using at least three
+Version 1.3 analyzes matched RDE operating points using at least three
 synchronized experimental pressure traces and matching CFD virtual probes. It
 asks:
 
@@ -212,7 +212,8 @@ motivated it. The highest-ranked candidate becomes an adaptive next-run plan:
 - inconclusive criterion;
 - an explanation of why this run outranks the alternatives;
 - conditional next actions for confirmation, rejection, and an inconclusive result;
-- the latest controlled-rerun outcome; and
+- the latest controlled-rerun outcome;
+- comparable controlled-rerun outcomes and observed cost when available;
 - alternative hypothesis; and
 - evidence strength.
 
@@ -228,13 +229,14 @@ Caevera does not assign a numeric confidence or cause score. Each diagnostic
 observation is recorded as `supports`, `weakens`, `unknown`, or
 `cannot-assess`, with a strength and basis (`case`, `case-history`, or
 `literature`). Hypotheses are ordered deterministically: validity gates first,
-then controlled-rerun support, net supporting evidence, strong evidence, and
+then required repeats and unfinished sensitivities, controlled-rerun support,
+net supporting evidence, strong evidence, comparable-case precedent, and
 finally unresolved evidence.
 
 Every uploaded item is a case. A case may optionally identify an existing case
 as its baseline and record one changed CFD variable group. The relationship is
 used as diagnostic evidence only when Caevera verifies the same geometry,
-operating point, probe layout, experimental trace fingerprint, and exactly one
+operating point, probe layout, every experimental trace sample, and exactly one
 changed CFD group. Otherwise the item remains a comparison only.
 
 Primary literature provides traceable applicability context and identifies
@@ -256,6 +258,7 @@ respond to that variable:
 | Inlet | Mean pressure, frequency | 2% |
 | Wall | Amplitude, impulse | 2% |
 | Initialization | Wave count, direction, transitions | categorical change |
+| Measured unsteady forcing | Cycle variability, frequency drift, phase jitter | 2% |
 
 A rerun confirms the predicted signature when mean targeted error falls by at
 least 25%. It rejects that signature when the target response is below the
@@ -264,7 +267,26 @@ inconclusive. These are explicit prototype decision limits, not calibrated
 probabilities and not proof that the associated model choice caused the original
 discrepancy.
 
-## 10. Coverage and traceable report
+## 10. Comparable-case intelligence
+
+Caevera aggregates completed controlled reruns across the loaded workspace when
+they share the selected cause and overlap the active mismatch signature. The
+next-run card reports:
+
+- the number of comparable controlled reruns;
+- confirmed, converged, rejected, and inconclusive counts;
+- mean per-metric error reduction among confirmed reruns; and
+- mean runtime multiplier among confirmed reruns when both baseline and rerun
+  wall-clock runtime were supplied.
+
+One or two uploaded precedents are labeled limited evidence. Three or more are
+labeled a repeated workspace pattern. These summaries are descriptive and
+configuration-specific; they are not calibrated probabilities. Synthetic demo
+cases are labeled as demonstrations and are excluded from precedent used for an
+uploaded case. Caevera never substitutes invented historical counts for missing
+case history.
+
+## 11. Coverage and traceable report
 
 The product scope is pressure and wave dynamics. Thermal and
 performance remain not assessed unless those measurements are added in later
@@ -285,7 +307,7 @@ analysis methods.
 - Adaptive outcome thresholds have not yet been calibrated against withheld
   paired experiment-CFD rerun histories.
 - Heat flux, wall temperature, thrust, optical diagnostics, species, and full
-  spatial fields are outside version 1.1.
+  spatial fields are outside version 1.3.
 - One operating point cannot establish a validation envelope.
 
 ## Evidence required for a research release

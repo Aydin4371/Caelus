@@ -79,6 +79,7 @@ function validateMetadata(metadata: Record<string, unknown>, label: string) {
   for (const key of REQUIRED_TEXT_METADATA) {
     if (typeof metadata[key] !== "string" || !metadata[key].trim()) throw new Error(`${label} is missing ${key}.`);
   }
+  if (typeof metadata.solverRuntimeHours !== "number" || Number.isFinite(metadata.solverRuntimeHours) && metadata.solverRuntimeHours <= 0) throw new Error(`${label} has an invalid solverRuntimeHours value.`);
   if (metadata.dimensionality !== "2D" && metadata.dimensionality !== "3D") throw new Error(`${label} has an invalid dimensionality.`);
   if (typeof metadata.maximumWaveCount !== "number" || !Number.isInteger(metadata.maximumWaveCount) || metadata.maximumWaveCount < 1 || metadata.maximumWaveCount > 12) throw new Error(`${label} has an invalid maximum wave count.`);
   if (typeof metadata.probeSynchronizationConfirmed !== "boolean" || typeof metadata.comparisonMatchConfirmed !== "boolean") throw new Error(`${label} is missing confirmation states.`);
@@ -94,6 +95,7 @@ function validateImportProvenance(value: unknown, probeCount: number, label: str
 
 function validateCase(value: unknown, index: number): asserts value is AnalysisCase {
   if (!isObject(value) || typeof value.id !== "string" || !isObject(value.metadata)) throw new Error(`Case ${index + 1} is malformed.`);
+  if (!("solverRuntimeHours" in value.metadata)) value.metadata.solverRuntimeHours = Number.NaN;
   validateMetadata(value.metadata, `Case ${index + 1}`);
   if (!Array.isArray(value.testSignals) || !Array.isArray(value.cfdSignals) || value.testSignals.length < 3 || value.testSignals.length !== value.cfdSignals.length) {
     throw new Error(`Case ${index + 1} does not contain matched experiment and CFD probe arrays.`);
@@ -103,6 +105,15 @@ function validateCase(value: unknown, index: number): asserts value is AnalysisC
   value.testSignals.forEach((signal, probe) => validateSignal(signal, `Case ${index + 1} experiment P${probe + 1}`));
   value.cfdSignals.forEach((signal, probe) => validateSignal(signal, `Case ${index + 1} CFD P${probe + 1}`));
   if (value.source !== "uploaded" && value.source !== "demo") throw new Error(`Case ${index + 1} has an invalid source type.`);
+  if (value.relationship != null) {
+    const allowedChanges = ["mesh", "time-step", "chemistry", "inlet", "wall", "initialization", "unsteadiness", "other"];
+    if (!isObject(value.relationship)
+      || typeof value.relationship.baselineCaseId !== "string"
+      || !allowedChanges.includes(String(value.relationship.changedVariable))
+      || typeof value.relationship.description !== "string") {
+      throw new Error(`Case ${index + 1} has an invalid related-rerun definition.`);
+    }
+  }
   if (value.imports != null) {
     if (!isObject(value.imports)) throw new Error(`Case ${index + 1} import provenance is malformed.`);
     validateImportProvenance(value.imports.experiment, value.testSignals.length, `Case ${index + 1} experiment`);
@@ -135,6 +146,11 @@ export function deserializeWorkspace(text: string): WorkspaceState {
   const cases = parsed.state.cases as AnalysisCase[];
   const identifiers = new Set(cases.map((item) => item.id));
   if (identifiers.size !== cases.length) throw new Error("The workspace contains duplicate case identifiers.");
+  for (const item of cases) {
+    if (item.relationship && (!identifiers.has(item.relationship.baselineCaseId) || item.relationship.baselineCaseId === item.id)) {
+      throw new Error(`Case ${item.metadata.name} links to an invalid baseline case.`);
+    }
+  }
   const requestedActive = typeof parsed.state.activeCaseId === "string" ? parsed.state.activeCaseId : null;
   const requestedBaseline = typeof parsed.state.baselineCaseId === "string" ? parsed.state.baselineCaseId : null;
   return {

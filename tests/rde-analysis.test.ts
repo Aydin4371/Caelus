@@ -85,6 +85,7 @@ const DEMO_METADATA: CaseMetadata = {
   cellsPerInductionLength: 8,
   nearWallCellSizeMm: 0.1,
   timeStepUs: 0.25,
+  solverRuntimeHours: 10,
   wallBoundaryCondition: "Isothermal 450 K",
   inletBoundaryCondition: "Measured total state + mass flow",
   outletBoundaryCondition: "Non-reflecting pressure outlet",
@@ -294,7 +295,7 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
     id: "fine",
     source: "demo",
     relationship: { baselineCaseId: "base", changedVariable: "mesh", description: "50% front-cell refinement" },
-    metadata: { ...DEMO_METADATA, name: "Fine mesh", meshCells: 5_000_000, minimumCellSizeMm: 0.125, cellsPerInductionLength: 16, nearWallCellSizeMm: 0.05, meshConvergencePct: 1.7 },
+    metadata: { ...DEMO_METADATA, name: "Fine mesh", meshCells: 5_000_000, minimumCellSizeMm: 0.125, cellsPerInductionLength: 16, nearWallCellSizeMm: 0.05, meshConvergencePct: 1.7, solverRuntimeHours: 18 },
     testSignals: demo.test,
     cfdSignals: demo.cfd.map((signal, probe) => ({ ...signal, pressure: signal.pressure.map((value, index) => value + 0.95 * (demo.test[probe].pressure[index] - value)) })),
   };
@@ -304,6 +305,8 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   assert.equal(history[0].causeId, "spatial-resolution");
   assert.equal(history[0].state, "supports");
   assert.equal(history[0].strength, "strong");
+  assert.equal(history[0].sequenceStatus, "effect-confirmed");
+  assert.equal(history[0].planDisposition, "continue");
   assert.ok((history[0].errorReductionPct ?? 0) >= 25);
   assert.ok((history[0].responseMagnitudePct ?? 0) > 0);
   assert.deepEqual(history[0].targetedMetrics, ["peak-pressure", "rise-time", "harmonics"]);
@@ -312,8 +315,45 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   const result = buildCaseAssessment(DEMO_METADATA, comparisons, analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82), analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82), history);
   assert.equal(result.hypotheses[0].id, "spatial-resolution");
   assert.match(result.nextRun.title, /mesh-convergence/i);
+  assert.match(result.nextRun.change, /0\.125 mm/, "the next run must start from the accepted fine mesh, not stale baseline metadata");
   assert.equal(result.nextRun.latestControlledResult.status, "Confirmed");
   assert.equal(result.nextRun.latestControlledResult.caseName, "Fine mesh");
+  assert.equal(result.nextRun.precedent.level, "Demonstration");
+  assert.equal(result.nextRun.precedent.matchedCount, 1);
+  assert.equal(result.nextRun.precedent.confirmedCount, 1);
+  assert.equal(result.nextRun.precedent.syntheticCount, 1);
+  assert.equal(result.nextRun.precedent.uploadedCount, 0);
+  close(result.nextRun.precedent.meanRuntimeMultiplier ?? 0, 1.8, 1e-12, "precedent runtime multiplier");
+  assert.ok(result.nextRun.precedent.metricImprovements.some((item) => item.metricId === "peak-pressure" && item.meanReductionPct > 0));
+});
+
+test("three uploaded comparable reruns become repeated workspace precedent", () => {
+  const demo = makeDemoProbeSignals();
+  const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
+  const experiment = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
+  const simulation = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
+  const precedents = [1, 2, 3].map((index) => ({
+    causeId: "spatial-resolution" as const,
+    changedVariable: "mesh" as const,
+    state: "supports" as const,
+    strength: "strong" as const,
+    caseId: `prior-${index}`,
+    caseName: `Prior mesh ${index}`,
+    caseSource: "uploaded" as const,
+    detail: "Controlled mesh refinement reduced the targeted mismatch.",
+    controlled: true,
+    sequenceStatus: "effect-confirmed" as const,
+    planDisposition: "continue" as const,
+    baselineMismatchMetricIds: ["peak-pressure", "rise-time"],
+    metricErrorReductionPct: { "peak-pressure": 60 + index, "rise-time": 40 + index },
+    runtimeMultiplier: 1.5 + index * 0.1,
+  }));
+  const result = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation, precedents.slice(0, 1), precedents);
+  assert.equal(result.nextRun.precedent.level, "Repeated");
+  assert.equal(result.nextRun.precedent.matchedCount, 3);
+  assert.equal(result.nextRun.precedent.confirmedCount, 3);
+  assert.equal(result.nextRun.precedent.uploadedCount, 3);
+  close(result.nextRun.precedent.meanRuntimeMultiplier ?? 0, 1.7, 1e-12, "mean runtime multiplier");
 });
 
 test("adaptive plan exposes rejected and inconclusive controlled outcomes", () => {
@@ -329,12 +369,101 @@ test("adaptive plan exposes rejected and inconclusive controlled outcomes", () =
     detail: "The controlled run did not produce a decisive targeted response.",
     controlled: true,
   };
-  const rejected = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation, [{ ...baseEvidence, state: "weakens" }]);
-  const inconclusive = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation, [{ ...baseEvidence, state: "unknown" }]);
+  const rejected = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation, [{ ...baseEvidence, changedVariable: "mesh", state: "weakens", sequenceStatus: "rejected", planDisposition: "advance" }]);
+  const inconclusive = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation, [{ ...baseEvidence, changedVariable: "mesh", state: "unknown", sequenceStatus: "inconclusive", planDisposition: "repeat" }]);
   assert.equal(rejected.nextRun.latestControlledResult.status, "Rejected");
+  assert.doesNotMatch(rejected.nextRun.title, /mesh/i, "a rejected mesh sensitivity must advance to another hypothesis");
   assert.match(rejected.nextRun.ifRejected, /next|repair|keep/i);
   assert.equal(inconclusive.nextRun.latestControlledResult.status, "Inconclusive");
+  assert.match(inconclusive.nextRun.title, /repeat the mesh test/i);
   assert.match(inconclusive.nextRun.ifInconclusive, /perturbation|uncertainty/i);
+});
+
+test("a related case is diagnostic only when every experiment sample and one CFD group match", () => {
+  const demo = makeDemoProbeSignals();
+  const baseline: AnalysisCase = { id: "base", source: "demo", relationship: null, metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
+  const changedExperiment = demo.test.map((signal, probe) => ({
+    ...signal,
+    pressure: signal.pressure.map((value, index) => probe === 0 && index === signal.pressure.length - 1 ? value + 0.01 : value),
+  }));
+  const candidate: AnalysisCase = {
+    id: "candidate",
+    source: "demo",
+    relationship: { baselineCaseId: "base", changedVariable: "mesh", description: "Mesh plus hidden changes" },
+    metadata: { ...DEMO_METADATA, name: "Uncontrolled", minimumCellSizeMm: 0.125, meshCells: 5_000_000, turbulenceModel: "LES" },
+    testSignals: changedExperiment,
+    cfdSignals: demo.cfd,
+  };
+  const evidence = buildCaseHistoryEvidence([baseline, candidate], baseline.id)[0];
+  assert.equal(evidence.controlled, false);
+  assert.equal(evidence.sequenceStatus, "comparison-only");
+  assert.equal(evidence.planDisposition, "ignore");
+  assert.match(evidence.detail, /experiment trace|physical case/i);
+});
+
+test("measured unsteady forcing has a classifiable rerun path", () => {
+  const demo = makeDemoProbeSignals();
+  const baseline: AnalysisCase = { id: "base", source: "demo", relationship: null, metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
+  const candidate: AnalysisCase = {
+    id: "forcing",
+    source: "demo",
+    relationship: { baselineCaseId: "base", changedVariable: "unsteadiness", description: "Measured inlet-pressure history" },
+    metadata: { ...DEMO_METADATA, name: "Measured forcing", inletBoundaryCondition: "Measured synchronized inlet-pressure history" },
+    testSignals: demo.test,
+    cfdSignals: demo.cfd.map((signal) => ({ ...signal, pressure: signal.pressure.map((value, index) => value * (1 + 0.02 * Math.sin(index / 90))) })),
+  };
+  const evidence = buildCaseHistoryEvidence([baseline, candidate], baseline.id)[0];
+  assert.equal(evidence.controlled, true);
+  assert.equal(evidence.causeId, "missing-unsteadiness");
+  assert.deepEqual(evidence.targetedMetrics, ["cycle-variability", "frequency-drift", "phase-jitter"]);
+});
+
+test("a data-quality gate outranks model tuning", () => {
+  const demo = makeDemoProbeSignals();
+  const addGap = (signal: Signal) => ({ ...signal, time: signal.time.map((value, index) => index >= 800 ? value + 0.025 : value) });
+  const experimentSignals = demo.test.map(addGap);
+  const cfdSignals = demo.cfd.map(addGap);
+  const comparisons = compareProbeSets(experimentSignals, cfdSignals).comparisons;
+  const result = buildCaseAssessment(DEMO_METADATA, comparisons, analyzeRdeProbeSet(experimentSignals, demo.positionsDeg, 82), analyzeRdeProbeSet(cfdSignals, demo.positionsDeg, 82));
+  assert.equal(result.dataQuality.status, "Review");
+  assert.equal(result.hypotheses[0].id, "data-quality");
+  assert.equal(result.nextRun.stage, "Evidence gate");
+});
+
+test("a second numerical level below two percent closes mesh convergence and advances", () => {
+  const demo = makeDemoProbeSignals();
+  const blend = (factor: number) => demo.cfd.map((signal, probe) => ({
+    ...signal,
+    pressure: signal.pressure.map((value, index) => value + factor * (demo.test[probe].pressure[index] - value)),
+  }));
+  const baseline: AnalysisCase = { id: "base", source: "demo", relationship: null, metadata: { ...DEMO_METADATA, meshConvergencePct: Number.NaN }, testSignals: demo.test, cfdSignals: demo.cfd };
+  const fine: AnalysisCase = {
+    id: "fine", source: "demo", relationship: { baselineCaseId: "base", changedVariable: "mesh", description: "First mesh refinement" },
+    metadata: { ...DEMO_METADATA, name: "Fine", minimumCellSizeMm: 0.125, meshCells: 5_000_000, cellsPerInductionLength: 16, nearWallCellSizeMm: 0.05, meshConvergencePct: Number.NaN },
+    testSignals: demo.test, cfdSignals: blend(0.95),
+  };
+  const finer: AnalysisCase = {
+    id: "finer", source: "demo", relationship: { baselineCaseId: "base", changedVariable: "mesh", description: "Second mesh refinement" },
+    metadata: { ...DEMO_METADATA, name: "Finer", minimumCellSizeMm: 0.0625, meshCells: 10_000_000, cellsPerInductionLength: 32, nearWallCellSizeMm: 0.025, meshConvergencePct: Number.NaN },
+    testSignals: demo.test, cfdSignals: blend(0.951),
+  };
+  const history = buildCaseHistoryEvidence([baseline, fine, finer], baseline.id);
+  assert.equal(history[0].sequenceStatus, "effect-confirmed");
+  assert.equal(history[1].sequenceStatus, "converged");
+  assert.equal(history[1].planDisposition, "advance");
+  assert.ok((history[1].incrementalResponsePct ?? 100) <= 2);
+  const summary = summarizeCase(finer);
+  const assessment = buildCaseAssessment(finer.metadata, compareProbeSets(finer.testSignals, finer.cfdSignals).comparisons, summary.experiment, summary.simulation, history);
+  assert.doesNotMatch(assessment.nextRun.title, /mesh/i, "a converged mesh sequence must not request another mesh level");
+});
+
+test("the displayed rerun criteria match the classifier thresholds", () => {
+  const demo = makeDemoProbeSignals();
+  const result = buildCaseAssessment(DEMO_METADATA, compareProbeSets(demo.test, demo.cfd).comparisons, analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82), analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82));
+  assert.match(result.nextRun.confirmationCriterion, /25%/);
+  assert.match(result.nextRun.confirmationCriterion, /no new resolved mismatch/i);
+  assert.match(result.nextRun.rejectionCriterion, /5%/);
+  assert.match(result.nextRun.inconclusiveCriterion, /2%/);
 });
 
 test("diagnostic source records are complete and mapped", () => {
@@ -495,6 +624,9 @@ test("complete workspaces round-trip raw signals, mappings, links, and non-finit
   assert.equal(restored.cases[0].imports?.experiment.timeColumn, "clock");
   assert.equal(restored.cases[0].testSignals[0].pressure.length, demo.test[0].pressure.length);
   assert.ok(Number.isNaN(restored.cases[0].metadata.meshConvergencePct));
+  const legacyEnvelope = JSON.parse(serialized);
+  delete legacyEnvelope.state.cases[0].metadata.solverRuntimeHours;
+  assert.ok(Number.isNaN(deserializeWorkspace(JSON.stringify(legacyEnvelope)).cases[0].metadata.solverRuntimeHours));
   assert.throws(() => deserializeWorkspace('{"schema":"other"}'), /not a Caevera/i);
 });
 
