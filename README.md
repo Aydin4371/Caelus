@@ -12,6 +12,9 @@ metric-error improvement, and runtime multiplier without inventing precedent.
 The interface leads with the engineering conclusion and keeps the underlying
 case counts available as a disclosure rather than presenting unexplained raw
 statistics.
+Diagnosis, next action, expected result, comparable-case history, and input
+provenance now appear in one engineering-decision card. Technical ranking and
+conditional branches remain available under disclosures.
 
 The application starts as an empty case workspace and accepts multiple
 operating points. It does not run CFD. Uploaded data and deterministic analysis
@@ -46,6 +49,9 @@ discrepancy.
   summary from stored pressure arrays and entered case metadata. Workspaces
   contain inputs and relationships, not cached recommendations or preset
   conclusions.
+- Uses an evidence-strength label instead of an invented probability. Caevera
+  does not display a percentage confidence until a real calibration dataset can
+  support one.
 
 ## Version 1.0 product contract
 

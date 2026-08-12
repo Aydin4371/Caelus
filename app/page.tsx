@@ -133,6 +133,18 @@ type AnalysisInputSummary = {
   source: AnalysisCase["source"];
   experimentSamples: number;
   cfdSamples: number;
+  probeCount: number;
+  experimentName: string;
+  cfdName: string;
+};
+
+type DecisionSummary = {
+  label: string;
+  lead: string;
+  title: string;
+  meaning: string;
+  detail: string | null;
+  tone: "neutral" | "confirmed" | "converged" | "rejected" | "inconclusive";
 };
 
 function metricDigits(metric: MetricAssessment) {
@@ -311,37 +323,69 @@ function Legend({ residual = false }: { residual?: boolean }) {
   }</div>;
 }
 
-function AdaptivePlanPanel({ nextRun, showLatestResult, analysisInput }: { nextRun: ControlledNextRun; showLatestResult: boolean; analysisInput: AnalysisInputSummary }) {
+function EngineeringDecisionPanel({
+  summary,
+  nextRun,
+  showLatestResult,
+  analysisInput,
+  publishedSourceCount,
+  onEdit,
+  onDownloadReport,
+  onSaveWorkspace,
+  onViewHistory,
+}: {
+  summary: DecisionSummary;
+  nextRun: ControlledNextRun;
+  showLatestResult: boolean;
+  analysisInput: AnalysisInputSummary;
+  publishedSourceCount: number;
+  onEdit: () => void;
+  onDownloadReport: () => void;
+  onSaveWorkspace: () => void;
+  onViewHistory: (() => void) | null;
+}) {
   const precedent = nextRun.precedent;
   const effectSummary = precedentEffectSummary(precedent);
-  const inputSource = analysisInput.source === "demo" ? "generated demonstration signals" : "uploaded pressure files";
-  return <section className="adaptive-plan-panel" aria-label="What you should do next">
-    <div className="adaptive-plan-heading"><span>Run this next</span><h2>{nextRun.title}</h2></div>
+  const isDemo = analysisInput.source === "demo";
+  const evidenceLabel = isDemo ? "Demo only" : `${nextRun.evidenceStrength} support`;
+  return <section className={`engineering-decision-card decision-${summary.tone}${isDemo ? " decision-demo" : ""}`} aria-label="Engineering decision">
+    <header className="engineering-decision-heading">
+      <div><span>Engineering decision</span><strong>{evidenceLabel}</strong></div>
+      <small>{summary.label}</small>
+      <h2><span>{summary.lead}</span> {summary.title}</h2>
+      {summary.detail && <p className="decision-detail">{summary.detail}</p>}
+      <p className="decision-meaning"><strong>What this means:</strong> {summary.meaning}</p>
+    </header>
+    {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Last controlled run: {nextRun.latestControlledResult.status}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{nextRun.latestControlledResult.detail}</p></div>}
+    <div className="decision-next-run">
+      <span>Do this next</span><h3>{nextRun.title}</h3>
+    </div>
     <div className="next-run-action">
       <p><strong>Change only this</strong><span>{nextRun.change}</span></p>
       <p><strong>Keep fixed</strong><span>{nextRun.holdFixed.join(" · ")}</span></p>
       <p><strong>Success looks like</strong><span>{nextRun.expectedOutcome}</span></p>
     </div>
-    <section className={`precedent-intelligence precedent-${precedent.level.toLowerCase().replaceAll(" ", "-")}`} aria-label="Comparable controlled reruns">
-      <div className="precedent-heading"><span>What prior cases tell you</span><strong>{precedent.level} evidence</strong></div>
+    <div className="decision-precedent" aria-label="Comparable controlled reruns">
+      <span>What prior cases tell you</span>
       {precedent.matchedCount ? <>
-        <div className="precedent-conclusion"><strong>Conclusion</strong><p>{precedentConclusion(precedent)}</p></div>
-        {effectSummary && <p className="precedent-measured"><strong>Observed result:</strong> Among confirmed cases, {effectSummary}.</p>}
-        <p className="precedent-guidance"><strong>How to use this:</strong> {precedent.level === "Demonstration"
-          ? "Treat it only as a worked example of the reasoning process. It is not evidence that a real engine case will respond the same way."
-          : precedent.level === "Limited"
-            ? "Use it as supporting evidence, but still run the controlled test above before accepting the explanation."
-            : "Use it to prioritize the controlled test above, while remembering that the result remains configuration-specific."}</p>
-        <small className="analysis-provenance"><strong>Calculated from data:</strong> Error changes were recomputed from the stored experiment and CFD pressure arrays for each controlled rerun. Runtime uses only entered solver hours. {precedent.level === "Demonstration" ? "These arrays are generated demo inputs, not uploaded program evidence." : "No result or recommendation is stored as a preset."}</small>
-        <details className="precedent-details"><summary>Show analyzed case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details>
+        <p><strong>{precedentConclusion(precedent)}</strong>{effectSummary ? ` Among confirmed cases, ${effectSummary}.` : ""}</p>
+        {isDemo && <small>This is a worked example, not evidence that a real engine case will respond the same way.</small>}
       </> : <>
-        <div className="precedent-conclusion"><strong>Conclusion</strong><p>No previous controlled rerun supports or weakens this recommendation yet.</p></div>
-        <p className="precedent-guidance"><strong>What to do:</strong> Run the controlled change above, then upload its experiment and CFD result. Caevera will calculate whether it confirmed, rejected, or left the explanation inconclusive.</p>
-        <small className="analysis-provenance"><strong>Current analysis source:</strong> Recalculated from {analysisInput.experimentSamples.toLocaleString()} experiment and {analysisInput.cfdSamples.toLocaleString()} CFD pressure samples in the {inputSource}, plus the entered case and solver settings. No result or recommendation is stored as a preset.</small>
+        <p><strong>No comparable controlled company run is loaded yet.</strong> This recommendation comes from the current case and the versioned engineering rules.</p>
       </>}
-    </section>
-    {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`plan-history outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>What the last run told us: {nextRun.latestControlledResult.status}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{nextRun.latestControlledResult.detail}</p></div>}
-    <div className="plan-details"><details><summary>Why this is the fastest discriminating run</summary><p>{nextRun.reason}</p><p>{nextRun.whyThisRunFirst}</p><p><strong>{nextRun.stage}:</strong> {stageMeaning(nextRun.stage)} <strong>{nextRun.evidenceStrength} evidence:</strong> {evidenceMeaning(nextRun.evidenceStrength)}</p></details><details className="plan-branches"><summary>What happens after you upload the result</summary><p className="branch-intro">Caevera will classify the rerun using these three decision outcomes. A numerical sequence also closes as converged when its adjacent-level response is 2% or less.</p><div className="adaptive-branches" aria-label="How the plan updates"><article className="branch-confirmed"><span>Confirmed</span><small>The expected result clearly occurred.</small><p><b>How Caevera decides:</b> {nextRun.confirmationCriterion}</p><p><b>Then:</b> {nextRun.ifConfirmed}</p></article><article className="branch-rejected"><span>Rejected</span><small>The result moved the wrong way or did not respond.</small><p><b>How Caevera decides:</b> {nextRun.rejectionCriterion}</p><p><b>Then:</b> {nextRun.ifRejected}</p></article><article className="branch-inconclusive"><span>Inconclusive</span><small>The result changed, but not enough to decide.</small><p><b>How Caevera decides:</b> {nextRun.inconclusiveCriterion}</p><p><b>Then:</b> {nextRun.ifInconclusive}</p></article></div></details></div>
+    </div>
+    <div className="decision-evidence">
+      <div><span>Evidence used</span><small>Recalculated from inputs, never stored as a preset result</small></div>
+      <ul>
+        <li><i>✓</i><strong>{isDemo ? "Generated demo experiment" : "Uploaded experiment"}</strong><small>{analysisInput.experimentName} · {analysisInput.experimentSamples.toLocaleString()} values across {analysisInput.probeCount} probes</small></li>
+        <li><i>✓</i><strong>{isDemo ? "Generated demo CFD" : "Uploaded CFD"}</strong><small>{analysisInput.cfdName} · {analysisInput.cfdSamples.toLocaleString()} values across {analysisInput.probeCount} probes</small></li>
+        <li className={precedent.uploadedCount ? "" : "evidence-missing"}><i>{precedent.uploadedCount ? "✓" : "–"}</i><strong>Previous company runs</strong><small>{precedent.uploadedCount ? `${precedent.uploadedCount} comparable controlled rerun${precedent.uploadedCount === 1 ? "" : "s"}` : "None loaded for this mismatch"}</small></li>
+        <li className={publishedSourceCount ? "" : "evidence-missing"}><i>{publishedSourceCount ? "✓" : "–"}</i><strong>Published engineering sources</strong><small>{publishedSourceCount ? `${publishedSourceCount} source${publishedSourceCount === 1 ? "" : "s"} mapped to this diagnosis` : "No directly mapped source"}</small></li>
+      </ul>
+      <p><strong>Evidence level:</strong> {isDemo ? "Demonstration only." : `${nextRun.evidenceStrength}.`} This is priority strength, not a calibrated probability of success.</p>
+    </div>
+    <div className="decision-details"><details><summary>Why this is the fastest discriminating run</summary><p>{nextRun.reason}</p><p>{nextRun.whyThisRunFirst}</p><p><strong>{nextRun.stage}:</strong> {stageMeaning(nextRun.stage)} <strong>{nextRun.evidenceStrength} support:</strong> {evidenceMeaning(nextRun.evidenceStrength)}</p></details><details><summary>What happens after you upload the result</summary><p className="branch-intro">Caevera will classify the rerun using these three outcomes. A numerical sequence closes as converged when its adjacent-level response is 2% or less.</p><div className="adaptive-branches" aria-label="How the plan updates"><article className="branch-confirmed"><span>Confirmed</span><small>The expected result clearly occurred.</small><p><b>How Caevera decides:</b> {nextRun.confirmationCriterion}</p><p><b>Then:</b> {nextRun.ifConfirmed}</p></article><article className="branch-rejected"><span>Rejected</span><small>The result moved the wrong way or did not respond.</small><p><b>How Caevera decides:</b> {nextRun.rejectionCriterion}</p><p><b>Then:</b> {nextRun.ifRejected}</p></article><article className="branch-inconclusive"><span>Inconclusive</span><small>The result changed, but not enough to decide.</small><p><b>How Caevera decides:</b> {nextRun.inconclusiveCriterion}</p><p><b>Then:</b> {nextRun.ifInconclusive}</p></article></div></details>{precedent.matchedCount > 0 && <details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details>}</div>
+    <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit case</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View case history</button>}</div>
   </section>;
 }
 export default function Home() {
@@ -388,6 +432,9 @@ export default function Home() {
     source: planningCase?.source ?? "uploaded",
     experimentSamples: planningCase?.testSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
     cfdSamples: planningCase?.cfdSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
+    probeCount: planningCase?.testSignals.length ?? 0,
+    experimentName: planningCase?.imports?.experiment.fileName ?? planningCase?.testSignals[0]?.name.split(" · ")[0] ?? "Experiment data",
+    cfdName: planningCase?.imports?.cfd.fileName ?? planningCase?.cfdSignals[0]?.name.split(" · ")[0] ?? "CFD data",
   };
   const activeCaseEvidence = activeCase?.relationship ? caseHistoryEvidence.find((item) => item.caseId === activeCase.id) ?? null : null;
   const baselineCaseName = activeCase?.relationship ? cases.find((item) => item.id === activeCase.relationship?.baselineCaseId)?.metadata.name : null;
@@ -417,8 +464,22 @@ export default function Home() {
   const totalReview = reviewMetrics + (waveformWithinLimit ? 0 : 1) + (assessment?.validity.status === "Valid" ? 0 : 1);
 
   const likelyHypothesis = planAssessment?.hypotheses[0] ?? null;
-  const likelyEvidence = likelyHypothesis?.evidence.filter((item) => item.state === "supports").map((item) => item.observation) ?? [];
   const likelySources = likelyHypothesis ? sourcesFor(likelyHypothesis.sourceIds) : [];
+  const decisionSummary: DecisionSummary = activeCaseEvidence ? {
+    label: "Result of this rerun",
+    lead: `${activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus) : "Comparison only"}:`,
+    title: `${changeLabel(activeCase?.relationship?.changedVariable ?? "other")} response`,
+    detail: activeCaseEvidence.detail,
+    meaning: activeCaseEvidence.controlled ? outcomeMeaning(activeCaseEvidence) : "This case changed more than one relevant input, so it cannot confirm or reject one explanation. Create a one-change rerun before using it to update the plan.",
+    tone: activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus).toLowerCase() as DecisionSummary["tone"] : "neutral",
+  } : {
+    label: "Current diagnosis",
+    lead: "Likely issue:",
+    title: likelyHypothesis?.title ?? "Cannot assess",
+    detail: null,
+    meaning: diagnosisMeaning(likelyHypothesis?.id ?? ""),
+    tone: "neutral",
+  };
   const showDetailedEvidence = false;
 
   function openNewCase() {
@@ -681,15 +742,7 @@ export default function Home() {
         </section> : <>
           <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div><h1>{activeCase.metadata.name}</h1><p>{activeCase.relationship ? `Controlled ${changeLabel(activeCase.relationship.changedVariable).toLowerCase()} rerun of ${baselineCaseName ?? "the baseline"}` : `Baseline for ${caseHistoryEvidence.length} controlled rerun${caseHistoryEvidence.length === 1 ? "" : "s"}`} · deterministic local analysis</p></div>
 
-          {activeCaseEvidence ? <section className={`decision-card rerun-result-card outcome-${outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus).toLowerCase()}`} aria-label="Result of this rerun">
-            <article><span className="decision-kicker">Result of this rerun</span><h2 className="decision-line"><span>{activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus) : "Comparison only"}:</span> {changeLabel(activeCase.relationship?.changedVariable ?? "other")} response</h2><p>{activeCaseEvidence.detail}</p><p className="decision-meaning"><strong>What this means:</strong> {activeCaseEvidence.controlled ? outcomeMeaning(activeCaseEvidence) : "This case changed more than one relevant input, so it cannot confirm or reject one explanation. Create a one-change rerun before using it to update the plan."}</p></article>
-            <div className="decision-actions"><button className="button secondary" onClick={openCaseEditor}>Edit case</button><button className="button secondary" onClick={downloadReport}>Download evidence report</button><button className="button secondary" onClick={downloadWorkspace}>Save complete workspace</button>{cases.length > 1 && <button className="button secondary" onClick={() => setWorkspaceView("compare")}>View case history</button>}</div>
-          </section> : <section className="decision-card" aria-label="Current diagnosis">
-            <article><span className="decision-kicker">Current diagnosis</span><h2 className="decision-line"><span>Likely issue:</span> {likelyHypothesis?.title ?? "Cannot assess"}</h2><p className="decision-meaning"><strong>What this means:</strong> {diagnosisMeaning(likelyHypothesis?.id ?? "")}</p><details className="source-disclosure"><summary>Why Caevera thinks this</summary><p>{likelyEvidence.length ? likelyEvidence.join(" ") : "The loaded evidence does not support a more specific diagnosis."}</p>{likelySources.length > 0 && <div className="source-links" aria-label="Diagnostic sources">{likelySources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>}</details></article>
-            <div className="decision-actions"><button className="button secondary" onClick={openCaseEditor}>Edit case</button><button className="button secondary" onClick={downloadReport}>Download evidence report</button><button className="button secondary" onClick={downloadWorkspace}>Save complete workspace</button>{cases.length > 1 && <button className="button secondary" onClick={() => setWorkspaceView("compare")}>View case history</button>}</div>
-          </section>}
-
-          <AdaptivePlanPanel nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} analysisInput={planningInput} />
+          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} analysisInput={planningInput} publishedSourceCount={likelySources.length} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
 
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
