@@ -324,7 +324,39 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   assert.equal(result.nextRun.precedent.syntheticCount, 1);
   assert.equal(result.nextRun.precedent.uploadedCount, 0);
   close(result.nextRun.precedent.meanRuntimeMultiplier ?? 0, 1.8, 1e-12, "precedent runtime multiplier");
+  assert.equal(result.nextRun.precedent.runtimeCaseCount, 1);
   assert.ok(result.nextRun.precedent.metricImprovements.some((item) => item.metricId === "peak-pressure" && item.meanReductionPct > 0));
+});
+
+test("uploaded pressure arrays determine precedent effects instead of preset values", () => {
+  const demo = makeDemoProbeSignals();
+  const compute = (blend: number) => {
+    const baseline: AnalysisCase = { id: "uploaded-base", source: "uploaded", relationship: null, metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
+    const refined: AnalysisCase = {
+      id: `uploaded-fine-${blend}`,
+      source: "uploaded",
+      relationship: { baselineCaseId: baseline.id, changedVariable: "mesh", description: "Uploaded mesh refinement" },
+      metadata: { ...DEMO_METADATA, name: `Uploaded fine mesh ${blend}`, meshCells: 5_000_000, minimumCellSizeMm: 0.125, cellsPerInductionLength: 16, nearWallCellSizeMm: 0.05, solverRuntimeHours: 18 },
+      testSignals: demo.test,
+      cfdSignals: demo.cfd.map((signal, probe) => ({ ...signal, pressure: signal.pressure.map((value, index) => value + blend * (demo.test[probe].pressure[index] - value)) })),
+    };
+    const history = buildCaseHistoryEvidence([baseline, refined], baseline.id);
+    const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
+    const assessment = buildCaseAssessment(DEMO_METADATA, comparisons, analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82), analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82), history, history);
+    return { evidence: history[0], precedent: assessment.nextRun.precedent };
+  };
+  const moderate = compute(0.9);
+  const strong = compute(0.95);
+  assert.equal(moderate.precedent.level, "Limited");
+  assert.equal(moderate.precedent.uploadedCount, 1);
+  assert.equal(moderate.precedent.syntheticCount, 0);
+  assert.equal(moderate.precedent.runtimeCaseCount, 1);
+  close(moderate.precedent.meanRuntimeMultiplier ?? 0, 1.8, 1e-12, "uploaded runtime multiplier");
+  const moderatePeak = moderate.precedent.metricImprovements.find((item) => item.metricId === "peak-pressure")?.meanReductionPct ?? Number.NaN;
+  const strongPeak = strong.precedent.metricImprovements.find((item) => item.metricId === "peak-pressure")?.meanReductionPct ?? Number.NaN;
+  close(moderatePeak, moderate.evidence.metricErrorReductionPct["peak-pressure"], 1e-12, "moderate uploaded peak reduction");
+  close(strongPeak, strong.evidence.metricErrorReductionPct["peak-pressure"], 1e-12, "strong uploaded peak reduction");
+  assert.ok(strongPeak > moderatePeak, "changing the uploaded CFD arrays must change the displayed precedent effect");
 });
 
 test("three uploaded comparable reruns become repeated workspace precedent", () => {
@@ -354,6 +386,7 @@ test("three uploaded comparable reruns become repeated workspace precedent", () 
   assert.equal(result.nextRun.precedent.confirmedCount, 3);
   assert.equal(result.nextRun.precedent.uploadedCount, 3);
   close(result.nextRun.precedent.meanRuntimeMultiplier ?? 0, 1.7, 1e-12, "mean runtime multiplier");
+  assert.equal(result.nextRun.precedent.runtimeCaseCount, 3);
 });
 
 test("adaptive plan exposes rejected and inconclusive controlled outcomes", () => {
@@ -618,6 +651,7 @@ test("complete workspaces round-trip raw signals, mappings, links, and non-finit
   const item: AnalysisCase = { id: "saved-case", source: "uploaded", relationship: null, metadata, testSignals: demo.test, cfdSignals: demo.cfd, imports: { experiment: provenance, cfd: { ...provenance, fileName: "cfd.csv" } } };
   const serialized = serializeWorkspace({ cases: [item], activeCaseId: item.id, baselineCaseId: item.id });
   assert.match(serialized, new RegExp(WORKSPACE_SCHEMA));
+  assert.doesNotMatch(serialized, /controlledNextRun|metricImprovements|confirmedCount/, "workspaces store inputs, not pre-generated analytical conclusions");
   const restored = deserializeWorkspace(serialized);
   assert.equal(restored.cases.length, 1);
   assert.equal(restored.activeCaseId, item.id);

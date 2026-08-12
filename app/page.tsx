@@ -98,9 +98,42 @@ function evidenceMeaning(strength: ControlledNextRun["evidenceStrength"]) {
   return "This is the best available test, but the current evidence is limited.";
 }
 
-function improvementLabel(value: number) {
-  return value >= 0 ? `↓${value.toFixed(1)}%` : `↑${Math.abs(value).toFixed(1)}%`;
+function joinPhrases(items: string[]) {
+  if (items.length < 2) return items[0] ?? "";
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
 }
+
+function precedentConclusion(precedent: ControlledNextRun["precedent"]) {
+  const source = precedent.level === "Demonstration" ? "synthetic demonstration" : "uploaded";
+  if (precedent.confirmedCount === precedent.matchedCount) {
+    return `${precedent.confirmedCount} of ${precedent.matchedCount} comparable ${source} rerun${precedent.matchedCount === 1 ? "" : "s"} confirmed that this type of controlled change reduced a similar mismatch.`;
+  }
+  if (precedent.confirmedCount > precedent.rejectedCount) {
+    return `${precedent.confirmedCount} of ${precedent.matchedCount} comparable ${source} reruns confirmed the expected response. The history supports testing this change, but the result has not been consistent in every case.`;
+  }
+  if (precedent.confirmedCount > 0) {
+    return `${precedent.confirmedCount} of ${precedent.matchedCount} comparable ${source} reruns confirmed the expected response. The prior results are mixed, so they do not strongly support this change.`;
+  }
+  return `None of the ${precedent.matchedCount} comparable ${source} reruns confirmed the expected response. The current recommendation therefore comes from the present case, not from successful prior cases.`;
+}
+
+function precedentEffectSummary(precedent: ControlledNextRun["precedent"]) {
+  const effects = precedent.metricImprovements.map((item) => `${item.label} error ${item.meanReductionPct >= 0 ? "fell" : "rose"} by ${Math.abs(item.meanReductionPct).toFixed(1)}%`);
+  if (precedent.meanRuntimeMultiplier !== null) {
+    const changePct = 100 * Math.abs(precedent.meanRuntimeMultiplier - 1);
+    effects.push(precedent.meanRuntimeMultiplier >= 1
+      ? `runtime increased by ${changePct.toFixed(0)}% (×${precedent.meanRuntimeMultiplier.toFixed(2)})`
+      : `runtime decreased by ${changePct.toFixed(0)}% (×${precedent.meanRuntimeMultiplier.toFixed(2)})`);
+  }
+  return joinPhrases(effects);
+}
+
+type AnalysisInputSummary = {
+  source: AnalysisCase["source"];
+  experimentSamples: number;
+  cfdSamples: number;
+};
 
 function metricDigits(metric: MetricAssessment) {
   if (["frequency", "amplitude", "peak-pressure", "mean-pressure", "impulse"].includes(metric.id)) return metric.id === "frequency" ? 2 : 3;
@@ -278,8 +311,10 @@ function Legend({ residual = false }: { residual?: boolean }) {
   }</div>;
 }
 
-function AdaptivePlanPanel({ nextRun, showLatestResult }: { nextRun: ControlledNextRun; showLatestResult: boolean }) {
+function AdaptivePlanPanel({ nextRun, showLatestResult, analysisInput }: { nextRun: ControlledNextRun; showLatestResult: boolean; analysisInput: AnalysisInputSummary }) {
   const precedent = nextRun.precedent;
+  const effectSummary = precedentEffectSummary(precedent);
+  const inputSource = analysisInput.source === "demo" ? "generated demonstration signals" : "uploaded pressure files";
   return <section className="adaptive-plan-panel" aria-label="What you should do next">
     <div className="adaptive-plan-heading"><span>Run this next</span><h2>{nextRun.title}</h2></div>
     <div className="next-run-action">
@@ -288,14 +323,22 @@ function AdaptivePlanPanel({ nextRun, showLatestResult }: { nextRun: ControlledN
       <p><strong>Success looks like</strong><span>{nextRun.expectedOutcome}</span></p>
     </div>
     <section className={`precedent-intelligence precedent-${precedent.level.toLowerCase().replaceAll(" ", "-")}`} aria-label="Comparable controlled reruns">
-      <div><span>What comparable cases show</span><strong>{precedent.matchedCount
-        ? `${precedent.matchedCount} comparable controlled rerun${precedent.matchedCount === 1 ? "" : "s"} in this workspace`
-        : "No comparable controlled rerun is loaded yet"}</strong></div>
+      <div className="precedent-heading"><span>What prior cases tell you</span><strong>{precedent.level} evidence</strong></div>
       {precedent.matchedCount ? <>
-        <div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div>
-        {(precedent.metricImprovements.length > 0 || precedent.meanRuntimeMultiplier !== null) && <div className="precedent-effects">{precedent.metricImprovements.map((item) => <span key={item.metricId}><b>{item.label}</b> error {improvementLabel(item.meanReductionPct)} <small>mean of {item.caseCount} confirmed</small></span>)}{precedent.meanRuntimeMultiplier !== null && <span><b>Runtime</b> ×{precedent.meanRuntimeMultiplier.toFixed(2)} <small>mean of confirmed cases with runtime</small></span>}</div>}
-        <small>{precedent.level === "Demonstration" ? "Synthetic demonstration only. Upload completed real reruns before using this as organizational evidence." : precedent.level === "Limited" ? "Early workspace evidence, not a reliable success probability yet." : "Repeated workspace evidence. This is still configuration-specific, not a universal success probability."}</small>
-      </> : <p>This recommended run will become the first reusable precedent after its result is uploaded and classified.</p>}
+        <div className="precedent-conclusion"><strong>Conclusion</strong><p>{precedentConclusion(precedent)}</p></div>
+        {effectSummary && <p className="precedent-measured"><strong>Observed result:</strong> Among confirmed cases, {effectSummary}.</p>}
+        <p className="precedent-guidance"><strong>How to use this:</strong> {precedent.level === "Demonstration"
+          ? "Treat it only as a worked example of the reasoning process. It is not evidence that a real engine case will respond the same way."
+          : precedent.level === "Limited"
+            ? "Use it as supporting evidence, but still run the controlled test above before accepting the explanation."
+            : "Use it to prioritize the controlled test above, while remembering that the result remains configuration-specific."}</p>
+        <small className="analysis-provenance"><strong>Calculated from data:</strong> Error changes were recomputed from the stored experiment and CFD pressure arrays for each controlled rerun. Runtime uses only entered solver hours. {precedent.level === "Demonstration" ? "These arrays are generated demo inputs, not uploaded program evidence." : "No result or recommendation is stored as a preset."}</small>
+        <details className="precedent-details"><summary>Show analyzed case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details>
+      </> : <>
+        <div className="precedent-conclusion"><strong>Conclusion</strong><p>No previous controlled rerun supports or weakens this recommendation yet.</p></div>
+        <p className="precedent-guidance"><strong>What to do:</strong> Run the controlled change above, then upload its experiment and CFD result. Caevera will calculate whether it confirmed, rejected, or left the explanation inconclusive.</p>
+        <small className="analysis-provenance"><strong>Current analysis source:</strong> Recalculated from {analysisInput.experimentSamples.toLocaleString()} experiment and {analysisInput.cfdSamples.toLocaleString()} CFD pressure samples in the {inputSource}, plus the entered case and solver settings. No result or recommendation is stored as a preset.</small>
+      </>}
     </section>
     {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`plan-history outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>What the last run told us: {nextRun.latestControlledResult.status}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{nextRun.latestControlledResult.detail}</p></div>}
     <div className="plan-details"><details><summary>Why this is the fastest discriminating run</summary><p>{nextRun.reason}</p><p>{nextRun.whyThisRunFirst}</p><p><strong>{nextRun.stage}:</strong> {stageMeaning(nextRun.stage)} <strong>{nextRun.evidenceStrength} evidence:</strong> {evidenceMeaning(nextRun.evidenceStrength)}</p></details><details className="plan-branches"><summary>What happens after you upload the result</summary><p className="branch-intro">Caevera will classify the rerun using these three decision outcomes. A numerical sequence also closes as converged when its adjacent-level response is 2% or less.</p><div className="adaptive-branches" aria-label="How the plan updates"><article className="branch-confirmed"><span>Confirmed</span><small>The expected result clearly occurred.</small><p><b>How Caevera decides:</b> {nextRun.confirmationCriterion}</p><p><b>Then:</b> {nextRun.ifConfirmed}</p></article><article className="branch-rejected"><span>Rejected</span><small>The result moved the wrong way or did not respond.</small><p><b>How Caevera decides:</b> {nextRun.rejectionCriterion}</p><p><b>Then:</b> {nextRun.ifRejected}</p></article><article className="branch-inconclusive"><span>Inconclusive</span><small>The result changed, but not enough to decide.</small><p><b>How Caevera decides:</b> {nextRun.inconclusiveCriterion}</p><p><b>Then:</b> {nextRun.ifInconclusive}</p></article></div></details></div>
@@ -341,6 +384,11 @@ export default function Home() {
     const planningCfdMode = analyzeRdeProbeSet(planningCase.cfdSignals, planningCase.metadata.probePositionsDeg, planningCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: planningCase.metadata.maximumWaveCount, synchronizationConfirmed: planningCase.metadata.probeSynchronizationConfirmed });
     return buildCaseAssessment(planningCase.metadata, planningComparison.comparisons, planningTestMode, planningCfdMode, caseHistoryEvidence, relevantPrecedents);
   }, [planningCase, caseHistoryEvidence, precedentEvidence]);
+  const planningInput: AnalysisInputSummary = {
+    source: planningCase?.source ?? "uploaded",
+    experimentSamples: planningCase?.testSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
+    cfdSamples: planningCase?.cfdSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
+  };
   const activeCaseEvidence = activeCase?.relationship ? caseHistoryEvidence.find((item) => item.caseId === activeCase.id) ?? null : null;
   const baselineCaseName = activeCase?.relationship ? cases.find((item) => item.id === activeCase.relationship?.baselineCaseId)?.metadata.name : null;
   const activeComparison = comparisons[activeProbe];
@@ -641,7 +689,7 @@ export default function Home() {
             <div className="decision-actions"><button className="button secondary" onClick={openCaseEditor}>Edit case</button><button className="button secondary" onClick={downloadReport}>Download evidence report</button><button className="button secondary" onClick={downloadWorkspace}>Save complete workspace</button>{cases.length > 1 && <button className="button secondary" onClick={() => setWorkspaceView("compare")}>View case history</button>}</div>
           </section>}
 
-          <AdaptivePlanPanel nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} />
+          <AdaptivePlanPanel nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} analysisInput={planningInput} />
 
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
