@@ -55,6 +55,9 @@ export type CaseHistoryEvidence = {
   caseName: string;
   detail: string;
   controlled: boolean;
+  targetedMetrics?: string[];
+  errorReductionPct?: number | null;
+  responseMagnitudePct?: number | null;
 };
 
 export type DiagnosticHypothesis = {
@@ -76,6 +79,17 @@ export type ControlledNextRun = {
   rejectionCriterion: string;
   alternativeHypothesis: string;
   evidenceStrength: "High" | "Moderate" | "Exploratory";
+  stage: "Evidence gate" | "Numerical verification" | "Physics sensitivity" | "Validation expansion";
+  whyThisRunFirst: string;
+  inconclusiveCriterion: string;
+  ifConfirmed: string;
+  ifRejected: string;
+  ifInconclusive: string;
+  latestControlledResult: {
+    status: "Awaiting result" | "Confirmed" | "Rejected" | "Inconclusive";
+    caseName: string | null;
+    detail: string;
+  };
 };
 
 export type CoverageItem = {
@@ -342,7 +356,11 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
   }).slice(0, 3);
 }
 
-function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata): ControlledNextRun {
+type CoreNextRun = Omit<ControlledNextRun,
+  "stage" | "whyThisRunFirst" | "inconclusiveCriterion" | "ifConfirmed" | "ifRejected" | "ifInconclusive" | "latestControlledResult"
+>;
+
+function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata): CoreNextRun {
   const supporting = hypothesis.evidence.filter((item) => item.state === "supports");
   const common = {
     evidence: hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`),
@@ -456,6 +474,68 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata): C
     confirmationCriterion: "The new case passes pairing, quality, uncertainty, and identifiability checks.",
     rejectionCriterion: "A resolved discrepancy appears; that specific metric becomes the next sensitivity target.",
     alternativeHypothesis: "Repeat the current experiment first if operating-point repeatability is not quantified.",
+  };
+}
+
+function stageFor(causeId: DiagnosticCauseId): ControlledNextRun["stage"] {
+  if (["case-validity", "data-quality"].includes(causeId)) return "Evidence gate";
+  if (["spatial-resolution", "chemistry-timescale"].includes(causeId)) return "Numerical verification";
+  if (causeId === "validation-coverage") return "Validation expansion";
+  return "Physics sensitivity";
+}
+
+function latestControlledResult(caseHistory: CaseHistoryEvidence[], currentCauseId: DiagnosticCauseId): ControlledNextRun["latestControlledResult"] {
+  const controlled = caseHistory.filter((item) => item.controlled);
+  const latest = controlled.filter((item) => item.causeId === currentCauseId).at(-1) ?? controlled.at(-1);
+  if (!latest) return {
+    status: "Awaiting result",
+    caseName: null,
+    detail: "No controlled rerun result has been linked to this baseline yet.",
+  };
+  return {
+    status: latest.state === "supports" ? "Confirmed" : latest.state === "weakens" ? "Rejected" : "Inconclusive",
+    caseName: latest.caseName,
+    detail: latest.detail,
+  };
+}
+
+function confirmationBranch(causeId: DiagnosticCauseId) {
+  if (causeId === "case-validity" || causeId === "data-quality") return "Reanalyze the corrected evidence, then select the highest-ranked CFD sensitivity run.";
+  if (causeId === "spatial-resolution") return "Complete the next mesh level. If the targeted outputs change by less than 2%, treat them as numerically converged and move to the remaining physics mismatch.";
+  if (causeId === "chemistry-timescale") return "Complete time-step convergence. If frequency remains unresolved after convergence, isolate the chemistry mechanism in the following run.";
+  if (causeId === "inlet-boundary") return "Retain the better-supported inlet treatment and test the next unresolved pressure or wave hypothesis.";
+  if (causeId === "wall-loss") return "Retain the supported wall treatment and test whether the remaining mismatch is sensitive to chemistry or front resolution.";
+  if (causeId === "initialization-mode") return "Repeat the supported initialization once for robustness, then check the mode at the nearest operating condition.";
+  if (causeId === "missing-unsteadiness") return "Retain the measured fluctuation model and test whether the improved variability persists across a second comparison window.";
+  return "Add the next nearest operating condition to expand the demonstrated validation envelope.";
+}
+
+function buildAdaptiveRunPlan(
+  hypotheses: DiagnosticHypothesis[],
+  metadata: CaseMetadata,
+  caseHistory: CaseHistoryEvidence[],
+): ControlledNextRun {
+  const primary = hypotheses[0];
+  const alternative = hypotheses[1];
+  const core = nextRunFor(primary, metadata);
+  const supporting = primary.evidence.filter((item) => item.state === "supports").length;
+  const strong = primary.evidence.filter((item) => item.state === "supports" && item.strength === "strong").length;
+  const controlled = primary.evidence.filter((item) => item.state === "supports" && item.basis === "case-history").length;
+  const gate = stageFor(primary.id) === "Evidence gate";
+  const whyThisRunFirst = gate
+    ? `${primary.title} is a prerequisite. Caevera does not rank model changes until this evidence gate is resolved.`
+    : `${primary.title} is first because it has ${supporting} supporting observation${supporting === 1 ? "" : "s"}${strong ? `, including ${strong} strong` : ""}${controlled ? ` and ${controlled} from a controlled rerun` : ""}. Caevera ranks prerequisite gates, controlled-rerun evidence, net supporting evidence, strong evidence, and then fewer unknowns.${alternative ? ` This places it ahead of ${alternative.title}.` : ""}`;
+  return {
+    ...core,
+    stage: stageFor(primary.id),
+    whyThisRunFirst,
+    inconclusiveCriterion: "The targeted outputs respond, but the result neither meets the confirmation nor rejection criterion, or the difference remains unresolved within uncertainty.",
+    ifConfirmed: confirmationBranch(primary.id),
+    ifRejected: gate
+      ? "Keep the comparison blocked and repair the unresolved evidence before changing CFD."
+      : `${core.alternativeHypothesis}${alternative ? ` The next ranked hypothesis is ${alternative.title}.` : ""}`,
+    ifInconclusive: "Increase the controlled perturbation or reduce the relevant uncertainty, then repeat without changing additional model settings.",
+    latestControlledResult: latestControlledResult(caseHistory, primary.id),
   };
 }
 
@@ -618,5 +698,5 @@ export function buildCaseAssessment(
     { module: "Performance", status: "Not assessed", detail: "No thrust or total-pressure data loaded" },
   ];
   const hypotheses = buildHypotheses(metadata, metrics, validity, dataQuality, caseHistory);
-  return { validity, dataQuality, metrics, coverage, hypotheses, nextRun: nextRunFor(hypotheses[0], metadata) };
+  return { validity, dataQuality, metrics, coverage, hypotheses, nextRun: buildAdaptiveRunPlan(hypotheses, metadata, caseHistory) };
 }

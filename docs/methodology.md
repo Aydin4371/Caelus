@@ -202,16 +202,24 @@ boundary pressure treatment, mode initialization, wall loss or reaction-rate
 energy release, shock-capturing/harmonic response, and missing unsteadiness.
 
 Each hypothesis records the discrepancy evidence and the model-card inputs that
-motivated it. The highest-ranked candidate becomes a structured next-run plan:
+motivated it. The highest-ranked candidate becomes an adaptive next-run plan:
 
 - one recommended change;
 - variables to hold fixed;
 - expected outcome;
 - confirmation criterion;
 - rejection criterion;
+- inconclusive criterion;
+- an explanation of why this run outranks the alternatives;
+- conditional next actions for confirmation, rejection, and an inconclusive result;
+- the latest controlled-rerun outcome; and
 - alternative hypothesis; and
 - evidence strength.
 
+The interface presents only the immediate run as actionable. Later runs remain
+conditional until the current result is uploaded. The plan moves through four
+stages: evidence gate, numerical verification, physics sensitivity, and
+validation expansion. The sequence is adaptive rather than a fixed checklist.
 The result prioritizes a sensitivity experiment. It is not causal inference.
 
 ## 9. Evidence-state diagnosis and case history
@@ -237,6 +245,25 @@ Sources are mapped only to the mechanisms they directly studied. A diagnostic
 branch with no directly applicable reviewed source remains an uncited prototype
 heuristic; Caevera does not borrow a citation from an adjacent topic.
 
+For a verified one-variable rerun, Caevera evaluates the metrics predicted to
+respond to that variable:
+
+| Changed CFD group | Targeted outputs | Minimum response used for rejection |
+|---|---|---:|
+| Mesh | Peak pressure, rise time, harmonics | 5% |
+| Time step | Frequency, rise time | 1% |
+| Chemistry | Frequency, amplitude, impulse | 2% |
+| Inlet | Mean pressure, frequency | 2% |
+| Wall | Amplitude, impulse | 2% |
+| Initialization | Wave count, direction, transitions | categorical change |
+
+A rerun confirms the predicted signature when mean targeted error falls by at
+least 25%. It rejects that signature when the target response is below the
+listed threshold or targeted error worsens by at least 5%. Other outcomes are
+inconclusive. These are explicit prototype decision limits, not calibrated
+probabilities and not proof that the associated model choice caused the original
+discrepancy.
+
 ## 10. Coverage and traceable report
 
 The product scope is pressure and wave dynamics. Thermal and
@@ -255,8 +282,10 @@ analysis methods.
 - Harmonic and repeatability uncertainty are not estimated.
 - Mode inference assumes synchronized probes and one dominant rotating mode.
 - Diagnostic ranking is rule-based and needs comparison with expert decisions.
+- Adaptive outcome thresholds have not yet been calibrated against withheld
+  paired experiment-CFD rerun histories.
 - Heat flux, wall temperature, thrust, optical diagnostics, species, and full
-  spatial fields are outside version 0.7.
+  spatial fields are outside version 1.1.
 - One operating point cannot establish a validation envelope.
 
 ## Evidence required for a research release
