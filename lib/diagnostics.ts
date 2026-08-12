@@ -121,6 +121,7 @@ export type ComparableCasePrecedent = {
   inconclusiveCount: number;
   metricImprovements: Array<{ metricId: string; label: string; meanReductionPct: number; caseCount: number }>;
   meanRuntimeMultiplier: number | null;
+  runtimeCaseCount: number;
 };
 
 export type CoverageItem = {
@@ -652,6 +653,7 @@ function buildComparablePrecedent(
     inconclusiveCount: matched.filter((item) => item.sequenceStatus === "inconclusive" || !item.sequenceStatus && item.state === "unknown").length,
     metricImprovements,
     meanRuntimeMultiplier,
+    runtimeCaseCount: runtimes.length,
   };
 }
 
