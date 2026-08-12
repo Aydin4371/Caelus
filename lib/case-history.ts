@@ -26,6 +26,9 @@ export type CaseHistoryEvidence = {
   caseName: string;
   detail: string;
   controlled: boolean;
+  targetedMetrics: string[];
+  errorReductionPct: number | null;
+  responseMagnitudePct: number | null;
 };
 
 const CAUSE_BY_CHANGE: Record<SensitivityVariable, DiagnosticCauseId | null> = {
@@ -51,7 +54,36 @@ const GROUP_FIELDS: Record<SensitivityVariable, (keyof CaseMetadata)[]> = {
 function metric(summary: CaseSummary, id: string) { return summary.metrics[id]; }
 function numberValue(value: number | string) { return typeof value === "number" ? value : Number.NaN; }
 function valueEqual(left: unknown, right: unknown) { return Array.isArray(left) && Array.isArray(right) ? JSON.stringify(left) === JSON.stringify(right) : left === right; }
-function relativeError(result: MetricAssessment) { return Math.abs(result.percentDifference ?? 0); }
+
+const OUTCOME_RULES: Record<Exclude<SensitivityVariable, "other">, { targets: string[]; minimumResponsePct: number }> = {
+  mesh: { targets: ["peak-pressure", "rise-time", "harmonics"], minimumResponsePct: 5 },
+  "time-step": { targets: ["frequency", "rise-time"], minimumResponsePct: 1 },
+  chemistry: { targets: ["frequency", "amplitude", "impulse"], minimumResponsePct: 2 },
+  inlet: { targets: ["mean-pressure", "frequency"], minimumResponsePct: 2 },
+  wall: { targets: ["amplitude", "impulse"], minimumResponsePct: 2 },
+  initialization: { targets: ["wave-count", "direction", "mode-transitions"], minimumResponsePct: 1 },
+};
+
+function metricError(result: MetricAssessment) {
+  if (typeof result.difference === "string") {
+    if (result.difference === "No difference") return 0;
+    if (result.difference === "Different") return 100;
+    return Number.NaN;
+  }
+  return Number.isFinite(result.percentDifference) ? Math.abs(result.percentDifference!) : Number.NaN;
+}
+
+function relativeError(result: MetricAssessment) {
+  return metricError(result);
+}
+
+function simulationResponse(baseline: MetricAssessment, candidate: MetricAssessment) {
+  if (typeof baseline.cfd === "string" || typeof candidate.cfd === "string") {
+    return baseline.cfd === candidate.cfd ? 0 : 100;
+  }
+  if (!Number.isFinite(baseline.cfd) || !Number.isFinite(candidate.cfd)) return Number.NaN;
+  return 100 * Math.abs(candidate.cfd - baseline.cfd) / Math.max(Math.abs(baseline.cfd), 1e-12);
+}
 
 function signalFingerprint(signals: Signal[]) {
   return signals.map((signal) => `${signal.time.length}:${signal.time[0]}:${signal.time.at(-1)}:${signal.pressure.slice(0, 12).map((value) => value.toPrecision(8)).join(",")}`).join("|");
@@ -117,21 +149,34 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       caseId: candidate.id,
       caseName: candidate.metadata.name,
       controlled: false,
+      targetedMetrics: [],
+      errorReductionPct: null,
+      responseMagnitudePct: null,
       detail: `Comparison only: ${samePhysicalCase(baseline, candidate) ? "the physical case matches" : "the physical case or experiment trace changed"}; detected CFD change groups: ${groups.join(", ") || "none"}.`,
     };
 
     const candidateSummary = summarizeCase(candidate);
-    const targets = relation.changedVariable === "mesh" ? ["peak-pressure", "rise-time"]
-      : relation.changedVariable === "initialization" ? ["wave-count", "frequency"]
-      : relation.changedVariable === "wall" ? ["amplitude", "impulse"]
-      : ["frequency", "peak-pressure", "amplitude"];
-    const baselineErrors = targets.map((id) => relativeError(metric(baselineSummary, id))).filter(Number.isFinite);
-    const candidateErrors = targets.map((id) => relativeError(metric(candidateSummary, id))).filter(Number.isFinite);
+    const rule = OUTCOME_RULES[relation.changedVariable as Exclude<SensitivityVariable, "other">];
+    const targets = rule.targets;
+    const baselineErrors = targets.map((id) => metricError(metric(baselineSummary, id))).filter(Number.isFinite);
+    const candidateErrors = targets.map((id) => metricError(metric(candidateSummary, id))).filter(Number.isFinite);
+    const responses = targets.map((id) => simulationResponse(metric(baselineSummary, id), metric(candidateSummary, id))).filter(Number.isFinite);
     const baselineMean = baselineErrors.length ? baselineErrors.reduce((sum, value) => sum + value, 0) / baselineErrors.length : 0;
     const candidateMean = candidateErrors.length ? candidateErrors.reduce((sum, value) => sum + value, 0) / candidateErrors.length : 0;
-    const relativeChange = baselineMean > 1e-9 ? 100 * (candidateMean - baselineMean) / baselineMean : 0;
-    const state = relativeChange <= -25 ? "supports" as const : relativeChange >= 25 ? "weakens" as const : "unknown" as const;
-    const direction = state === "supports" ? "reduced" : state === "weakens" ? "increased" : "did not materially change";
+    const errorReductionPct = baselineMean > 1e-9 ? 100 * (baselineMean - candidateMean) / baselineMean : 0;
+    const responseMagnitudePct = responses.length ? responses.reduce((sum, value) => sum + value, 0) / responses.length : 0;
+    const state = errorReductionPct >= 25
+      ? "supports" as const
+      : responseMagnitudePct < rule.minimumResponsePct || errorReductionPct <= -5
+        ? "weakens" as const
+        : "unknown" as const;
+    const detail = state === "supports"
+      ? `${relation.description || relation.changedVariable} produced the predicted response: targeted error across ${targets.join(", ")} fell by ${errorReductionPct.toFixed(1)}%.`
+      : state === "weakens" && responseMagnitudePct < rule.minimumResponsePct
+        ? `${relation.description || relation.changedVariable} rejected the predicted response: targeted CFD outputs changed by only ${responseMagnitudePct.toFixed(1)}%, below the ${rule.minimumResponsePct.toFixed(1)}% response threshold.`
+        : state === "weakens"
+          ? `${relation.description || relation.changedVariable} rejected the predicted response: targeted error across ${targets.join(", ")} increased by ${Math.abs(errorReductionPct).toFixed(1)}%.`
+          : `${relation.description || relation.changedVariable} was inconclusive: targeted error changed by ${Math.abs(errorReductionPct).toFixed(1)}% and did not meet the confirmation or rejection rule.`;
     return {
       causeId,
       state,
@@ -139,7 +184,10 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       caseId: candidate.id,
       caseName: candidate.metadata.name,
       controlled: true,
-      detail: `${relation.description || relation.changedVariable} ${direction} the mean absolute error across ${targets.join(", ")} by ${Math.abs(relativeChange).toFixed(1)}% relative to the baseline error.`,
+      targetedMetrics: targets,
+      errorReductionPct,
+      responseMagnitudePct,
+      detail,
     };
   });
 }

@@ -13,7 +13,7 @@ import {
   type Dimensionality,
   type SensitivityVariable,
 } from "@/lib/caevera-types";
-import { buildCaseAssessment, type MetricAssessment } from "@/lib/diagnostics";
+import { buildCaseAssessment, type ControlledNextRun, type MetricAssessment } from "@/lib/diagnostics";
 import { KNOWLEDGE_BASE_VERSION, sourcesFor } from "@/lib/diagnostic-knowledge";
 import { CASE_INPUT_HELP } from "@/lib/case-input-help";
 import { WAVE_METHOD_SOURCES } from "@/lib/wave-method-sources";
@@ -42,6 +42,10 @@ function signed(value: number, digits: number) {
   if (!Number.isFinite(value)) return "Not available";
   if (Math.abs(value) < 0.5 * 10 ** -digits) return (0).toFixed(digits);
   return `${value > 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
+}
+
+function outcomeLabel(state: "supports" | "weakens" | "unknown") {
+  return state === "supports" ? "Confirmed" : state === "weakens" ? "Rejected" : "Inconclusive";
 }
 
 function metricDigits(metric: MetricAssessment) {
@@ -220,6 +224,18 @@ function Legend({ residual = false }: { residual?: boolean }) {
   }</div>;
 }
 
+function AdaptivePlanPanel({ nextRun }: { nextRun: ControlledNextRun }) {
+  return <section className="adaptive-plan-panel" aria-label="Adaptive CFD run plan">
+    <div className="adaptive-plan-heading"><span>Adaptive CFD run plan</span><h2>One next run, then a conditional update</h2><p>Only the current run is actionable. Upload its result as a related rerun and Caevera will follow the confirmed, rejected, or inconclusive branch.</p></div>
+    <div className="adaptive-plan-status"><div><span>Current stage</span><strong>{nextRun.stage}</strong></div><div className={`outcome-chip outcome-${nextRun.latestControlledResult.status.toLowerCase().replaceAll(" ", "-")}`}><span>Latest controlled result</span><strong>{nextRun.latestControlledResult.status}</strong>{nextRun.latestControlledResult.caseName && <small>{nextRun.latestControlledResult.caseName}</small>}</div></div>
+    {nextRun.latestControlledResult.status !== "Awaiting result" && <p className="latest-outcome-detail">{nextRun.latestControlledResult.detail}</p>}
+    <div className="next-run-header"><strong>{nextRun.title}</strong><span>{nextRun.evidenceStrength} evidence</span></div>
+    <p className="next-change"><b>Controlled change:</b> {nextRun.change}</p>
+    <div className="next-run-grid"><div><span>Why this run</span><p>{nextRun.reason}</p></div><div><span>Why this run is first</span><p>{nextRun.whyThisRunFirst}</p></div><div><span>Hold fixed</span><p>{nextRun.holdFixed.join(" · ")}</p></div><div><span>Predicted result</span><p>{nextRun.expectedOutcome}</p></div><div className="decision-criteria"><span>Decision criteria</span><p><b>Confirm:</b> {nextRun.confirmationCriterion}<br /><b>Reject:</b> {nextRun.rejectionCriterion}<br /><b>Inconclusive:</b> {nextRun.inconclusiveCriterion}</p></div></div>
+    <div className="adaptive-branches" aria-label="Conditional next recommendations"><article className="branch-confirmed"><span>If confirmed</span><p>{nextRun.ifConfirmed}</p></article><article className="branch-rejected"><span>If rejected</span><p>{nextRun.ifRejected}</p></article><article className="branch-inconclusive"><span>If inconclusive</span><p>{nextRun.ifInconclusive}</p></article></div>
+    <p className="alternative"><b>Alternative hypothesis:</b> {nextRun.alternativeHypothesis}</p>
+  </section>;
+}
 export default function Home() {
   const [cases, setCases] = useState<AnalysisCase[]>([]);
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
@@ -242,7 +258,8 @@ export default function Home() {
   const comparisons = useMemo(() => probeSetComparison?.comparisons ?? [], [probeSetComparison]);
   const testMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.testSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: activeCase.metadata.maximumWaveCount, synchronizationConfirmed: activeCase.metadata.probeSynchronizationConfirmed, sensorBandwidthKHz: activeCase.metadata.experimentSensorBandwidthKHz, filterCutoffKHz: activeCase.metadata.experimentFilterCutoffKHz }) : null, [activeCase]);
   const cfdMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.cfdSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: activeCase.metadata.maximumWaveCount, synchronizationConfirmed: activeCase.metadata.probeSynchronizationConfirmed }) : null, [activeCase]);
-  const caseHistoryEvidence = useMemo(() => activeCase ? buildCaseHistoryEvidence(cases, activeCase.id) : [], [cases, activeCase]);
+  const recommendationBaselineId = activeCase?.relationship?.baselineCaseId ?? activeCase?.id ?? null;
+  const caseHistoryEvidence = useMemo(() => recommendationBaselineId ? buildCaseHistoryEvidence(cases, recommendationBaselineId) : [], [cases, recommendationBaselineId]);
   const assessment = useMemo(() => activeCase && testMode && cfdMode ? buildCaseAssessment(activeCase.metadata, comparisons, testMode, cfdMode, caseHistoryEvidence) : null, [activeCase, comparisons, testMode, cfdMode, caseHistoryEvidence]);
   const activeComparison = comparisons[activeProbe];
   const correlation = comparisons.length ? average(comparisons.map((item) => item.correlation)) : Number.NaN;
@@ -418,8 +435,8 @@ export default function Home() {
       methodSources: WAVE_METHOD_SOURCES,
       publishedValidationSources: PUBLISHED_VALIDATION_SOURCES,
       perProbe: comparisons,
-      methods: ["shared bounded cross-correlation", "Hann-windowed FFT pressure spectrum", "cycle-by-cycle passage tracking", "sliding-window circumferential phase-mode fit", "uncertainty resolution by RSS", "structured diagnostic rules"],
-      limitations: ["Hypotheses prioritize controlled sensitivity runs; they do not prove causality.", "Pressure and timing uncertainty are propagated only into supported scalar outputs.", "Mode inference assumes synchronized probes and one dominant rotating mode; ambiguous and simultaneous modes are reported as not identifiable.", "Thermal, performance, combustion, and flowfield agreement are outside this pressure-and-wave product scope."],
+      methods: ["shared bounded cross-correlation", "Hann-windowed FFT pressure spectrum", "cycle-by-cycle passage tracking", "sliding-window circumferential phase-mode fit", "uncertainty resolution by RSS", "structured diagnostic rules", "adaptive controlled-rerun outcome classification"],
+      limitations: ["Hypotheses prioritize controlled sensitivity runs; they do not prove causality.", "Adaptive confirmation and rejection limits are explicit prototype rules and are not calibrated probabilities.", "Pressure and timing uncertainty are propagated only into supported scalar outputs.", "Mode inference assumes synchronized probes and one dominant rotating mode; ambiguous and simultaneous modes are reported as not identifiable.", "Thermal, performance, combustion, and flowfield agreement are outside this pressure-and-wave product scope."],
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
     const link = document.createElement("a"); link.href = url; link.download = "caevera-rde-case-report.json"; link.click(); URL.revokeObjectURL(url);
@@ -498,10 +515,10 @@ export default function Home() {
     <section className="content" id="top">
       {!activeCase || !testMode || !cfdMode || !activeComparison || !assessment ? <section className="empty-workspace">
         <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>Welcome to Caevera</h1>
-        <p>Compare experimental pressure-probe data with CFD to see where the simulated pressure and rotating-wave behavior disagree with measurements. Caevera diagnoses the mismatch and recommends the next CFD run to test the leading explanation and guide the simulation toward better agreement.</p>
+        <p>Compare experimental pressure-probe data with CFD to see where the simulated pressure and rotating-wave behavior disagree with measurements. Caevera recommends the next controlled CFD run, evaluates its result, and updates the plan through confirmed, rejected, or inconclusive branches.</p>
         <span className="empty-status">No cases loaded</span>
         <div className="empty-actions"><button className="button primary" onClick={openNewCase}>Add first case →</button><label className="button secondary workspace-file-button">Open saved workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary" onClick={loadExampleCaseHistory}>Load synthetic case history</button></div>
-        <div className="empty-requirements"><span><b>1</b><i><strong>Compare</strong> matched experiment and CFD pressure traces</i></span><span><b>2</b><i><strong>Diagnose</strong> pressure and rotating-wave mismatches</i></span><span><b>3</b><i><strong>Run next</strong> the recommended CFD run</i></span></div>
+        <div className="empty-requirements"><span><b>1</b><i><strong>Compare</strong> matched experiment and CFD pressure traces</i></span><span><b>2</b><i><strong>Diagnose</strong> pressure and rotating-wave mismatches</i></span><span><b>3</b><i><strong>Run and update</strong> the adaptive CFD plan</i></span></div>
       </section> : <>
         <section className="case-switcher" aria-label="Loaded cases">
           <div className="case-switcher-label"><span>Cases</span><b>{cases.length}</b></div>
@@ -523,20 +540,22 @@ export default function Home() {
                 <td>{isBaseline ? <strong>Reference condition</strong> : <><strong>φ {signed(delta.condition.equivalenceRatio, 2)} · pressure {signed(delta.condition.inletPressureBar, 1)} bar</strong><span>Temperature {signed(delta.condition.inletTemperatureK, 0)} K</span><span>Mass flow {signed(delta.condition.massFlowKgS, 2)} kg/s</span></>}</td>
                 <td>{isBaseline ? <strong>Reference behavior</strong> : <><strong>Frequency {signed(delta.experiment.frequencyKHz, 2)} kHz</strong><span>Peak pressure {signed(delta.experiment.peakPressureMpa, 3)} MPa</span><span>Amplitude {signed(delta.experiment.pressureAmplitudeMpa, 3)} MPa · variability {signed(delta.experiment.cycleVariabilityPoints, 1)} pt</span></>}</td>
                 <td>{isBaseline ? <strong>Reference error</strong> : <><strong>Frequency error {signed(delta.cfdAgreement.frequencyErrorPointChange, 1)} pt</strong><span>Peak error {signed(delta.cfdAgreement.peakPressureErrorPointChange, 1)} pt</span><span>Amplitude error {signed(delta.cfdAgreement.amplitudeErrorPointChange, 1)} pt</span></>}</td>
-                <td><span className={`comparison-status ${relationEvidence?.controlled ? "pass" : summary.assessment.validity.status === "Blocked" || caseReviews ? "review" : "neutral"}`}>{isBaseline ? "Baseline case" : relationEvidence?.controlled ? `Used as evidence · ${relationEvidence.state}` : "Comparison only"}</span></td>
+                <td><span className={`comparison-status ${relationEvidence?.state === "supports" ? "pass" : relationEvidence?.controlled ? "review" : summary.assessment.validity.status === "Blocked" || caseReviews ? "review" : "neutral"}`}>{isBaseline ? "Baseline case" : relationEvidence?.controlled ? outcomeLabel(relationEvidence.state) : "Comparison only"}</span></td>
               </tr>;
             })}</tbody>
           </table></div>
-          <p className="case-history-note"><strong>How this works:</strong> this view keeps a baseline and its related controlled reruns together. Unrelated operating points remain comparisons and do not alter the diagnosis.</p>
+          <p className="case-history-note"><strong>How this works:</strong> this view keeps a baseline and its related controlled reruns together. A controlled result confirms, rejects, or leaves the predicted response inconclusive, then updates the adaptive plan. Unrelated operating points remain comparisons.</p>
         </section> : <>
           <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div><h1>{activeCase.metadata.name}</h1><p>Operating point {cases.findIndex((item) => item.id === activeCase.id) + 1} of {cases.length} · deterministic local analysis</p></div>
 
           <section className="decision-card" aria-label="Diagnostic recommendation">
             <article><h2 className="decision-line"><span>Likely issue:</span> {likelyHypothesis?.title ?? "Cannot assess"}</h2></article>
-            <article><h2 className="decision-line"><span>Recommended next CFD run:</span> {assessment.nextRun.title}</h2><p>{assessment.nextRun.change}</p></article>
+            <article><h2 className="decision-line"><span>Recommended next CFD run:</span> {assessment.nextRun.title}</h2><p>{assessment.nextRun.change}</p><p className="decision-pathway"><strong>Current stage:</strong> {assessment.nextRun.stage}</p></article>
             <article><p className="decision-reason"><strong>Why:</strong> {likelyEvidence.length ? likelyEvidence.join(" ") : "The loaded evidence does not support a more specific diagnosis."}</p>{likelySources.length > 0 && <div className="source-links" aria-label="Diagnostic sources">{likelySources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>}</article>
             <div className="decision-actions"><button className="button secondary" onClick={openCaseEditor}>Edit case</button><button className="button secondary" onClick={downloadReport}>Download evidence report</button><button className="button secondary" onClick={downloadWorkspace}>Save complete workspace</button>{cases.length > 1 && <button className="button secondary" onClick={() => setWorkspaceView("compare")}>View case history</button>}</div>
           </section>
+
+          <AdaptivePlanPanel nextRun={assessment.nextRun} />
 
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
@@ -574,8 +593,6 @@ export default function Home() {
               </div><p className="metric-note">Correlation and harmonic/variability checks use explicit prototype method limits. Pressure, frequency, speed, impulse, and rise-time rows use the supplied experiment/CFD uncertainties. {inconclusiveMetrics ? `${inconclusiveMetrics} metric${inconclusiveMetrics === 1 ? " is" : "s are"} inconclusive.` : ""}</p></section>
 
               <section className="result-block causes-block"><div><span className="result-index">06</span><h3>Ranked diagnostic hypotheses</h3></div><ol>{assessment.hypotheses.map((hypothesis, index) => <li key={hypothesis.title}><b>{index + 1}. {hypothesis.title}</b><span>{hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`).join(" ")}</span><small>Model inputs: {hypothesis.modelInputs.filter(Boolean).join(" · ")}</small></li>)}</ol><small>These are transparent sensitivity-test priorities, not causal proof.</small></section>
-
-              <section className="result-block action-block"><div><span className="result-index">07</span><h3>Recommended next CFD run</h3></div><div className="next-run-header"><strong>{assessment.nextRun.title}</strong><span>{assessment.nextRun.evidenceStrength} evidence</span></div><p className="next-change"><b>Controlled change:</b> {assessment.nextRun.change}</p><div className="next-run-grid"><div><span>Why this run</span><p>{assessment.nextRun.reason}</p></div><div><span>Hold fixed</span><p>{assessment.nextRun.holdFixed.join(" · ")}</p></div><div><span>Expected result</span><p>{assessment.nextRun.expectedOutcome}</p></div><div><span>Confirm / reject</span><p><b>Confirm:</b> {assessment.nextRun.confirmationCriterion}<br /><b>Reject:</b> {assessment.nextRun.rejectionCriterion}</p></div></div><p className="alternative"><b>Alternative hypothesis:</b> {assessment.nextRun.alternativeHypothesis}</p></section>
 
               <button className="report-button" onClick={downloadReport}><span><b>08</b><strong>Download traceable report</strong><small>Inputs, validity, uncertainty, metrics, hypotheses, and recommended next CFD run</small></span><i>↓</i></button>
             </article>

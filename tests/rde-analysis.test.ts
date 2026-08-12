@@ -251,6 +251,13 @@ test("case assessment connects validity, uncertainty, model inputs, and next run
   assert.ok(result.hypotheses[0].sourceIds.length > 0);
   assert.ok(result.nextRun.holdFixed.length >= 4);
   assert.match(result.nextRun.confirmationCriterion, /%|cycles|uncertainty/i);
+  assert.ok(["Evidence gate", "Numerical verification", "Physics sensitivity", "Validation expansion"].includes(result.nextRun.stage));
+  assert.match(result.nextRun.whyThisRunFirst, /first|prerequisite/i);
+  assert.match(result.nextRun.inconclusiveCriterion, /neither|uncertainty/i);
+  assert.ok(result.nextRun.ifConfirmed.length > 30);
+  assert.ok(result.nextRun.ifRejected.length > 30);
+  assert.ok(result.nextRun.ifInconclusive.length > 30);
+  assert.equal(result.nextRun.latestControlledResult.status, "Awaiting result");
   assert.ok(result.coverage.some((item) => item.module === "Thermal" && item.status === "Not assessed"));
 });
 
@@ -297,11 +304,37 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   assert.equal(history[0].causeId, "spatial-resolution");
   assert.equal(history[0].state, "supports");
   assert.equal(history[0].strength, "strong");
+  assert.ok((history[0].errorReductionPct ?? 0) >= 25);
+  assert.ok((history[0].responseMagnitudePct ?? 0) > 0);
+  assert.deepEqual(history[0].targetedMetrics, ["peak-pressure", "rise-time", "harmonics"]);
 
   const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
   const result = buildCaseAssessment(DEMO_METADATA, comparisons, analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82), analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82), history);
   assert.equal(result.hypotheses[0].id, "spatial-resolution");
   assert.match(result.nextRun.title, /mesh-convergence/i);
+  assert.equal(result.nextRun.latestControlledResult.status, "Confirmed");
+  assert.equal(result.nextRun.latestControlledResult.caseName, "Fine mesh");
+});
+
+test("adaptive plan exposes rejected and inconclusive controlled outcomes", () => {
+  const demo = makeDemoProbeSignals();
+  const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
+  const experiment = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
+  const simulation = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
+  const baseEvidence = {
+    causeId: "spatial-resolution" as const,
+    strength: "strong" as const,
+    caseId: "rerun",
+    caseName: "Controlled rerun",
+    detail: "The controlled run did not produce a decisive targeted response.",
+    controlled: true,
+  };
+  const rejected = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation, [{ ...baseEvidence, state: "weakens" }]);
+  const inconclusive = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation, [{ ...baseEvidence, state: "unknown" }]);
+  assert.equal(rejected.nextRun.latestControlledResult.status, "Rejected");
+  assert.match(rejected.nextRun.ifRejected, /next|repair|keep/i);
+  assert.equal(inconclusive.nextRun.latestControlledResult.status, "Inconclusive");
+  assert.match(inconclusive.nextRun.ifInconclusive, /perturbation|uncertainty/i);
 });
 
 test("diagnostic source records are complete and mapped", () => {

@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Caevera by Caelus",
-  description: "Compare RDE experiment and CFD pressure data, diagnose wave mismatches, and choose the recommended next CFD run.",
+  description: "Compare RDE experiment and CFD pressure data, diagnose wave mismatches, and follow an adaptive CFD run plan.",
   applicationName: "Caevera",
   manifest: "/manifest.webmanifest",
   appleWebApp: {

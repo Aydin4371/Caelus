@@ -33,7 +33,7 @@ test("renders development preview metadata", async () => {
   assert.match(html, developmentPreviewMeta);
   assert.match(html, /CAEVERA/);
   assert.match(html, /Welcome to Caevera/);
-  assert.match(html, /recommends the next CFD run/);
+  assert.match(html, /recommends the next CFD run|recommends the next controlled CFD run/);
   assert.match(html, /No cases loaded/);
   assert.match(html, /rel="manifest"/);
   assert.match(html, />Install Caevera</);
@@ -70,6 +70,12 @@ test("uses inline labels for the diagnostic recommendation", async () => {
   assert.match(page, /<span>Likely issue:<\/span> \{likelyHypothesis/);
   assert.match(page, /<span>Recommended next CFD run:<\/span> \{assessment\.nextRun\.title\}/);
   assert.match(page, /<strong>Why:<\/strong> \{likelyEvidence/);
+  assert.match(page, /Adaptive CFD run plan/);
+  assert.match(page, /If confirmed/);
+  assert.match(page, /If rejected/);
+  assert.match(page, /If inconclusive/);
+  assert.match(page, /nextRun\.latestControlledResult\.status/);
+  assert.match(page, /<AdaptivePlanPanel nextRun=\{assessment\.nextRun\} \/>/);
   assert.doesNotMatch(page, /Make one controlled change, or one technically linked set of changes/);
 });
 

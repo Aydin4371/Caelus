@@ -4,7 +4,9 @@ Caevera is a browser-based RDE simulation-to-test research application. It
 compares three or more synchronized experimental pressure traces with matching
 CFD virtual probes, determines whether differences are resolved beyond the stated
 uncertainty, orders traceable diagnostic hypotheses by evidence state, and recommends one
-controlled next simulation.
+controlled next simulation. When a related rerun is added, Caevera classifies
+the predicted response as confirmed, rejected, or inconclusive and updates the
+next recommendation.
 
 The application starts as an empty case workspace and accepts multiple
 operating points. It does not run CFD. Uploaded data and deterministic analysis
@@ -139,6 +141,24 @@ No LLM is used in v0.7.
 
 No heat, thrust, LLM, or automatic CFD execution is included in v1.0.
 
+## v1.1 adaptive CFD run plan
+
+- Keeps one immediate CFD run actionable while showing conditional next actions
+  for confirmed, rejected, and inconclusive outcomes.
+- Explains why the selected run outranks the alternative hypotheses without an
+  opaque score.
+- Separates evidence gates, numerical verification, physics sensitivity, and
+  validation-envelope expansion.
+- Evaluates verified related reruns against variable-specific target metrics and
+  explicit response limits.
+- Carries the latest controlled outcome into the recommendation even when the
+  rerun itself is the active case.
+- Includes the complete adaptive plan and latest outcome in the downloaded
+  evidence report.
+
+See [docs/published-validation.md](docs/published-validation.md) for dataset,
+license, transformation, acceptance, and claim-boundary details.
+
 ## Code structure
 
 - `lib/rde-analysis.ts`: signal parsing, pressure-cycle metrics, FFT spectra,
@@ -147,9 +167,9 @@ No heat, thrust, LLM, or automatic CFD execution is included in v1.0.
   drift, jitter, transitions, and mode identifiability
 - `lib/wave-method-sources.ts`: reviewed primary sources for the wave-analysis methods
 - `lib/uncertainty.ts`: uncertainty combination and resolved-difference states
-- `lib/diagnostics.ts`: validity, metric assessments, hypotheses, and next-run
-  plans
-- `lib/case-history.ts`: related-case checks, direct deltas, and controlled-rerun evidence
+- `lib/diagnostics.ts`: validity, metric assessments, hypotheses, and adaptive
+  next-run plans
+- `lib/case-history.ts`: related-case checks, direct deltas, and controlled-rerun outcomes
 - `lib/diagnostic-knowledge.ts`: reviewed RDE source records and cause mappings
 - `lib/caevera-types.ts`: case and model-card schemas
 - `lib/data-import.ts`: delimited-file parsing, column mapping, unit conversion, provenance, and previews
@@ -199,6 +219,7 @@ data-quality failures, unit conversion, dropped-row provenance, multi-probe
 mode recovery, shared alignment, frequency drift, mode transitions,
 uncertainty classification, structured diagnostics, blocked
 case matching, controlled case-history evidence, source integrity, and report content.
+The suite also covers adaptive confirmed, rejected, and inconclusive branches.
 
 ## Scientific status
 
