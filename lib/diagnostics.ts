@@ -108,6 +108,13 @@ export type ControlledNextRun = {
     detail: string;
   };
   precedent: ComparableCasePrecedent;
+  reasoningLedger: {
+    hypothesisId: DiagnosticCauseId;
+    hypothesisTitle: string;
+    supports: DiagnosticEvidence[];
+    weakens: DiagnosticEvidence[];
+    unknowns: DiagnosticEvidence[];
+  };
 };
 
 export type ComparableCasePrecedent = {
@@ -398,7 +405,7 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
 }
 
 type CoreNextRun = Omit<ControlledNextRun,
-  "stage" | "whyThisRunFirst" | "inconclusiveCriterion" | "ifConfirmed" | "ifRejected" | "ifInconclusive" | "latestControlledResult" | "precedent"
+  "stage" | "whyThisRunFirst" | "inconclusiveCriterion" | "ifConfirmed" | "ifRejected" | "ifInconclusive" | "latestControlledResult" | "precedent" | "reasoningLedger"
 >;
 
 function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, latest?: CaseHistoryEvidence): CoreNextRun {
@@ -710,6 +717,13 @@ function buildAdaptiveRunPlan(
     ifInconclusive: "Increase the controlled perturbation or reduce the relevant uncertainty, then repeat without changing additional model settings.",
     latestControlledResult: latestControlledResult(caseHistory, primary.id),
     precedent,
+    reasoningLedger: {
+      hypothesisId: primary.id,
+      hypothesisTitle: primary.title,
+      supports: primary.evidence.filter((item) => item.state === "supports"),
+      weakens: primary.evidence.filter((item) => item.state === "weakens"),
+      unknowns: primary.evidence.filter((item) => item.state === "unknown" || item.state === "cannot-assess"),
+    },
   };
 }
 
