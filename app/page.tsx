@@ -13,7 +13,7 @@ import {
   type Dimensionality,
   type SensitivityVariable,
 } from "@/lib/caevera-types";
-import { buildCaseAssessment, type ControlledNextRun, type MetricAssessment } from "@/lib/diagnostics";
+import { buildCaseAssessment, type ControlledNextRun, type DiagnosticEvidence, type MetricAssessment } from "@/lib/diagnostics";
 import { buildDecisionQuality, type DecisionQuality } from "@/lib/decision-quality";
 import { KNOWLEDGE_BASE_VERSION, sourcesFor } from "@/lib/diagnostic-knowledge";
 import { CASE_INPUT_HELP } from "@/lib/case-input-help";
@@ -97,6 +97,35 @@ function evidenceMeaning(strength: ControlledNextRun["evidenceStrength"]) {
   if (strength === "High") return "A controlled rerun or strong case evidence supports doing this first.";
   if (strength === "Moderate") return "The current mismatch supports this test, but no decisive controlled result exists yet.";
   return "This is the best available test, but the current evidence is limited.";
+}
+
+function evidenceBasisLabel(basis: DiagnosticEvidence["basis"]) {
+  if (basis === "case-history") return "Controlled rerun";
+  if (basis === "literature") return "Engineering rule";
+  return "Current case";
+}
+
+function EvidenceLedgerColumn({
+  title,
+  meaning,
+  emptyMessage,
+  items,
+  tone,
+}: {
+  title: string;
+  meaning: string;
+  emptyMessage: string;
+  items: DiagnosticEvidence[];
+  tone: "supports" | "weakens" | "unknowns";
+}) {
+  return <article className={`reasoning-column reasoning-${tone}`}>
+    <header><span>{title}</span><b>{items.length}</b></header>
+    <p>{meaning}</p>
+    {items.length ? <ul>{items.map((item, index) => <li key={`${item.basis}-${item.observation}-${index}`}>
+      <div><small>{evidenceBasisLabel(item.basis)}</small><small>{item.strength === "context" ? "Context only" : `${item.strength[0].toUpperCase()}${item.strength.slice(1)} evidence`}</small></div>
+      <strong>{item.observation}</strong>
+    </li>)}</ul> : <div className="reasoning-empty">{emptyMessage}</div>}
+  </article>;
 }
 
 function joinPhrases(items: string[]) {
@@ -372,6 +401,7 @@ function EngineeringDecisionPanel({
   const effectSummary = precedentEffectSummary(precedent);
   const isDemo = selectedAnalysisInput.source === "demo";
   const planUsesDifferentCase = selectedCaseName !== planningCaseName;
+  const ledger = nextRun.reasoningLedger;
   return <section className={`engineering-decision-card decision-${summary.tone}${isDemo ? " decision-demo" : ""}`} aria-label="Engineering decision">
     <div className="decision-quality" aria-label={`Decision quality ${decisionQuality.score} out of ${decisionQuality.maximumScore}`}>
       <div className="decision-quality-score"><span>Decision quality</span><strong>{decisionQuality.score}<small>/{decisionQuality.maximumScore}</small></strong></div>
@@ -389,6 +419,23 @@ function EngineeringDecisionPanel({
       <strong>{sharedCaseFamilyPlan ? "Shared case-family plan" : "Single-case plan"}</strong>
       <span>The diagnosis or rerun result above comes from <b>{selectedCaseName}</b>. The next-run plan below {sharedCaseFamilyPlan ? `is shared across its controlled reruns and currently starts from ${planningCaseName}` : `starts from ${planningCaseName}`}.</span>
     </div>
+    <section className="decision-reasoning" aria-label="Why Caevera recommends this run">
+      <div className="decision-reasoning-heading">
+        <span>Why Caevera recommends this run</span>
+        <h3>Leading explanation: {ledger.hypothesisTitle}</h3>
+        <p>This is the explanation Caevera is testing next. Supporting evidence raises its priority; weakening evidence lowers it; unknowns show what the current data cannot decide.</p>
+      </div>
+      <div className="reasoning-ledger">
+        <EvidenceLedgerColumn title="Supports" meaning="Observations that make this explanation more plausible." emptyMessage="No direct observation currently supports this explanation." items={ledger.supports} tone="supports" />
+        <EvidenceLedgerColumn title="Weakens or contradicts" meaning="Observations that argue against this explanation." emptyMessage="No loaded observation currently weakens this explanation. That is not proof that it is correct." items={ledger.weakens} tone="weakens" />
+        <EvidenceLedgerColumn title="Still unknown" meaning="Missing or unresolved evidence that prevents a causal conclusion." emptyMessage="No explicit unknown is recorded, but the controlled run is still required because the present evidence is not causal proof." items={ledger.unknowns} tone="unknowns" />
+      </div>
+      <div className="decision-priority">
+        <strong>Why this run comes first</strong>
+        <p>{nextRun.whyThisRunFirst}</p>
+        <small><b>{nextRun.stage}:</b> {stageMeaning(nextRun.stage)} <b>{nextRun.evidenceStrength} support:</b> {evidenceMeaning(nextRun.evidenceStrength)}</small>
+      </div>
+    </section>
     <div className="decision-next-run">
       <span>Do this next</span><h3>{nextRun.title}</h3>
     </div>
@@ -397,6 +444,14 @@ function EngineeringDecisionPanel({
       <p><strong>Keep fixed</strong><span>{nextRun.holdFixed.join(" · ")}</span></p>
       <p><strong>Success looks like</strong><span>{nextRun.expectedOutcome}</span></p>
     </div>
+    <section className="decision-outcomes" aria-label="How the result changes the plan">
+      <div><span>How this run changes the plan</span><p>After you upload the rerun, Caevera applies these rules to the targeted outputs. A numerical sequence closes as converged when its adjacent-level response is 2% or less.</p></div>
+      <div className="adaptive-branches">
+        <article className="branch-confirmed"><span>Confirmed</span><small>The expected result clearly occurred.</small><p><b>Caevera decides this when:</b> {nextRun.confirmationCriterion}</p><p><b>Then:</b> {nextRun.ifConfirmed}</p></article>
+        <article className="branch-rejected"><span>Rejected</span><small>The result moved the wrong way or did not respond.</small><p><b>Caevera decides this when:</b> {nextRun.rejectionCriterion}</p><p><b>Then:</b> {nextRun.ifRejected}</p></article>
+        <article className="branch-inconclusive"><span>Inconclusive</span><small>The result changed, but not enough to decide.</small><p><b>Caevera decides this when:</b> {nextRun.inconclusiveCriterion}</p><p><b>Then:</b> {nextRun.ifInconclusive}</p></article>
+      </div>
+    </section>
     <div className="decision-precedent" aria-label="Comparable controlled reruns">
       <span>What prior cases tell you</span>
       {precedent.matchedCount ? <>
@@ -415,7 +470,7 @@ function EngineeringDecisionPanel({
       </ul>
       <p><strong>Method support, not case support:</strong> {publishedSourceCount} mapped engineering source{publishedSourceCount === 1 ? "" : "s"}; {publishedValidation.waveSpeedCases} published wave-speed checks; {publishedValidation.pressureFixtureCases} Zenodo pressure-record checks. These support the rule and analyzer, but do not add points about this engine.</p>
     </div>
-    <div className="decision-details"><details><summary>Why this is the fastest discriminating run</summary><p>{nextRun.reason}</p><p>{nextRun.whyThisRunFirst}</p><p><strong>{nextRun.stage}:</strong> {stageMeaning(nextRun.stage)} <strong>{nextRun.evidenceStrength} support:</strong> {evidenceMeaning(nextRun.evidenceStrength)}</p></details><details><summary>What happens after you upload the result</summary><p className="branch-intro">Caevera will classify the rerun using these three outcomes. A numerical sequence closes as converged when its adjacent-level response is 2% or less.</p><div className="adaptive-branches" aria-label="How the plan updates"><article className="branch-confirmed"><span>Confirmed</span><small>The expected result clearly occurred.</small><p><b>How Caevera decides:</b> {nextRun.confirmationCriterion}</p><p><b>Then:</b> {nextRun.ifConfirmed}</p></article><article className="branch-rejected"><span>Rejected</span><small>The result moved the wrong way or did not respond.</small><p><b>How Caevera decides:</b> {nextRun.rejectionCriterion}</p><p><b>Then:</b> {nextRun.ifRejected}</p></article><article className="branch-inconclusive"><span>Inconclusive</span><small>The result changed, but not enough to decide.</small><p><b>How Caevera decides:</b> {nextRun.inconclusiveCriterion}</p><p><b>Then:</b> {nextRun.ifInconclusive}</p></article></div></details>{precedent.matchedCount > 0 && <details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details>}</div>
+    {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
     <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit case</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View case history</button>}</div>
   </section>;
 }
