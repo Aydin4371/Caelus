@@ -14,6 +14,7 @@ import {
   type SensitivityVariable,
 } from "@/lib/caevera-types";
 import { buildCaseAssessment, type ControlledNextRun, type MetricAssessment } from "@/lib/diagnostics";
+import { buildDecisionQuality, type DecisionQuality } from "@/lib/decision-quality";
 import { KNOWLEDGE_BASE_VERSION, sourcesFor } from "@/lib/diagnostic-knowledge";
 import { CASE_INPUT_HELP } from "@/lib/case-input-help";
 import { WAVE_METHOD_SOURCES } from "@/lib/wave-method-sources";
@@ -137,6 +138,17 @@ type AnalysisInputSummary = {
   experimentName: string;
   cfdName: string;
 };
+
+function summarizeAnalysisInput(item: AnalysisCase | null): AnalysisInputSummary {
+  return {
+    source: item?.source ?? "uploaded",
+    experimentSamples: item?.testSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
+    cfdSamples: item?.cfdSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
+    probeCount: item?.testSignals.length ?? 0,
+    experimentName: item?.imports?.experiment.fileName ?? item?.testSignals[0]?.name.split(" · ")[0] ?? "Experiment data",
+    cfdName: item?.imports?.cfd.fileName ?? item?.cfdSignals[0]?.name.split(" · ")[0] ?? "CFD data",
+  };
+}
 
 type DecisionSummary = {
   label: string;
@@ -327,7 +339,12 @@ function EngineeringDecisionPanel({
   summary,
   nextRun,
   showLatestResult,
-  analysisInput,
+  decisionQuality,
+  selectedCaseName,
+  selectedAnalysisInput,
+  planningCaseName,
+  planningAnalysisInput,
+  sharedCaseFamilyPlan,
   publishedSourceCount,
   publishedValidation,
   onEdit,
@@ -338,7 +355,12 @@ function EngineeringDecisionPanel({
   summary: DecisionSummary;
   nextRun: ControlledNextRun;
   showLatestResult: boolean;
-  analysisInput: AnalysisInputSummary;
+  decisionQuality: DecisionQuality;
+  selectedCaseName: string;
+  selectedAnalysisInput: AnalysisInputSummary;
+  planningCaseName: string;
+  planningAnalysisInput: AnalysisInputSummary;
+  sharedCaseFamilyPlan: boolean;
   publishedSourceCount: number;
   publishedValidation: typeof PUBLISHED_VALIDATION_SUMMARY;
   onEdit: () => void;
@@ -348,17 +370,25 @@ function EngineeringDecisionPanel({
 }) {
   const precedent = nextRun.precedent;
   const effectSummary = precedentEffectSummary(precedent);
-  const isDemo = analysisInput.source === "demo";
-  const evidenceLabel = isDemo ? "Demo only" : `${nextRun.evidenceStrength} support`;
+  const isDemo = selectedAnalysisInput.source === "demo";
+  const planUsesDifferentCase = selectedCaseName !== planningCaseName;
   return <section className={`engineering-decision-card decision-${summary.tone}${isDemo ? " decision-demo" : ""}`} aria-label="Engineering decision">
+    <div className="decision-quality" aria-label={`Decision quality ${decisionQuality.score} out of ${decisionQuality.maximumScore}`}>
+      <div className="decision-quality-score"><span>Decision quality</span><strong>{decisionQuality.score}<small>/{decisionQuality.maximumScore}</small></strong></div>
+      <div className="decision-quality-copy"><strong>{decisionQuality.label}</strong><p>{decisionQuality.explanation}</p><small>Evidence-completeness index, not a probability of success.</small></div>
+      <div className="decision-quality-scale" aria-hidden="true">{Array.from({ length: decisionQuality.maximumScore }, (_, index) => <i key={index} className={index < decisionQuality.score ? "filled" : ""} />)}</div>
+    </div>
     <header className="engineering-decision-heading">
-      <div><span>Engineering decision</span><strong>{evidenceLabel}</strong></div>
-      <small>{summary.label}</small>
+      <div><span>Engineering decision</span><strong>{summary.label}</strong></div>
       <h2><span>{summary.lead}</span> {summary.title}</h2>
       {summary.detail && <p className="decision-detail">{summary.detail}</p>}
       <p className="decision-meaning"><strong>What this means:</strong> {summary.meaning}</p>
     </header>
     {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Last controlled run: {nextRun.latestControlledResult.status}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{nextRun.latestControlledResult.detail}</p></div>}
+    <div className="decision-scope">
+      <strong>{sharedCaseFamilyPlan ? "Shared case-family plan" : "Single-case plan"}</strong>
+      <span>The diagnosis or rerun result above comes from <b>{selectedCaseName}</b>. The next-run plan below {sharedCaseFamilyPlan ? `is shared across its controlled reruns and currently starts from ${planningCaseName}` : `starts from ${planningCaseName}`}.</span>
+    </div>
     <div className="decision-next-run">
       <span>Do this next</span><h3>{nextRun.title}</h3>
     </div>
@@ -377,14 +407,13 @@ function EngineeringDecisionPanel({
       </>}
     </div>
     <div className="decision-evidence">
-      <div><span>What this decision actually used</span><small>No preset result or public benchmark votes on this case</small></div>
+      <div><span>Evidence behind the score</span><small>{decisionQuality.score} of {decisionQuality.maximumScore} selected-case gates satisfied</small></div>
+      <p className="selected-data-source"><strong>Selected-case data:</strong> {selectedCaseName} recalculated from {selectedAnalysisInput.experimentName} ({selectedAnalysisInput.experimentSamples.toLocaleString()} experiment values) and {selectedAnalysisInput.cfdName} ({selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values), across {selectedAnalysisInput.probeCount} probes. Equal sample counts are expected for matched reruns; each case&apos;s pressure values are analyzed separately.</p>
+      {planUsesDifferentCase && <p className="planning-data-source"><strong>Family planning reference:</strong> {planningCaseName}, using {planningAnalysisInput.experimentSamples.toLocaleString()} experiment and {planningAnalysisInput.cfdSamples.toLocaleString()} CFD values. This is why the next-run section is intentionally the same on related rerun tabs.</p>}
       <ul>
-        <li><i>✓</i><strong>{isDemo ? "Generated demonstration data" : "Uploaded case data"}</strong><small>Directly analyzed: {analysisInput.experimentName} ({analysisInput.experimentSamples.toLocaleString()} experiment values) versus {analysisInput.cfdName} ({analysisInput.cfdSamples.toLocaleString()} CFD values), across {analysisInput.probeCount} probes</small></li>
-        <li className={precedent.uploadedCount ? "" : "evidence-missing"}><i>{precedent.uploadedCount ? "✓" : "–"}</i><strong>Previous company runs</strong><small>{precedent.uploadedCount ? `${precedent.uploadedCount} comparable controlled rerun${precedent.uploadedCount === 1 ? "" : "s"}` : "None loaded for this mismatch"}</small></li>
-        <li className={publishedSourceCount ? "" : "evidence-missing"}><i>{publishedSourceCount ? "✓" : "–"}</i><strong>Engineering rule support</strong><small>{publishedSourceCount ? `${publishedSourceCount} reviewed published engineering source${publishedSourceCount === 1 ? "" : "s"} support this diagnostic rule; they do not replace the uploaded measurements` : "No published engineering source is directly mapped to this rule"}</small></li>
-        <li><i>✓</i><strong>Analyzer validation</strong><small>{publishedValidation.waveSpeedCases} published wave-speed checks and {publishedValidation.pressureFixtureCases} Zenodo pressure-record checks run in mandatory tests; validation only, not evidence about this engine</small></li>
+        {decisionQuality.gates.map((gate) => <li key={gate.id} className={gate.satisfied ? "" : "evidence-missing"}><i>{gate.satisfied ? "✓" : "–"}</i><strong>{gate.label}</strong><small>{gate.result}</small></li>)}
       </ul>
-      <p><strong>Recommendation support:</strong> {isDemo ? "Demonstration only." : `${nextRun.evidenceStrength}.`} This ranks the next discriminating run; it is not a calibrated probability of success.</p>
+      <p><strong>Method support, not case support:</strong> {publishedSourceCount} mapped engineering source{publishedSourceCount === 1 ? "" : "s"}; {publishedValidation.waveSpeedCases} published wave-speed checks; {publishedValidation.pressureFixtureCases} Zenodo pressure-record checks. These support the rule and analyzer, but do not add points about this engine.</p>
     </div>
     <div className="decision-details"><details><summary>Why this is the fastest discriminating run</summary><p>{nextRun.reason}</p><p>{nextRun.whyThisRunFirst}</p><p><strong>{nextRun.stage}:</strong> {stageMeaning(nextRun.stage)} <strong>{nextRun.evidenceStrength} support:</strong> {evidenceMeaning(nextRun.evidenceStrength)}</p></details><details><summary>What happens after you upload the result</summary><p className="branch-intro">Caevera will classify the rerun using these three outcomes. A numerical sequence closes as converged when its adjacent-level response is 2% or less.</p><div className="adaptive-branches" aria-label="How the plan updates"><article className="branch-confirmed"><span>Confirmed</span><small>The expected result clearly occurred.</small><p><b>How Caevera decides:</b> {nextRun.confirmationCriterion}</p><p><b>Then:</b> {nextRun.ifConfirmed}</p></article><article className="branch-rejected"><span>Rejected</span><small>The result moved the wrong way or did not respond.</small><p><b>How Caevera decides:</b> {nextRun.rejectionCriterion}</p><p><b>Then:</b> {nextRun.ifRejected}</p></article><article className="branch-inconclusive"><span>Inconclusive</span><small>The result changed, but not enough to decide.</small><p><b>How Caevera decides:</b> {nextRun.inconclusiveCriterion}</p><p><b>Then:</b> {nextRun.ifInconclusive}</p></article></div></details>{precedent.matchedCount > 0 && <details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details>}</div>
     <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit case</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View case history</button>}</div>
@@ -430,15 +459,16 @@ export default function Home() {
     const planningCfdMode = analyzeRdeProbeSet(planningCase.cfdSignals, planningCase.metadata.probePositionsDeg, planningCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: planningCase.metadata.maximumWaveCount, synchronizationConfirmed: planningCase.metadata.probeSynchronizationConfirmed });
     return buildCaseAssessment(planningCase.metadata, planningComparison.comparisons, planningTestMode, planningCfdMode, caseHistoryEvidence, relevantPrecedents);
   }, [planningCase, caseHistoryEvidence, precedentEvidence]);
-  const planningInput: AnalysisInputSummary = {
-    source: planningCase?.source ?? "uploaded",
-    experimentSamples: planningCase?.testSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
-    cfdSamples: planningCase?.cfdSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
-    probeCount: planningCase?.testSignals.length ?? 0,
-    experimentName: planningCase?.imports?.experiment.fileName ?? planningCase?.testSignals[0]?.name.split(" · ")[0] ?? "Experiment data",
-    cfdName: planningCase?.imports?.cfd.fileName ?? planningCase?.cfdSignals[0]?.name.split(" · ")[0] ?? "CFD data",
-  };
+  const planningInput = summarizeAnalysisInput(planningCase);
+  const activeAnalysisInput = summarizeAnalysisInput(activeCase);
   const activeCaseEvidence = activeCase?.relationship ? caseHistoryEvidence.find((item) => item.caseId === activeCase.id) ?? null : null;
+  const decisionQuality = activeCase && assessment && planAssessment ? buildDecisionQuality({
+    source: activeCase.source,
+    validityStatus: assessment.validity.status,
+    dataQualityStatus: assessment.dataQuality.status,
+    controlledResultStatus: activeCaseEvidence?.sequenceStatus ?? null,
+    uploadedPrecedentCount: planAssessment.nextRun.precedent.uploadedCount,
+  }) : null;
   const baselineCaseName = activeCase?.relationship ? cases.find((item) => item.id === activeCase.relationship?.baselineCaseId)?.metadata.name : null;
   const activeComparison = comparisons[activeProbe];
   const correlation = comparisons.length ? average(comparisons.map((item) => item.correlation)) : Number.NaN;
@@ -619,19 +649,25 @@ export default function Home() {
   }
 
   function downloadReport() {
-    if (!activeCase || !testMode || !cfdMode || !assessment) return;
+    if (!activeCase || !testMode || !cfdMode || !assessment || !decisionQuality || !planningCase) return;
     const report = {
       schema: "caevera-rde-case-report",
       analysisVersion: ANALYSIS_VERSION,
       knowledgeBaseVersion: KNOWLEDGE_BASE_VERSION,
       generatedAt: new Date().toISOString(),
       inputs: { metadata: activeCase.metadata, relationship: activeCase.relationship ?? null, fileMappings: activeCase.imports ?? null, experimentalSources: activeCase.testSignals.map((signal) => signal.name), cfdSources: activeCase.cfdSignals.map((signal) => signal.name), units: { time: "ms", pressure: "MPa", frequency: "kHz", waveSpeed: "m/s" } },
-      outputs: { experimentMode: testMode, cfdMode, validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, activeCaseOutcome: activeCaseEvidence, controlledNextRun: planAssessment?.nextRun ?? assessment.nextRun, caseHistoryEvidence, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias, sharedAlignmentLagUs: probeSetComparison?.sharedLagUs, individualLagUs: probeSetComparison?.individualLagUs, alignmentSpreadUs: probeSetComparison?.alignmentSpreadUs } },
+      outputs: { experimentMode: testMode, cfdMode, validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, activeCaseOutcome: activeCaseEvidence, decisionQuality, controlledNextRun: planAssessment?.nextRun ?? assessment.nextRun, caseHistoryEvidence, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias, sharedAlignmentLagUs: probeSetComparison?.sharedLagUs, individualLagUs: probeSetComparison?.individualLagUs, alignmentSpreadUs: probeSetComparison?.alignmentSpreadUs } },
       citedSources: sourcesFor([...new Set(assessment.hypotheses.flatMap((hypothesis) => hypothesis.sourceIds))]),
       methodSources: WAVE_METHOD_SOURCES,
       publishedValidationSources: PUBLISHED_VALIDATION_SOURCES,
       evidenceRoles: {
         directCaseEvidence: "Uploaded experiment and CFD arrays, entered metadata, declared uncertainties, and verified controlled relationships determine the calculated metrics and recommendation.",
+        recommendationScope: {
+          selectedCase: activeCase.metadata.name,
+          planningReferenceCase: planningCase.metadata.name,
+          sharedAcrossCaseFamily: caseHistoryEvidence.length > 0,
+          explanation: "The selected-case diagnosis or rerun outcome is recalculated from that case. The next-run plan is shared across related controlled reruns and starts from the latest accepted numerical level.",
+        },
         diagnosticRuleSources: likelySources,
         methodSources: WAVE_METHOD_SOURCES,
         publicAnalyzerValidation: {
@@ -719,7 +755,7 @@ export default function Home() {
     {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
 
     <section className="content" id="top">
-      {!activeCase || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment ? <section className="empty-workspace">
+      {!activeCase || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
         <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>Welcome to Caevera</h1>
         <p>Compare experimental pressure-probe data with CFD to see where the simulated pressure and rotating-wave behavior disagree with measurements. Caevera recommends the next controlled CFD run, evaluates its result, and updates the plan through confirmed, rejected, or inconclusive branches.</p>
         <span className="empty-status">No cases loaded</span>
@@ -754,7 +790,7 @@ export default function Home() {
         </section> : <>
           <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div><h1>{activeCase.metadata.name}</h1><p>{activeCase.relationship ? `Controlled ${changeLabel(activeCase.relationship.changedVariable).toLowerCase()} rerun of ${baselineCaseName ?? "the baseline"}` : `Baseline for ${caseHistoryEvidence.length} controlled rerun${caseHistoryEvidence.length === 1 ? "" : "s"}`} · deterministic local analysis</p></div>
 
-          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} analysisInput={planningInput} publishedSourceCount={likelySources.length} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
+          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} planningAnalysisInput={planningInput} sharedCaseFamilyPlan={caseHistoryEvidence.length > 0} publishedSourceCount={likelySources.length} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
 
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
