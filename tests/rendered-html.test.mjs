@@ -92,8 +92,14 @@ test("streamlines diagnosis, next run, and evidence into one decision card", asy
   assert.doesNotMatch(page, /What comparable cases show/);
   assert.doesNotMatch(page, /92%/);
   assert.doesNotMatch(page, /★/);
-  assert.match(page, /fastest discriminating run/);
-  assert.match(page, /What happens after you upload the result/);
+  assert.match(page, /Why Caevera recommends this run/);
+  assert.match(page, /Leading explanation:/);
+  assert.match(page, /Weakens or contradicts/);
+  assert.match(page, /Still unknown/);
+  assert.match(page, /Why this run comes first/);
+  assert.match(page, /How this run changes the plan/);
+  assert.match(page, /Caevera decides this when:/);
+  assert.match(page, /reasoningLedger/);
   assert.match(page, /nextRun\.latestControlledResult\.status/);
   assert.match(page, /caseTabSummary\(item\)/);
   assert.match(page, /<EngineeringDecisionPanel summary=\{decisionSummary\}/);
