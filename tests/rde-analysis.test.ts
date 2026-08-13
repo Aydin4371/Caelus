@@ -258,6 +258,14 @@ test("case assessment connects validity, uncertainty, model inputs, and next run
   assert.ok(result.nextRun.ifConfirmed.length > 30);
   assert.ok(result.nextRun.ifRejected.length > 30);
   assert.ok(result.nextRun.ifInconclusive.length > 30);
+  assert.equal(result.nextRun.reasoningLedger.hypothesisTitle, result.hypotheses[0].title);
+  assert.ok(result.nextRun.reasoningLedger.supports.every((item) => item.state === "supports"));
+  assert.ok(result.nextRun.reasoningLedger.weakens.every((item) => item.state === "weakens"));
+  assert.ok(result.nextRun.reasoningLedger.unknowns.every((item) => item.state === "unknown" || item.state === "cannot-assess"));
+  assert.equal(
+    result.nextRun.reasoningLedger.supports.length + result.nextRun.reasoningLedger.weakens.length + result.nextRun.reasoningLedger.unknowns.length,
+    result.hypotheses[0].evidence.length,
+  );
   assert.equal(result.nextRun.latestControlledResult.status, "Awaiting result");
   assert.ok(result.coverage.some((item) => item.module === "Thermal" && item.status === "Not assessed"));
 });
