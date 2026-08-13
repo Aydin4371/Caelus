@@ -67,36 +67,41 @@ function caseTabSummary(item: AnalysisCase) {
 }
 
 function diagnosisMeaning(causeId: string) {
-  if (causeId === "case-validity") return "The experiment and CFD pairing must be verified before a model change can be interpreted.";
-  if (causeId === "data-quality") return "The pressure record does not yet support a reliable model diagnosis.";
-  if (causeId === "spatial-resolution") return "The CFD may be smearing the detonation front because the mesh or spatial method is too coarse or dissipative.";
-  if (causeId === "chemistry-timescale") return "Reaction timing or numerical time integration may be shifting the predicted wave behavior.";
-  if (causeId === "inlet-boundary") return "The simulated injection or backflow treatment may not represent the hardware closely enough.";
-  if (causeId === "wall-loss") return "The assumed wall heat loss may be changing pressure amplitude and impulse.";
-  if (causeId === "initialization-mode") return "The ignition setup may be selecting a different rotating-wave mode from the experiment.";
-  if (causeId === "missing-unsteadiness") return "The CFD may be missing measured inlet fluctuations that affect cycle-to-cycle behavior.";
-  return "No resolved mismatch is available, so the next useful step is to expand the tested operating range.";
+  if (causeId === "case-validity") return "Verify the experiment–CFD pairing before changing the model.";
+  if (causeId === "data-quality") return "Repair the pressure record before diagnosing the model.";
+  if (causeId === "spatial-resolution") return "Mesh or numerical dissipation may be smearing the front.";
+  if (causeId === "chemistry-timescale") return "Reaction timing or time integration may be shifting the wave.";
+  if (causeId === "inlet-boundary") return "Injection or backflow treatment may not match the hardware.";
+  if (causeId === "wall-loss") return "Wall-loss treatment may be shifting amplitude and impulse.";
+  if (causeId === "initialization-mode") return "Initialization may be selecting the wrong wave mode.";
+  if (causeId === "missing-unsteadiness") return "The CFD may be missing measured inlet fluctuations.";
+  return "No resolved mismatch remains; expand the validation envelope.";
 }
 
 function outcomeMeaning(evidence: CaseHistoryEvidence) {
-  if (evidence.sequenceStatus === "converged") return "The adjacent numerical level changed the targeted outputs by no more than 2%. Stop refining this variable and move to the next unresolved explanation.";
-  if (evidence.state === "supports" && evidence.planDisposition === "continue") return "The one changed numerical variable moved the targeted results in the predicted direction. Complete the next resolution level before changing physics.";
-  if (evidence.state === "supports") return "The one changed CFD variable moved the targeted results in the predicted direction. Retain the supported setting and test the next unresolved explanation.";
-  if (evidence.state === "weakens") return "The one changed CFD variable did not produce the predicted result. Stop tuning it and test the next explanation.";
-  return "The response was too small or uncertain to decide. Repeat with a larger controlled change or lower uncertainty.";
+  if (evidence.sequenceStatus === "converged") return "Converged. Move to the next unresolved cause.";
+  if (evidence.state === "supports" && evidence.planDisposition === "continue") return "Response confirmed. Complete the next resolution level.";
+  if (evidence.state === "supports") return "Response confirmed. Keep this setting; test the next cause.";
+  if (evidence.state === "weakens") return "Response rejected. Stop tuning it; test the next cause.";
+  return "Unclear. Repeat with a larger change or lower uncertainty.";
 }
 
-function stageMeaning(stage: ControlledNextRun["stage"]) {
-  if (stage === "Evidence gate") return "First make sure the comparison and measurements are trustworthy.";
-  if (stage === "Numerical verification") return "First prove the result is not being controlled by mesh or time-step error.";
-  if (stage === "Physics sensitivity") return "Now test one physical-model assumption at a time.";
-  return "The current case is understood well enough to test a nearby operating point.";
+function conciseOutcomeDetail(evidence: CaseHistoryEvidence) {
+  if (evidence.sequenceStatus === "converged" && Number.isFinite(evidence.incrementalResponsePct)) return `Adjacent-level response ${evidence.incrementalResponsePct!.toFixed(1)}% · converged`;
+  if (evidence.state === "supports" && Number.isFinite(evidence.errorReductionPct)) return `Targeted error ↓ ${Math.abs(evidence.errorReductionPct!).toFixed(1)}%${evidence.newMismatchMetricIds?.length ? " · new mismatch found" : " · no new mismatch"}`;
+  if (evidence.state === "weakens" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted response ${evidence.responseMagnitudePct!.toFixed(1)}% · rejected`;
+  if (evidence.state === "unknown" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted response ${evidence.responseMagnitudePct!.toFixed(1)}% · inconclusive`;
+  return evidence.controlled ? evidence.detail.split(".")[0] : "Not a valid one-change comparison";
 }
 
-function evidenceMeaning(strength: ControlledNextRun["evidenceStrength"]) {
-  if (strength === "High") return "A controlled rerun or strong case evidence supports doing this first.";
-  if (strength === "Moderate") return "The current mismatch supports this test, but no decisive controlled result exists yet.";
-  return "This is the best available test, but the current evidence is limited.";
+function conciseEvidence(observation: string) {
+  const reduction = observation.match(/mean targeted error.*?fell by ([\d.]+)%, with no new resolved mismatch/i);
+  if (reduction) return `Targeted error ↓ ${reduction[1]}%; no new mismatch.`;
+  const rejected = observation.match(/targeted CFD outputs changed by only ([\d.]+)%, below the ([\d.]+)% response threshold/i);
+  if (rejected) return `${rejected[1]}% response; below ${rejected[2]}% threshold.`;
+  if (observation.length <= 115) return observation;
+  const firstSentence = observation.match(/^(.{1,115}?[.!?])(?:\s|$)/)?.[1];
+  return firstSentence ?? `${observation.slice(0, 112).trim()}…`;
 }
 
 function evidenceBasisLabel(basis: DiagnosticEvidence["basis"]) {
@@ -107,56 +112,63 @@ function evidenceBasisLabel(basis: DiagnosticEvidence["basis"]) {
 
 function EvidenceLedgerColumn({
   title,
-  meaning,
   emptyMessage,
   items,
   tone,
 }: {
   title: string;
-  meaning: string;
   emptyMessage: string;
   items: DiagnosticEvidence[];
   tone: "supports" | "weakens" | "unknowns";
 }) {
   return <article className={`reasoning-column reasoning-${tone}`}>
     <header><span>{title}</span><b>{items.length}</b></header>
-    <p>{meaning}</p>
-    {items.length ? <ul>{items.map((item, index) => <li key={`${item.basis}-${item.observation}-${index}`}>
-      <div><small>{evidenceBasisLabel(item.basis)}</small><small>{item.strength === "context" ? "Context only" : `${item.strength[0].toUpperCase()}${item.strength.slice(1)} evidence`}</small></div>
-      <strong>{item.observation}</strong>
+    {items.length ? <ul>{items.slice(0, 2).map((item, index) => <li key={`${item.basis}-${item.observation}-${index}`}>
+      <small>{evidenceBasisLabel(item.basis)}</small>
+      <strong>{conciseEvidence(item.observation)}</strong>
     </li>)}</ul> : <div className="reasoning-empty">{emptyMessage}</div>}
+    {items.length > 2 && <small className="reasoning-more">+{items.length - 2} more in report</small>}
   </article>;
 }
 
-function joinPhrases(items: string[]) {
-  if (items.length < 2) return items[0] ?? "";
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+function openQuestion(nextRun: ControlledNextRun) {
+  const title = nextRun.title.toLowerCase();
+  if (title.includes("mesh-convergence")) return "Mesh convergence not complete.";
+  if (title.includes("time-step sequence")) return "Time-step convergence not complete.";
+  if (nextRun.stage === "Evidence gate") return "Evidence gate unresolved.";
+  if (nextRun.stage === "Physics sensitivity") return "Cause not yet isolated.";
+  if (nextRun.stage === "Validation expansion") return "Nearby operating point untested.";
+  return "Next controlled result not loaded.";
 }
 
-function precedentConclusion(precedent: ControlledNextRun["precedent"]) {
-  const source = precedent.level === "Demonstration" ? "synthetic demonstration" : "uploaded";
-  if (precedent.confirmedCount === precedent.matchedCount) {
-    return `${precedent.confirmedCount} of ${precedent.matchedCount} comparable ${source} rerun${precedent.matchedCount === 1 ? "" : "s"} confirmed that this type of controlled change reduced a similar mismatch.`;
-  }
-  if (precedent.confirmedCount > precedent.rejectedCount) {
-    return `${precedent.confirmedCount} of ${precedent.matchedCount} comparable ${source} reruns confirmed the expected response. The history supports testing this change, but the result has not been consistent in every case.`;
-  }
-  if (precedent.confirmedCount > 0) {
-    return `${precedent.confirmedCount} of ${precedent.matchedCount} comparable ${source} reruns confirmed the expected response. The prior results are mixed, so they do not strongly support this change.`;
-  }
-  return `None of the ${precedent.matchedCount} comparable ${source} reruns confirmed the expected response. The current recommendation therefore comes from the present case, not from successful prior cases.`;
+function prioritySummary(nextRun: ControlledNextRun) {
+  if (nextRun.stage === "Evidence gate") return "Required before any CFD model change.";
+  if (nextRun.stage === "Numerical verification" && nextRun.evidenceStrength === "High") return "Strong controlled result; close numerical convergence before changing physics.";
+  if (nextRun.stage === "Numerical verification") return "Check numerical independence before changing physics.";
+  if (nextRun.stage === "Physics sensitivity") return "Highest-supported unresolved one-variable test.";
+  return "No resolved mismatch remains; test the nearest operating point.";
 }
 
-function precedentEffectSummary(precedent: ControlledNextRun["precedent"]) {
-  const effects = precedent.metricImprovements.map((item) => `${item.label} error ${item.meanReductionPct >= 0 ? "fell" : "rose"} by ${Math.abs(item.meanReductionPct).toFixed(1)}%`);
-  if (precedent.meanRuntimeMultiplier !== null) {
-    const changePct = 100 * Math.abs(precedent.meanRuntimeMultiplier - 1);
-    effects.push(precedent.meanRuntimeMultiplier >= 1
-      ? `runtime increased by ${changePct.toFixed(0)}% (×${precedent.meanRuntimeMultiplier.toFixed(2)})`
-      : `runtime decreased by ${changePct.toFixed(0)}% (×${precedent.meanRuntimeMultiplier.toFixed(2)})`);
+function outcomeRule(nextRun: ControlledNextRun, outcome: "confirm" | "reject" | "unclear") {
+  if (outcome === "confirm") {
+    const reduction = nextRun.confirmationCriterion.match(/at least ([\d.]+)%/i)?.[1];
+    return reduction ? `Error ↓ ≥${reduction}%; no new mismatch.` : conciseEvidence(nextRun.confirmationCriterion);
   }
-  return joinPhrases(effects);
+  if (outcome === "reject") {
+    const response = nextRun.rejectionCriterion.match(/below ([\d.]+)%/i)?.[1];
+    const worsening = nextRun.rejectionCriterion.match(/worsens by at least ([\d.]+)%/i)?.[1];
+    return response && worsening ? `Response <${response}%, error ↑ ≥${worsening}%, or new mismatch.` : conciseEvidence(nextRun.rejectionCriterion);
+  }
+  return "Neither rule is met.";
+}
+
+function outcomeAction(nextRun: ControlledNextRun, outcome: "confirm" | "reject" | "unclear") {
+  if (outcome === "unclear") return "Repeat with a larger one-variable change.";
+  if (nextRun.stage === "Evidence gate") return outcome === "confirm" ? "Reanalyze the case." : "Repair the evidence.";
+  if (outcome === "reject") return "Test the next cause.";
+  if (nextRun.stage === "Numerical verification") return "Finish convergence.";
+  if (nextRun.stage === "Physics sensitivity") return "Keep the setting; test the next cause.";
+  return "Add the next operating point.";
 }
 
 type AnalysisInputSummary = {
@@ -372,8 +384,6 @@ function EngineeringDecisionPanel({
   selectedCaseName,
   selectedAnalysisInput,
   planningCaseName,
-  planningAnalysisInput,
-  sharedCaseFamilyPlan,
   publishedSourceCount,
   publishedValidation,
   onEdit,
@@ -388,8 +398,6 @@ function EngineeringDecisionPanel({
   selectedCaseName: string;
   selectedAnalysisInput: AnalysisInputSummary;
   planningCaseName: string;
-  planningAnalysisInput: AnalysisInputSummary;
-  sharedCaseFamilyPlan: boolean;
   publishedSourceCount: number;
   publishedValidation: typeof PUBLISHED_VALIDATION_SUMMARY;
   onEdit: () => void;
@@ -398,42 +406,39 @@ function EngineeringDecisionPanel({
   onViewHistory: (() => void) | null;
 }) {
   const precedent = nextRun.precedent;
-  const effectSummary = precedentEffectSummary(precedent);
   const isDemo = selectedAnalysisInput.source === "demo";
   const planUsesDifferentCase = selectedCaseName !== planningCaseName;
   const ledger = nextRun.reasoningLedger;
   return <section className={`engineering-decision-card decision-${summary.tone}${isDemo ? " decision-demo" : ""}`} aria-label="Engineering decision">
     <div className="decision-quality" aria-label={`Decision quality ${decisionQuality.score} out of ${decisionQuality.maximumScore}`}>
       <div className="decision-quality-score"><span>Decision quality</span><strong>{decisionQuality.score}<small>/{decisionQuality.maximumScore}</small></strong></div>
-      <div className="decision-quality-copy"><strong>{decisionQuality.label}</strong><p>{decisionQuality.explanation}</p><small>Evidence-completeness index, not a probability of success.</small></div>
+      <div className="decision-quality-copy"><strong>{decisionQuality.label}</strong><small>{isDemo ? "Generated data; not real-engine evidence." : decisionQuality.score >= 4 ? "Enough evidence to act; engineering review still required." : "Useful next test; evidence is incomplete."}</small></div>
       <div className="decision-quality-scale" aria-hidden="true">{Array.from({ length: decisionQuality.maximumScore }, (_, index) => <i key={index} className={index < decisionQuality.score ? "filled" : ""} />)}</div>
     </div>
     <header className="engineering-decision-heading">
       <div><span>Engineering decision</span><strong>{summary.label}</strong></div>
       <h2><span>{summary.lead}</span> {summary.title}</h2>
       {summary.detail && <p className="decision-detail">{summary.detail}</p>}
-      <p className="decision-meaning"><strong>What this means:</strong> {summary.meaning}</p>
+      <p className="decision-meaning">{summary.meaning}</p>
     </header>
-    {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Last controlled run: {nextRun.latestControlledResult.status}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{nextRun.latestControlledResult.detail}</p></div>}
-    <div className="decision-scope">
-      <strong>{sharedCaseFamilyPlan ? "Shared case-family plan" : "Single-case plan"}</strong>
-      <span>The diagnosis or rerun result above comes from <b>{selectedCaseName}</b>. The next-run plan below {sharedCaseFamilyPlan ? `is shared across its controlled reruns and currently starts from ${planningCaseName}` : `starts from ${planningCaseName}`}.</span>
-    </div>
+    {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Latest family result: {nextRun.latestControlledResult.status}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{conciseEvidence(nextRun.latestControlledResult.detail)}</p></div>}
+    {planUsesDifferentCase && <div className="decision-scope">
+      <strong>Shared family plan</strong>
+      <span>Next run starts from <b>{planningCaseName}</b> · selected result: {selectedCaseName}.</span>
+    </div>}
     <section className="decision-reasoning" aria-label="Why Caevera recommends this run">
       <div className="decision-reasoning-heading">
-        <span>Why Caevera recommends this run</span>
-        <h3>Leading explanation: {ledger.hypothesisTitle}</h3>
-        <p>This is the explanation Caevera is testing next. Supporting evidence raises its priority; weakening evidence lowers it; unknowns show what the current data cannot decide.</p>
+        <span>Why this test</span>
+        <h3>{ledger.hypothesisTitle}</h3>
       </div>
       <div className="reasoning-ledger">
-        <EvidenceLedgerColumn title="Supports" meaning="Observations that make this explanation more plausible." emptyMessage="No direct observation currently supports this explanation." items={ledger.supports} tone="supports" />
-        <EvidenceLedgerColumn title="Weakens or contradicts" meaning="Observations that argue against this explanation." emptyMessage="No loaded observation currently weakens this explanation. That is not proof that it is correct." items={ledger.weakens} tone="weakens" />
-        <EvidenceLedgerColumn title="Still unknown" meaning="Missing or unresolved evidence that prevents a causal conclusion." emptyMessage="No explicit unknown is recorded, but the controlled run is still required because the present evidence is not causal proof." items={ledger.unknowns} tone="unknowns" />
+        <EvidenceLedgerColumn title="For" emptyMessage="No direct support." items={ledger.supports} tone="supports" />
+        <EvidenceLedgerColumn title="Against" emptyMessage="None loaded. Not proof." items={ledger.weakens} tone="weakens" />
+        <EvidenceLedgerColumn title="Open" emptyMessage={openQuestion(nextRun)} items={ledger.unknowns} tone="unknowns" />
       </div>
       <div className="decision-priority">
-        <strong>Why this run comes first</strong>
-        <p>{nextRun.whyThisRunFirst}</p>
-        <small><b>{nextRun.stage}:</b> {stageMeaning(nextRun.stage)} <b>{nextRun.evidenceStrength} support:</b> {evidenceMeaning(nextRun.evidenceStrength)}</small>
+        <strong>Why first</strong>
+        <p>{prioritySummary(nextRun)}</p>
       </div>
     </section>
     <div className="decision-next-run">
@@ -445,31 +450,29 @@ function EngineeringDecisionPanel({
       <p><strong>Success looks like</strong><span>{nextRun.expectedOutcome}</span></p>
     </div>
     <section className="decision-outcomes" aria-label="How the result changes the plan">
-      <div><span>How this run changes the plan</span><p>After you upload the rerun, Caevera applies these rules to the targeted outputs. A numerical sequence closes as converged when its adjacent-level response is 2% or less.</p></div>
-      <div className="adaptive-branches">
-        <article className="branch-confirmed"><span>Confirmed</span><small>The expected result clearly occurred.</small><p><b>Caevera decides this when:</b> {nextRun.confirmationCriterion}</p><p><b>Then:</b> {nextRun.ifConfirmed}</p></article>
-        <article className="branch-rejected"><span>Rejected</span><small>The result moved the wrong way or did not respond.</small><p><b>Caevera decides this when:</b> {nextRun.rejectionCriterion}</p><p><b>Then:</b> {nextRun.ifRejected}</p></article>
-        <article className="branch-inconclusive"><span>Inconclusive</span><small>The result changed, but not enough to decide.</small><p><b>Caevera decides this when:</b> {nextRun.inconclusiveCriterion}</p><p><b>Then:</b> {nextRun.ifInconclusive}</p></article>
+      <div><span>After the run</span>{nextRun.stage === "Numerical verification" && <small>≤2% adjacent response = converged</small>}</div>
+      <div className="outcome-rules">
+        <article className="branch-confirmed"><strong>Confirm</strong><span>{outcomeRule(nextRun, "confirm")}</span><small>{outcomeAction(nextRun, "confirm")}</small></article>
+        <article className="branch-rejected"><strong>Reject</strong><span>{outcomeRule(nextRun, "reject")}</span><small>{outcomeAction(nextRun, "reject")}</small></article>
+        <article className="branch-inconclusive"><strong>Unclear</strong><span>{outcomeRule(nextRun, "unclear")}</span><small>{outcomeAction(nextRun, "unclear")}</small></article>
       </div>
     </section>
     <div className="decision-precedent" aria-label="Comparable controlled reruns">
       <span>What prior cases tell you</span>
       {precedent.matchedCount ? <>
-        <p><strong>{precedentConclusion(precedent)}</strong>{effectSummary ? ` Among confirmed cases, ${effectSummary}.` : ""}</p>
-        {isDemo && <small>This is a worked example, not evidence that a real engine case will respond the same way.</small>}
+        <p><strong>{precedent.confirmedCount}/{precedent.matchedCount} similar {precedent.level === "Demonstration" ? "demo" : "company"} reruns confirmed the response.</strong></p>
+        {isDemo && <small>Demo only; not real-engine evidence.</small>}
       </> : <>
-        <p><strong>No comparable controlled company run is loaded yet.</strong> This recommendation comes from the current case and the versioned engineering rules.</p>
+        <p><strong>No comparable company rerun.</strong> Current-case evidence only.</p>
       </>}
     </div>
-    <div className="decision-evidence">
-      <div><span>Evidence behind the score</span><small>{decisionQuality.score} of {decisionQuality.maximumScore} selected-case gates satisfied</small></div>
-      <p className="selected-data-source"><strong>Selected-case data:</strong> {selectedCaseName} recalculated from {selectedAnalysisInput.experimentName} ({selectedAnalysisInput.experimentSamples.toLocaleString()} experiment values) and {selectedAnalysisInput.cfdName} ({selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values), across {selectedAnalysisInput.probeCount} probes. Equal sample counts are expected for matched reruns; each case&apos;s pressure values are analyzed separately.</p>
-      {planUsesDifferentCase && <p className="planning-data-source"><strong>Family planning reference:</strong> {planningCaseName}, using {planningAnalysisInput.experimentSamples.toLocaleString()} experiment and {planningAnalysisInput.cfdSamples.toLocaleString()} CFD values. This is why the next-run section is intentionally the same on related rerun tabs.</p>}
-      <ul>
-        {decisionQuality.gates.map((gate) => <li key={gate.id} className={gate.satisfied ? "" : "evidence-missing"}><i>{gate.satisfied ? "✓" : "–"}</i><strong>{gate.label}</strong><small>{gate.result}</small></li>)}
-      </ul>
-      <p><strong>Method support, not case support:</strong> {publishedSourceCount} mapped engineering source{publishedSourceCount === 1 ? "" : "s"}; {publishedValidation.waveSpeedCases} published wave-speed checks; {publishedValidation.pressureFixtureCases} Zenodo pressure-record checks. These support the rule and analyzer, but do not add points about this engine.</p>
-    </div>
+    <details className="decision-evidence">
+      <summary>Why {decisionQuality.score}/{decisionQuality.maximumScore}?</summary>
+      <p className="selected-data-source"><strong>{selectedCaseName}</strong> · {selectedAnalysisInput.experimentSamples.toLocaleString()} experiment + {selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values · {selectedAnalysisInput.probeCount} probes</p>
+      {planUsesDifferentCase && <p className="planning-data-source"><strong>Plan reference:</strong> {planningCaseName}</p>}
+      <ul>{decisionQuality.gates.map((gate) => <li key={gate.id} className={gate.satisfied ? "" : "evidence-missing"}><i>{gate.satisfied ? "✓" : "–"}</i><strong>{gate.label}</strong><small>{gate.result}</small></li>)}</ul>
+      <p>{publishedSourceCount} engineering sources · {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} analyzer checks · method support only</p>
+    </details>
     {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
     <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit case</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View case history</button>}</div>
   </section>;
@@ -514,7 +517,6 @@ export default function Home() {
     const planningCfdMode = analyzeRdeProbeSet(planningCase.cfdSignals, planningCase.metadata.probePositionsDeg, planningCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: planningCase.metadata.maximumWaveCount, synchronizationConfirmed: planningCase.metadata.probeSynchronizationConfirmed });
     return buildCaseAssessment(planningCase.metadata, planningComparison.comparisons, planningTestMode, planningCfdMode, caseHistoryEvidence, relevantPrecedents);
   }, [planningCase, caseHistoryEvidence, precedentEvidence]);
-  const planningInput = summarizeAnalysisInput(planningCase);
   const activeAnalysisInput = summarizeAnalysisInput(activeCase);
   const activeCaseEvidence = activeCase?.relationship ? caseHistoryEvidence.find((item) => item.caseId === activeCase.id) ?? null : null;
   const decisionQuality = activeCase && assessment && planAssessment ? buildDecisionQuality({
@@ -556,7 +558,7 @@ export default function Home() {
     label: "Result of this rerun",
     lead: `${activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus) : "Comparison only"}:`,
     title: `${changeLabel(activeCase?.relationship?.changedVariable ?? "other")} response`,
-    detail: activeCaseEvidence.detail,
+    detail: conciseOutcomeDetail(activeCaseEvidence),
     meaning: activeCaseEvidence.controlled ? outcomeMeaning(activeCaseEvidence) : "This case changed more than one relevant input, so it cannot confirm or reject one explanation. Create a one-change rerun before using it to update the plan.",
     tone: activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus).toLowerCase() as DecisionSummary["tone"] : "neutral",
   } : {
@@ -845,7 +847,7 @@ export default function Home() {
         </section> : <>
           <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div><h1>{activeCase.metadata.name}</h1><p>{activeCase.relationship ? `Controlled ${changeLabel(activeCase.relationship.changedVariable).toLowerCase()} rerun of ${baselineCaseName ?? "the baseline"}` : `Baseline for ${caseHistoryEvidence.length} controlled rerun${caseHistoryEvidence.length === 1 ? "" : "s"}`} · deterministic local analysis</p></div>
 
-          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} planningAnalysisInput={planningInput} sharedCaseFamilyPlan={caseHistoryEvidence.length > 0} publishedSourceCount={likelySources.length} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
+          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} publishedSourceCount={likelySources.length} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
 
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
