@@ -409,71 +409,83 @@ function EngineeringDecisionPanel({
   const isDemo = selectedAnalysisInput.source === "demo";
   const planUsesDifferentCase = selectedCaseName !== planningCaseName;
   const ledger = nextRun.reasoningLedger;
+  const conclusionHeading = summary.label === "Result of this rerun" ? "What this rerun concluded" : "What this case shows";
+  const startingPointReason = summary.tone === "rejected"
+    ? "The selected change was rejected and is not carried forward."
+    : summary.tone === "inconclusive"
+      ? "The selected change was inconclusive and is not carried forward."
+      : "This is the latest confirmed setting.";
   return <section className={`engineering-decision-card decision-${summary.tone}${isDemo ? " decision-demo" : ""}`} aria-label="Engineering decision">
     <div className="decision-quality" aria-label={`Decision quality ${decisionQuality.score} out of ${decisionQuality.maximumScore}`}>
       <div className="decision-quality-score"><span>Decision quality</span><strong>{decisionQuality.score}<small>/{decisionQuality.maximumScore}</small></strong></div>
       <div className="decision-quality-copy"><strong>{decisionQuality.label}</strong><small>{isDemo ? "Generated data; not real-engine evidence." : decisionQuality.score >= 4 ? "Enough evidence to act; engineering review still required." : "Useful next test; evidence is incomplete."}</small></div>
       <div className="decision-quality-scale" aria-hidden="true">{Array.from({ length: decisionQuality.maximumScore }, (_, index) => <i key={index} className={index < decisionQuality.score ? "filled" : ""} />)}</div>
     </div>
-    <header className="engineering-decision-heading">
-      <div><span>Engineering decision</span><strong>{summary.label}</strong></div>
-      <h2><span>{summary.lead}</span> {summary.title}</h2>
-      {summary.detail && <p className="decision-detail">{summary.detail}</p>}
-      <p className="decision-meaning">{summary.meaning}</p>
-    </header>
-    {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Latest family result: {nextRun.latestControlledResult.status}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{conciseEvidence(nextRun.latestControlledResult.detail)}</p></div>}
-    {planUsesDifferentCase && <div className="decision-scope">
-      <strong>Shared family plan</strong>
-      <span>Next run starts from <b>{planningCaseName}</b> · selected result: {selectedCaseName}.</span>
-    </div>}
-    <section className="decision-reasoning" aria-label="Why Caevera recommends this run">
-      <div className="decision-reasoning-heading">
-        <span>Why this test</span>
-        <h3>{ledger.hypothesisTitle}</h3>
-      </div>
-      <div className="reasoning-ledger">
-        <EvidenceLedgerColumn title="For" emptyMessage="No direct support." items={ledger.supports} tone="supports" />
-        <EvidenceLedgerColumn title="Against" emptyMessage="None loaded. Not proof." items={ledger.weakens} tone="weakens" />
-        <EvidenceLedgerColumn title="Open" emptyMessage={openQuestion(nextRun)} items={ledger.unknowns} tone="unknowns" />
-      </div>
-      <div className="decision-priority">
-        <strong>Why first</strong>
-        <p>{prioritySummary(nextRun)}</p>
-      </div>
+    <section className="decision-block decision-conclusion-block" aria-labelledby="decision-conclusion-heading">
+      <div className="decision-block-heading"><b>1</b><h2 id="decision-conclusion-heading">{conclusionHeading}</h2></div>
+      <header className="engineering-decision-heading">
+        <div><span>{summary.label}</span></div>
+        <h3><span>{summary.lead}</span> {summary.title}</h3>
+        {summary.detail && <p className="decision-detail">{summary.detail}</p>}
+        <p className="decision-meaning">{summary.meaning}</p>
+      </header>
+      {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Latest family result: {nextRun.latestControlledResult.status}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{conciseEvidence(nextRun.latestControlledResult.detail)}</p></div>}
     </section>
-    <div className="decision-next-run">
-      <span>Do this next</span><h3>{nextRun.title}</h3>
-    </div>
-    <div className="next-run-action">
-      <p><strong>Change only this</strong><span>{nextRun.change}</span></p>
-      <p><strong>Keep fixed</strong><span>{nextRun.holdFixed.join(" · ")}</span></p>
-      <p><strong>Success looks like</strong><span>{nextRun.expectedOutcome}</span></p>
-    </div>
-    <section className="decision-outcomes" aria-label="How the result changes the plan">
-      <div><span>After the run</span>{nextRun.stage === "Numerical verification" && <small>≤2% adjacent response = converged</small>}</div>
-      <div className="outcome-rules">
-        <article className="branch-confirmed"><strong>Confirm</strong><span>{outcomeRule(nextRun, "confirm")}</span><small>{outcomeAction(nextRun, "confirm")}</small></article>
-        <article className="branch-rejected"><strong>Reject</strong><span>{outcomeRule(nextRun, "reject")}</span><small>{outcomeAction(nextRun, "reject")}</small></article>
-        <article className="branch-inconclusive"><strong>Unclear</strong><span>{outcomeRule(nextRun, "unclear")}</span><small>{outcomeAction(nextRun, "unclear")}</small></article>
+    <section className="decision-block decision-recommendation-block" aria-labelledby="decision-recommendation-heading">
+      <div className="decision-block-heading"><b>2</b><h2 id="decision-recommendation-heading">What to run next</h2></div>
+      {planUsesDifferentCase && <div className="decision-scope">
+        <strong>Starting point</strong>
+        <span>Use <b>{planningCaseName}</b>. {startingPointReason}</span>
+      </div>}
+      <div className="decision-next-run">
+        <span>Do this next</span><h3>{nextRun.title}</h3>
       </div>
+      <div className="next-run-action">
+        <p><strong>Change only this</strong><span>{nextRun.change}</span></p>
+        <p><strong>Keep fixed</strong><span>{nextRun.holdFixed.join(" · ")}</span></p>
+        <p><strong>Success looks like</strong><span>{nextRun.expectedOutcome}</span></p>
+      </div>
+      <section className="decision-reasoning" aria-label="Why Caevera recommends this run">
+        <div className="decision-reasoning-heading">
+          <span>Why this test</span>
+          <h3>{ledger.hypothesisTitle}</h3>
+        </div>
+        <div className="reasoning-ledger">
+          <EvidenceLedgerColumn title="For" emptyMessage="No direct support." items={ledger.supports} tone="supports" />
+          <EvidenceLedgerColumn title="Against" emptyMessage="None loaded. Not proof." items={ledger.weakens} tone="weakens" />
+          <EvidenceLedgerColumn title="Open" emptyMessage={openQuestion(nextRun)} items={ledger.unknowns} tone="unknowns" />
+        </div>
+        <div className="decision-priority">
+          <strong>Why first</strong>
+          <p>{prioritySummary(nextRun)}</p>
+        </div>
+      </section>
+      <section className="decision-outcomes" aria-label="How the result changes the plan">
+        <div><span>After the run</span>{nextRun.stage === "Numerical verification" && <small>≤2% adjacent response = converged</small>}</div>
+        <div className="outcome-rules">
+          <article className="branch-confirmed"><strong>Confirm</strong><span>{outcomeRule(nextRun, "confirm")}</span><small>{outcomeAction(nextRun, "confirm")}</small></article>
+          <article className="branch-rejected"><strong>Reject</strong><span>{outcomeRule(nextRun, "reject")}</span><small>{outcomeAction(nextRun, "reject")}</small></article>
+          <article className="branch-inconclusive"><strong>Unclear</strong><span>{outcomeRule(nextRun, "unclear")}</span><small>{outcomeAction(nextRun, "unclear")}</small></article>
+        </div>
+      </section>
+      <div className="decision-precedent" aria-label="Comparable controlled reruns">
+        <span>What prior cases tell you</span>
+        {precedent.matchedCount ? <>
+          <p><strong>{precedent.confirmedCount}/{precedent.matchedCount} similar {precedent.level === "Demonstration" ? "demo" : "company"} reruns confirmed the response.</strong></p>
+          {isDemo && <small>Demo only; not real-engine evidence.</small>}
+        </> : <>
+          <p><strong>No comparable company rerun.</strong> Current-case evidence only.</p>
+        </>}
+      </div>
+      <details className="decision-evidence">
+        <summary>Why {decisionQuality.score}/{decisionQuality.maximumScore}?</summary>
+        <p className="selected-data-source"><strong>{selectedCaseName}</strong> · {selectedAnalysisInput.experimentSamples.toLocaleString()} experiment + {selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values · {selectedAnalysisInput.probeCount} probes</p>
+        {planUsesDifferentCase && <p className="planning-data-source"><strong>Plan reference:</strong> {planningCaseName}</p>}
+        <ul>{decisionQuality.gates.map((gate) => <li key={gate.id} className={gate.satisfied ? "" : "evidence-missing"}><i>{gate.satisfied ? "✓" : "–"}</i><strong>{gate.label}</strong><small>{gate.result}</small></li>)}</ul>
+        <p>{publishedSourceCount} engineering sources · {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} analyzer checks · method support only</p>
+      </details>
+      {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
     </section>
-    <div className="decision-precedent" aria-label="Comparable controlled reruns">
-      <span>What prior cases tell you</span>
-      {precedent.matchedCount ? <>
-        <p><strong>{precedent.confirmedCount}/{precedent.matchedCount} similar {precedent.level === "Demonstration" ? "demo" : "company"} reruns confirmed the response.</strong></p>
-        {isDemo && <small>Demo only; not real-engine evidence.</small>}
-      </> : <>
-        <p><strong>No comparable company rerun.</strong> Current-case evidence only.</p>
-      </>}
-    </div>
-    <details className="decision-evidence">
-      <summary>Why {decisionQuality.score}/{decisionQuality.maximumScore}?</summary>
-      <p className="selected-data-source"><strong>{selectedCaseName}</strong> · {selectedAnalysisInput.experimentSamples.toLocaleString()} experiment + {selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values · {selectedAnalysisInput.probeCount} probes</p>
-      {planUsesDifferentCase && <p className="planning-data-source"><strong>Plan reference:</strong> {planningCaseName}</p>}
-      <ul>{decisionQuality.gates.map((gate) => <li key={gate.id} className={gate.satisfied ? "" : "evidence-missing"}><i>{gate.satisfied ? "✓" : "–"}</i><strong>{gate.label}</strong><small>{gate.result}</small></li>)}</ul>
-      <p>{publishedSourceCount} engineering sources · {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} analyzer checks · method support only</p>
-    </details>
-    {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
     <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit case</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View case history</button>}</div>
   </section>;
 }
