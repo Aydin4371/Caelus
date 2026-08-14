@@ -7,6 +7,7 @@ export type SensitivityVariable = "mesh" | "time-step" | "chemistry" | "inlet" |
 
 export type CaseRelationship = {
   baselineCaseId: string;
+  referenceCaseId?: string;
   changedVariable: SensitivityVariable;
   description: string;
 };

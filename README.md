@@ -53,6 +53,23 @@ discrepancy.
   does not display a percentage confidence until a real calibration dataset can
   support one.
 
+## v1.4 branch and provenance update
+
+- Every controlled rerun now records both its case-family baseline and the exact
+  starting case whose settings it inherited.
+- Rerun error reduction, response magnitude, new mismatches, and runtime change
+  are calculated against that starting case, not automatically against the
+  original baseline.
+- Confirmed or converged settings advance the accepted branch. Rejected and
+  inconclusive settings do not; the plan resumes from their recorded starting
+  case.
+- The recommendation card identifies the shared family plan, the accepted
+  starting case, and the unresolved evidence required by the active decision
+  rule.
+- Outcome limits are passed to the interface as structured numerical policy.
+  The interface no longer extracts thresholds or case conclusions from canned
+  strings.
+
 ## Version 1.0 product contract
 
 Each case requires:

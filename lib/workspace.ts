@@ -109,6 +109,7 @@ function validateCase(value: unknown, index: number): asserts value is AnalysisC
     const allowedChanges = ["mesh", "time-step", "chemistry", "inlet", "wall", "initialization", "unsteadiness", "other"];
     if (!isObject(value.relationship)
       || typeof value.relationship.baselineCaseId !== "string"
+      || value.relationship.referenceCaseId != null && typeof value.relationship.referenceCaseId !== "string"
       || !allowedChanges.includes(String(value.relationship.changedVariable))
       || typeof value.relationship.description !== "string") {
       throw new Error(`Case ${index + 1} has an invalid related-rerun definition.`);
@@ -149,6 +150,12 @@ export function deserializeWorkspace(text: string): WorkspaceState {
   for (const item of cases) {
     if (item.relationship && (!identifiers.has(item.relationship.baselineCaseId) || item.relationship.baselineCaseId === item.id)) {
       throw new Error(`Case ${item.metadata.name} links to an invalid baseline case.`);
+    }
+    if (item.relationship?.referenceCaseId) {
+      const reference = cases.find((candidate) => candidate.id === item.relationship?.referenceCaseId);
+      if (!reference || reference.id === item.id || reference.id !== item.relationship.baselineCaseId && reference.relationship?.baselineCaseId !== item.relationship.baselineCaseId) {
+        throw new Error(`Case ${item.metadata.name} links to an invalid starting case.`);
+      }
     }
   }
   const requestedActive = typeof parsed.state.activeCaseId === "string" ? parsed.state.activeCaseId : null;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildCaseDelta, buildCaseHistoryEvidence, summarizeCase } from "../lib/case-history.ts";
+import { buildCaseDelta, buildCaseHistoryEvidence, selectPlanningEvidence, summarizeCase } from "../lib/case-history.ts";
 import type { AnalysisCase, CaseMetadata } from "../lib/caevera-types.ts";
 import { buildCaseAssessment } from "../lib/diagnostics.ts";
 import { DIAGNOSTIC_SOURCES, SOURCE_IDS_BY_CAUSE } from "../lib/diagnostic-knowledge.ts";
@@ -262,10 +262,10 @@ test("case assessment connects validity, uncertainty, model inputs, and next run
   assert.ok(result.nextRun.reasoningLedger.supports.every((item) => item.state === "supports"));
   assert.ok(result.nextRun.reasoningLedger.weakens.every((item) => item.state === "weakens"));
   assert.ok(result.nextRun.reasoningLedger.unknowns.every((item) => item.state === "unknown" || item.state === "cannot-assess"));
-  assert.equal(
-    result.nextRun.reasoningLedger.supports.length + result.nextRun.reasoningLedger.weakens.length + result.nextRun.reasoningLedger.unknowns.length,
-    result.hypotheses[0].evidence.length,
-  );
+  assert.ok(result.nextRun.reasoningLedger.unknowns.length > 0, "an unresolved next-run requirement must be explicit");
+  assert.ok(result.nextRun.reasoningLedger.unknowns.some((item) => item.basis === "policy") || result.hypotheses[0].evidence.some((item) => item.state === "unknown" || item.state === "cannot-assess"));
+  assert.equal(result.nextRun.question.endsWith("?"), true);
+  assert.ok(result.nextRun.decisionPolicy.targetedMetricIds.length > 0);
   assert.equal(result.nextRun.latestControlledResult.status, "Awaiting result");
   assert.ok(result.coverage.some((item) => item.module === "Thermal" && item.status === "Not assessed"));
 });
@@ -334,6 +334,45 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   close(result.nextRun.precedent.meanRuntimeMultiplier ?? 0, 1.8, 1e-12, "precedent runtime multiplier");
   assert.equal(result.nextRun.precedent.runtimeCaseCount, 1);
   assert.ok(result.nextRun.precedent.metricImprovements.some((item) => item.metricId === "peak-pressure" && item.meanReductionPct > 0));
+});
+
+test("a rejected chained rerun resumes from the latest accepted case without reusing baseline error reduction", () => {
+  const demo = makeDemoProbeSignals();
+  const blend = (signals: Signal[], factor: number) => signals.map((signal, probe) => ({
+    ...signal,
+    pressure: signal.pressure.map((value, index) => value + factor * (demo.test[probe].pressure[index] - value)),
+  }));
+  const baseline: AnalysisCase = { id: "base", source: "demo", relationship: null, metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
+  const fineSignals = blend(demo.cfd, 0.95);
+  const fine: AnalysisCase = {
+    id: "fine",
+    source: "demo",
+    relationship: { baselineCaseId: baseline.id, referenceCaseId: baseline.id, changedVariable: "mesh", description: "First mesh refinement" },
+    metadata: { ...DEMO_METADATA, name: "Fine mesh", meshCells: 5_000_000, minimumCellSizeMm: 0.125, cellsPerInductionLength: 16, nearWallCellSizeMm: 0.05 },
+    testSignals: demo.test,
+    cfdSignals: fineSignals,
+  };
+  const wall: AnalysisCase = {
+    id: "wall",
+    source: "demo",
+    relationship: { baselineCaseId: baseline.id, referenceCaseId: fine.id, changedVariable: "wall", description: "Adjacent wall condition" },
+    metadata: { ...fine.metadata, name: "Wall bracket", wallBoundaryCondition: "Adiabatic" },
+    testSignals: demo.test,
+    cfdSignals: blend(fineSignals, 0.001),
+  };
+
+  const history = buildCaseHistoryEvidence([baseline, fine, wall], baseline.id);
+  assert.equal(history[0].sequenceStatus, "effect-confirmed");
+  assert.equal(history[1].referenceCaseId, fine.id);
+  assert.equal(history[1].sequenceStatus, "rejected");
+  assert.ok(Math.abs(history[1].errorReductionPct ?? 100) < 1, "wall outcome must be measured from the fine-mesh starting case");
+  assert.equal(selectPlanningEvidence(history, baseline.id)?.caseId, fine.id);
+
+  const fineSummary = summarizeCase(fine);
+  const plan = buildCaseAssessment(fine.metadata, compareProbeSets(fine.testSignals, fine.cfdSignals).comparisons, fineSummary.experiment, fineSummary.simulation, history);
+  assert.match(plan.nextRun.title, /mesh-convergence/i);
+  assert.match(plan.nextRun.change, /0\.125 mm/);
+  assert.ok(plan.nextRun.reasoningLedger.unknowns.some((item) => /convergence limit/i.test(item.observation)));
 });
 
 test("uploaded pressure arrays determine precedent effects instead of preset values", () => {

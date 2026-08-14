@@ -50,11 +50,12 @@ export type DiagnosticEvidence = {
   state: EvidenceState;
   strength: EvidenceStrength;
   observation: string;
-  basis: "case" | "case-history" | "literature";
+  basis: "case" | "case-history" | "literature" | "policy";
   sourceIds: string[];
 };
 
 export type CaseHistoryEvidence = {
+  baselineCaseId?: string;
   causeId: DiagnosticCauseId;
   changedVariable?: SensitivityVariable;
   state: "supports" | "weakens" | "unknown";
@@ -62,6 +63,8 @@ export type CaseHistoryEvidence = {
   caseId: string;
   caseName: string;
   caseSource?: "uploaded" | "demo";
+  referenceCaseId?: string;
+  referenceCaseName?: string;
   detail: string;
   controlled: boolean;
   targetedMetrics?: string[];
@@ -86,6 +89,7 @@ export type DiagnosticHypothesis = {
 };
 
 export type ControlledNextRun = {
+  question: string;
   title: string;
   change: string;
   reason: string;
@@ -114,6 +118,15 @@ export type ControlledNextRun = {
     supports: DiagnosticEvidence[];
     weakens: DiagnosticEvidence[];
     unknowns: DiagnosticEvidence[];
+  };
+  decisionPolicy: {
+    changedVariable: ControlledSensitivityVariable | null;
+    targetedMetricIds: string[];
+    confirmationErrorReductionPct: number | null;
+    minimumResponsePct: number | null;
+    convergenceResponsePct: number | null;
+    rejectionErrorWorseningPct: number | null;
+    requiresNoNewMismatch: boolean;
   };
 };
 
@@ -408,12 +421,20 @@ type CoreNextRun = Omit<ControlledNextRun,
   "stage" | "whyThisRunFirst" | "inconclusiveCriterion" | "ifConfirmed" | "ifRejected" | "ifInconclusive" | "latestControlledResult" | "precedent" | "reasoningLedger"
 >;
 
+function questionFor(causeId: DiagnosticCauseId) {
+  if (causeId === "case-validity") return "Are the experiment and CFD cases matched correctly?";
+  if (causeId === "data-quality") return "Is the pressure record reliable enough to diagnose the mismatch?";
+  if (causeId === "spatial-resolution") return "Is the mesh changing the CFD result?";
+  if (causeId === "chemistry-timescale") return "Is reaction timing or time integration changing the result?";
+  if (causeId === "inlet-boundary") return "Is the inlet model causing the mismatch?";
+  if (causeId === "wall-loss") return "Is the wall-loss model causing the mismatch?";
+  if (causeId === "initialization-mode") return "Is the starting method selecting the wrong wave mode?";
+  if (causeId === "missing-unsteadiness") return "Is the CFD missing measured inlet fluctuations?";
+  return "Does the current agreement hold at the next operating point?";
+}
+
 function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, latest?: CaseHistoryEvidence): CoreNextRun {
   const supporting = hypothesis.evidence.filter((item) => item.state === "supports");
-  const common = {
-    evidence: hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`),
-    evidenceStrength: supporting.some((item) => item.strength === "strong") ? "High" as const : supporting.length ? "Moderate" as const : "Exploratory" as const,
-  };
   const flowTimeStepReady = Number.isFinite(metadata.timeStepConvergencePct) && metadata.timeStepConvergencePct <= NUMERICAL_CONVERGENCE_RESPONSE_PCT
     || latest?.changedVariable === "time-step" && latest.sequenceStatus === "converged";
   const variableByCause: Partial<Record<DiagnosticCauseId, ControlledSensitivityVariable>> = {
@@ -424,7 +445,22 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
     "initialization-mode": "initialization",
     "missing-unsteadiness": "unsteadiness",
   };
-  const plannedRule = variableByCause[hypothesis.id] ? CONTROLLED_RERUN_RULES[variableByCause[hypothesis.id]!] : null;
+  const plannedVariable = variableByCause[hypothesis.id] ?? null;
+  const plannedRule = plannedVariable ? CONTROLLED_RERUN_RULES[plannedVariable] : null;
+  const common = {
+    question: questionFor(hypothesis.id),
+    evidence: hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`),
+    evidenceStrength: supporting.some((item) => item.strength === "strong") ? "High" as const : supporting.length ? "Moderate" as const : "Exploratory" as const,
+    decisionPolicy: {
+      changedVariable: plannedVariable,
+      targetedMetricIds: plannedRule?.targets ?? [],
+      confirmationErrorReductionPct: plannedRule ? CONFIRMATION_ERROR_REDUCTION_PCT : null,
+      minimumResponsePct: plannedRule?.minimumResponsePct ?? null,
+      convergenceResponsePct: plannedRule?.convergenceResponsePct ?? null,
+      rejectionErrorWorseningPct: plannedRule ? REJECTION_ERROR_WORSENING_PCT : null,
+      requiresNoNewMismatch: Boolean(plannedRule),
+    },
+  };
   const confirmationCriterion = `Mean targeted error falls by at least ${CONFIRMATION_ERROR_REDUCTION_PCT}% from the baseline and no new resolved mismatch appears.`;
   const rejectionCriterion = `The targeted response stays below ${plannedRule?.minimumResponsePct ?? 2}%, mean targeted error worsens by at least ${REJECTION_ERROR_WORSENING_PCT}%, or a new resolved mismatch appears.`;
 
@@ -671,7 +707,19 @@ function buildAdaptiveRunPlan(
   caseHistory: CaseHistoryEvidence[],
   precedentHistory: CaseHistoryEvidence[],
 ): ControlledNextRun {
-  const acceptedCase = [...caseHistory].reverse().find((item) => item.controlled && (item.sequenceStatus === "effect-confirmed" || item.sequenceStatus === "converged"));
+  const baselineCaseId = caseHistory.find((item) => item.baselineCaseId)?.baselineCaseId;
+  let acceptedCase: CaseHistoryEvidence | undefined;
+  if (baselineCaseId) {
+    let acceptedTipId = baselineCaseId;
+    for (const item of caseHistory) {
+      if (!item.controlled || item.referenceCaseId !== acceptedTipId) continue;
+      if (item.sequenceStatus !== "effect-confirmed" && item.sequenceStatus !== "converged") continue;
+      acceptedTipId = item.caseId;
+      acceptedCase = item;
+    }
+  } else {
+    acceptedCase = [...caseHistory].reverse().find((item) => item.controlled && (item.sequenceStatus === "effect-confirmed" || item.sequenceStatus === "converged"));
+  }
   const currentMetadata = acceptedCase?.caseMetadata ?? metadata;
   const gate = hypotheses.find((hypothesis) => stageFor(hypothesis.id) === "Evidence gate");
   const actionable = hypotheses.find((hypothesis) => {
@@ -702,9 +750,27 @@ function buildAdaptiveRunPlan(
   const strong = primary.evidence.filter((item) => item.state === "supports" && item.strength === "strong").length;
   const controlled = primary.evidence.filter((item) => item.state === "supports" && item.basis === "case-history").length;
   const evidenceGate = stageFor(primary.id) === "Evidence gate";
+  const directUnknowns = primary.evidence.filter((item) => item.state === "unknown" || item.state === "cannot-assess");
+  const policyUnknown: DiagnosticEvidence = {
+    state: "unknown",
+    strength: "strong",
+    basis: "policy",
+    sourceIds: [],
+    observation: core.decisionPolicy.convergenceResponsePct != null && latest?.sequenceStatus === "effect-confirmed"
+      ? `${latest.caseName} showed a response, but no adjacent level at or below the ${core.decisionPolicy.convergenceResponsePct.toFixed(1)}% convergence limit has been loaded.`
+      : core.decisionPolicy.changedVariable
+        ? `No decisive controlled ${core.decisionPolicy.changedVariable} result for this next step has been loaded.`
+        : evidenceGate
+          ? "The corrected evidence has not been loaded yet."
+          : "The next operating-point result has not been loaded yet.",
+  };
   const whyThisRunFirst = evidenceGate
-    ? `${primary.title} is a prerequisite. Caevera does not rank model changes until this evidence gate is resolved.`
-    : `${primary.title} is first because it has ${supporting} supporting observation${supporting === 1 ? "" : "s"}${strong ? `, including ${strong} strong` : ""}${controlled ? ` and ${controlled} from a controlled rerun` : ""}${precedent.matchedCount ? `. ${precedent.confirmedCount} of ${precedent.matchedCount} comparable loaded reruns confirmed this response` : ""}. Caevera ranks prerequisite gates, required repeats, unfinished sensitivities, controlled-rerun evidence, net supporting evidence, and then fewer unknowns.${alternative ? ` This places it ahead of ${alternative.title}.` : ""}`;
+    ? `${primary.title} blocks model changes until the listed evidence check passes.`
+    : latest?.sequenceStatus === "inconclusive"
+      ? `${latest.caseName} was inconclusive, so the same one-variable test must be resolved before another cause is changed.`
+      : latest?.sequenceStatus === "effect-confirmed" && core.decisionPolicy.convergenceResponsePct != null
+        ? `${latest.caseName} reduced mean targeted error by ${Math.abs(latest.errorReductionPct ?? 0).toFixed(1)}%, but numerical independence still requires an adjacent-level response at or below ${core.decisionPolicy.convergenceResponsePct.toFixed(1)}%.`
+        : `${supporting} supporting observation${supporting === 1 ? "" : "s"}${strong ? `, including ${strong} strong` : ""}${controlled ? ` and ${controlled} controlled-rerun result${controlled === 1 ? "" : "s"}` : ""} rank this test first${alternative ? ` ahead of ${alternative.title}` : ""}.`;
   return {
     ...core,
     stage: stageFor(primary.id),
@@ -722,7 +788,7 @@ function buildAdaptiveRunPlan(
       hypothesisTitle: primary.title,
       supports: primary.evidence.filter((item) => item.state === "supports"),
       weakens: primary.evidence.filter((item) => item.state === "weakens"),
-      unknowns: primary.evidence.filter((item) => item.state === "unknown" || item.state === "cannot-assess"),
+      unknowns: directUnknowns.length ? directUnknowns : [policyUnknown],
     },
   };
 }
