@@ -242,6 +242,14 @@ Caevera verifies the same geometry, operating point, probe layout, every
 experimental trace sample, and exactly one changed CFD group relative to that
 starting case. Otherwise the item remains a comparison only.
 
+For a new related rerun, the interface copies the selected starting case's
+complete metadata and reuses its exact experiment samples. The user supplies
+the declared CFD-setting change and the new CFD result. Caevera still verifies
+the saved data rather than trusting the selection. If verification fails, the
+case remains comparison-only and the evidence record lists each changed
+physical input, experiment-sample difference, missing declared setting change,
+or additional CFD setting group.
+
 Classification also uses the declared starting case. Targeted error reduction,
 CFD response, newly introduced mismatches, adjacent-level convergence, and
 runtime multiplier are calculated between the starting case and the rerun.
