@@ -349,7 +349,8 @@ function EngineeringDecisionPanel({
   const planUsesDifferentCase = selectedCaseName !== planningCaseName;
   const ledger = nextRun.reasoningLedger;
   const policy = nextRun.decisionPolicy;
-  const hasConvergencePolicy = policy.changedVariable != null && policy.convergenceResponsePct != null;
+  const isNumericalPolicy = policy.evaluationMode === "numerical-convergence" && policy.changedVariable != null && policy.convergenceResponsePct != null;
+  const isModelSensitivityPolicy = policy.evaluationMode === "model-sensitivity" && policy.changedVariable != null;
   const testedVariable = policy.changedVariable ? changeLabel(policy.changedVariable).toLowerCase() : "selected";
   const conclusionHeading = summary.label === "Result of this rerun" ? "What this rerun concluded" : "What this case shows";
   const startingPointReason = summary.tone === "rejected"
@@ -405,15 +406,21 @@ function EngineeringDecisionPanel({
         </div>
       </section>
       <section className="decision-outcomes" aria-label="How the result changes the plan">
-        <div><span>What the result will mean</span></div>
-        {hasConvergencePolicy ? <div className="outcome-rules outcome-rules-four">
-            <article className="branch-converged"><strong>Converged</strong><span>Compared with the starting level, the targeted outputs change by ≤{policy.convergenceResponsePct!.toFixed(1)}% and no new mismatch appears.</span><small>Carry the setting forward; test the next cause.</small></article>
-            <article className="branch-confirmed"><strong>{changeLabel(policy.changedVariable!)} still matters</strong><span>Targeted error falls by ≥{policy.confirmationErrorReductionPct!.toFixed(1)}%, but outputs still change by &gt;{policy.convergenceResponsePct!.toFixed(1)}% between levels.</span><small>Run the next {testedVariable} level from the accepted case.</small></article>
-            <article className="branch-rejected"><strong>Not supported</strong><span>The response is &lt;{policy.minimumResponsePct!.toFixed(1)}%, error worsens by ≥{policy.rejectionErrorWorseningPct!.toFixed(1)}%, or a new mismatch appears.</span><small>Do not carry the change forward; test the next cause.</small></article>
-            <article className="branch-inconclusive"><strong>Unclear</strong><span>None of the rules above is met.</span><small>Repeat with a larger one-variable change.</small></article>
-          </div> : <div className="outcome-rules">
-          <article className="branch-confirmed"><strong>Supports the cause</strong><span>{nextRun.confirmationCriterion}</span><small>{nextRun.ifConfirmed}</small></article>
-          <article className="branch-rejected"><strong>Does not support it</strong><span>{nextRun.rejectionCriterion}</span><small>{nextRun.ifRejected}</small></article>
+        <div><span>How this run will be judged</span></div>
+        {isNumericalPolicy ? <>
+          <div className="outcome-rules">
+            <article className="branch-converged"><strong>Converged</strong><span>Targeted CFD outputs change by ≤{policy.convergenceResponsePct!.toFixed(1)}% from the starting level.</span><small>Keep the new setting; continue the plan.</small></article>
+            <article className="branch-confirmed"><strong>{changeLabel(policy.changedVariable!)} still matters</strong><span>Targeted CFD outputs change by &gt;{policy.convergenceResponsePct!.toFixed(1)}% from the starting level.</span><small>Keep the new setting; run the next {testedVariable} level.</small></article>
+            <article className="branch-inconclusive"><strong>Cannot judge</strong><span>The levels cannot be compared or the targeted outputs are unavailable.</span><small>Fix the comparison and repeat this one-variable run.</small></article>
+          </div>
+          <p className="decision-agreement-note"><strong>Reported separately:</strong> whether agreement with the experiment improved, worsened, or created a new mismatch.</p>
+        </> : isModelSensitivityPolicy ? <div className="outcome-rules">
+          <article className="branch-confirmed"><strong>Supports the cause</strong><span>Mean targeted error falls by ≥{policy.confirmationErrorReductionPct!.toFixed(1)}% and no new mismatch appears.</span><small>Carry the change forward; continue the plan.</small></article>
+          <article className="branch-rejected"><strong>Does not support it</strong><span>Response is &lt;{policy.minimumResponsePct!.toFixed(1)}%, error worsens by ≥{policy.rejectionErrorWorseningPct!.toFixed(1)}%, or a new mismatch appears.</span><small>Return to the starting settings; test the next cause.</small></article>
+          <article className="branch-inconclusive"><strong>Unclear</strong><span>None of the rules above is met.</span><small>Repeat with a larger one-variable change or lower uncertainty.</small></article>
+        </div> : <div className="outcome-rules">
+          <article className="branch-confirmed"><strong>Passes</strong><span>{nextRun.confirmationCriterion}</span><small>{nextRun.ifConfirmed}</small></article>
+          <article className="branch-rejected"><strong>Does not pass</strong><span>{nextRun.rejectionCriterion}</span><small>{nextRun.ifRejected}</small></article>
           <article className="branch-inconclusive"><strong>Unclear</strong><span>{nextRun.inconclusiveCriterion}</span><small>{nextRun.ifInconclusive}</small></article>
         </div>}
       </section>
