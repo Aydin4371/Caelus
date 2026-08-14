@@ -27,6 +27,7 @@ export type RerunSequenceStatus = "effect-confirmed" | "converged" | "rejected" 
 export type PlanDisposition = "continue" | "advance" | "repeat" | "ignore";
 
 export type CaseHistoryEvidence = {
+  baselineCaseId: string;
   causeId: DiagnosticCauseId;
   changedVariable: SensitivityVariable;
   state: "supports" | "weakens" | "unknown";
@@ -36,6 +37,7 @@ export type CaseHistoryEvidence = {
   caseSource: AnalysisCase["source"];
   referenceCaseId: string;
   referenceCaseName: string;
+  changedSettings: (keyof CaseMetadata)[];
   caseMetadata: CaseMetadata;
   detail: string;
   controlled: boolean;
@@ -160,21 +162,36 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
   const baseline = cases.find((item) => item.id === baselineCaseId);
   if (!baseline) return [];
   const baselineSummary = summarizeCase(baseline);
+  const summaries = new Map<string, CaseSummary>([[baseline.id, baselineSummary]]);
+  const summaryFor = (item: AnalysisCase) => {
+    const existing = summaries.get(item.id);
+    if (existing) return existing;
+    const result = summarizeCase(item);
+    summaries.set(item.id, result);
+    return result;
+  };
   const previousControlled = new Map<ControlledSensitivityVariable, { item: AnalysisCase; summary: CaseSummary; evidence: CaseHistoryEvidence }>();
 
   return cases.filter((item) => item.relationship?.baselineCaseId === baselineCaseId).map((candidate) => {
     const relation = candidate.relationship!;
-    const changedSettings = changedCfdSettings(baseline.metadata, candidate.metadata);
     const variable = relation.changedVariable;
     const rule = variable === "other" ? null : CONTROLLED_RERUN_RULES[variable];
-    const physicalCaseMatches = samePhysicalCase(baseline, candidate);
+    const previous = variable === "other" ? undefined : previousControlled.get(variable);
+    const requestedReference = relation.referenceCaseId ? cases.find((item) => item.id === relation.referenceCaseId) : null;
+    const referenceCase = requestedReference ?? previous?.item ?? baseline;
+    const referenceSummary = summaryFor(referenceCase);
+    const changedSettings = changedCfdSettings(referenceCase.metadata, candidate.metadata);
+    const physicalCaseMatches = samePhysicalCase(referenceCase, candidate);
     const controlled = Boolean(rule)
+      && referenceCase.id !== candidate.id
+      && (referenceCase.id === baseline.id || referenceCase.relationship?.baselineCaseId === baseline.id)
       && physicalCaseMatches
       && changedSettings.length > 0
       && changedSettings.every((field) => GROUP_FIELDS[variable].includes(field));
     const fallbackCause = rule?.causeId ?? "validation-coverage";
 
     if (!controlled || !rule || variable === "other") return {
+      baselineCaseId: baseline.id,
       causeId: fallbackCause,
       changedVariable: variable,
       state: "unknown" as const,
@@ -182,8 +199,9 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       caseId: candidate.id,
       caseName: candidate.metadata.name,
       caseSource: candidate.source,
-      referenceCaseId: baseline.id,
-      referenceCaseName: baseline.metadata.name,
+      referenceCaseId: referenceCase.id,
+      referenceCaseName: referenceCase.metadata.name,
+      changedSettings,
       caseMetadata: candidate.metadata,
       controlled: false,
       targetedMetrics: [],
@@ -191,7 +209,7 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       responseMagnitudePct: null,
       incrementalResponsePct: null,
       metricErrorReductionPct: {},
-      baselineMismatchMetricIds: baselineSummary.assessment.metrics.filter((result) => result.tone === "review").map((result) => result.id),
+      baselineMismatchMetricIds: referenceSummary.assessment.metrics.filter((result) => result.tone === "review").map((result) => result.id),
       runtimeMultiplier: null,
       newMismatchMetricIds: [],
       sequenceStatus: "comparison-only" as const,
@@ -199,20 +217,19 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       detail: `Comparison only: ${physicalCaseMatches ? "the physical case matches" : "the physical case, experiment trace, or uncertainty definition changed"}; detected CFD setting changes: ${changedSettings.join(", ") || "none"}.`,
     };
 
-    const candidateSummary = summarizeCase(candidate);
-    const previous = previousControlled.get(variable);
-    const reference = previous?.summary ?? baselineSummary;
-    const targets = rule.targets.filter((id) => metric(baselineSummary, id) && metric(candidateSummary, id));
-    const pairedErrors = targets.map((id) => ({ id, base: metricError(metric(baselineSummary, id)), next: metricError(metric(candidateSummary, id)) })).filter(({ base, next }) => Number.isFinite(base) && Number.isFinite(next));
+    const candidateSummary = summaryFor(candidate);
+    const reference = referenceSummary;
+    const targets = rule.targets.filter((id) => metric(reference, id) && metric(candidateSummary, id));
+    const pairedErrors = targets.map((id) => ({ id, base: metricError(metric(reference, id)), next: metricError(metric(candidateSummary, id)) })).filter(({ base, next }) => Number.isFinite(base) && Number.isFinite(next));
     const baselineMean = mean(pairedErrors.map(({ base }) => base));
     const candidateMean = mean(pairedErrors.map(({ next }) => next));
     const errorReductionPct = Number.isFinite(baselineMean) && baselineMean > 1e-9 ? 100 * (baselineMean - candidateMean) / baselineMean : Number.NaN;
     const metricErrorReductionPct = Object.fromEntries(pairedErrors
       .map(({ id, base, next }) => [id, base > 1e-9 ? 100 * (base - next) / base : Number.NaN] as const)
       .filter(([, value]) => Number.isFinite(value)));
-    const responseMagnitudePct = mean(targets.map((id) => simulationResponse(metric(baselineSummary, id), metric(candidateSummary, id))));
+    const responseMagnitudePct = mean(targets.map((id) => simulationResponse(metric(reference, id), metric(candidateSummary, id))));
     const incrementalResponsePct = mean(targets.map((id) => simulationResponse(metric(reference, id), metric(candidateSummary, id))));
-    const newMismatches = newMismatchIds(baselineSummary, candidateSummary);
+    const newMismatches = newMismatchIds(reference, candidateSummary);
     const hasNewMismatch = newMismatches.length > 0;
     const numerical = rule.convergenceResponsePct !== null;
     const converged = numerical
@@ -257,6 +274,7 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
               : `${change} was inconclusive: mean targeted error changed by ${Number.isFinite(errorReductionPct) ? Math.abs(errorReductionPct).toFixed(1) : "an unresolvable amount"}% and did not meet a confirmation, rejection, or convergence rule.`;
 
     const evidence: CaseHistoryEvidence = {
+      baselineCaseId: baseline.id,
       causeId: rule.causeId,
       changedVariable: variable,
       state,
@@ -264,8 +282,9 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       caseId: candidate.id,
       caseName: candidate.metadata.name,
       caseSource: candidate.source,
-      referenceCaseId: reference.item.id,
-      referenceCaseName: reference.item.metadata.name,
+      referenceCaseId: referenceCase.id,
+      referenceCaseName: referenceCase.metadata.name,
+      changedSettings,
       caseMetadata: candidate.metadata,
       controlled: true,
       targetedMetrics: targets,
@@ -273,10 +292,10 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       responseMagnitudePct: Number.isFinite(responseMagnitudePct) ? responseMagnitudePct : null,
       incrementalResponsePct: Number.isFinite(incrementalResponsePct) ? incrementalResponsePct : null,
       metricErrorReductionPct,
-      baselineMismatchMetricIds: baselineSummary.assessment.metrics.filter((result) => result.tone === "review").map((result) => result.id),
+      baselineMismatchMetricIds: referenceSummary.assessment.metrics.filter((result) => result.tone === "review").map((result) => result.id),
       runtimeMultiplier: Number.isFinite(candidate.metadata.solverRuntimeHours) && candidate.metadata.solverRuntimeHours > 0
-        && Number.isFinite(baseline.metadata.solverRuntimeHours) && baseline.metadata.solverRuntimeHours > 0
-        ? candidate.metadata.solverRuntimeHours / baseline.metadata.solverRuntimeHours
+        && Number.isFinite(referenceCase.metadata.solverRuntimeHours) && referenceCase.metadata.solverRuntimeHours > 0
+        ? candidate.metadata.solverRuntimeHours / referenceCase.metadata.solverRuntimeHours
         : null,
       newMismatchMetricIds: newMismatches,
       sequenceStatus,
@@ -286,4 +305,16 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
     previousControlled.set(variable, { item: candidate, summary: candidateSummary, evidence });
     return evidence;
   });
+}
+
+export function selectPlanningEvidence(history: CaseHistoryEvidence[], baselineCaseId: string) {
+  let acceptedTipId = baselineCaseId;
+  let accepted: CaseHistoryEvidence | null = null;
+  for (const item of history) {
+    if (!item.controlled || item.referenceCaseId !== acceptedTipId) continue;
+    if (item.sequenceStatus !== "effect-confirmed" && item.sequenceStatus !== "converged") continue;
+    acceptedTipId = item.caseId;
+    accepted = item;
+  }
+  return accepted;
 }
