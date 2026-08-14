@@ -2,7 +2,7 @@
 
 ## Scope
 
-Version 1.3 analyzes matched RDE operating points using at least three
+Version 1.4 analyzes matched RDE operating points using at least three
 synchronized experimental pressure traces and matching CFD virtual probes. It
 asks:
 
@@ -228,16 +228,27 @@ The result prioritizes a sensitivity experiment. It is not causal inference.
 Caevera does not assign a numeric confidence or cause score. Each diagnostic
 observation is recorded as `supports`, `weakens`, `unknown`, or
 `cannot-assess`, with a strength and basis (`case`, `case-history`, or
-`literature`). Hypotheses are ordered deterministically: validity gates first,
+`literature`). A computed policy requirement may also appear with basis
+`policy`; it identifies the exact result still needed by the active decision
+rule. Hypotheses are ordered deterministically: validity gates first,
 then required repeats and unfinished sensitivities, controlled-rerun support,
 net supporting evidence, strong evidence, comparable-case precedent, and
 finally unresolved evidence.
 
-Every uploaded item is a case. A case may optionally identify an existing case
-as its baseline and record one changed CFD variable group. The relationship is
-used as diagnostic evidence only when Caevera verifies the same geometry,
-operating point, probe layout, every experimental trace sample, and exactly one
-changed CFD group. Otherwise the item remains a comparison only.
+Every uploaded item is a case. A related case identifies a case-family baseline,
+the exact starting case whose settings it inherited, and one changed CFD
+variable group. The relationship is used as diagnostic evidence only when
+Caevera verifies the same geometry, operating point, probe layout, every
+experimental trace sample, and exactly one changed CFD group relative to that
+starting case. Otherwise the item remains a comparison only.
+
+Classification also uses the declared starting case. Targeted error reduction,
+CFD response, newly introduced mismatches, adjacent-level convergence, and
+runtime multiplier are calculated between the starting case and the rerun.
+They are not copied from the family baseline. A confirmed or converged rerun
+advances the accepted branch only when it starts from the current accepted tip.
+A rejected or inconclusive rerun leaves that tip unchanged, so the next plan
+explicitly resumes from the last accepted settings.
 
 Primary literature provides traceable applicability context and identifies
 physically defensible sensitivity directions. It never proves that a paper's
@@ -330,7 +341,7 @@ analysis methods.
 - Adaptive outcome thresholds have not yet been calibrated against withheld
   paired experiment-CFD rerun histories.
 - Heat flux, wall temperature, thrust, optical diagnostics, species, and full
-  spatial fields are outside version 1.3.
+  spatial fields are outside version 1.4.
 - One operating point cannot establish a validation envelope.
 
 ## Evidence required for a research release
