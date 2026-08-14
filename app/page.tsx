@@ -79,7 +79,12 @@ function conciseOutcomeDetail(evidence: CaseHistoryEvidence) {
   if (evidence.state === "supports" && Number.isFinite(evidence.errorReductionPct)) return `Targeted error ↓ ${Math.abs(evidence.errorReductionPct!).toFixed(1)}%${evidence.newMismatchMetricIds?.length ? " · new mismatch found" : " · no new mismatch"}`;
   if (evidence.state === "weakens" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted response ${evidence.responseMagnitudePct!.toFixed(1)}% · rejected`;
   if (evidence.state === "unknown" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted response ${evidence.responseMagnitudePct!.toFixed(1)}% · inconclusive`;
-  return evidence.controlled ? evidence.detail.split(".")[0] : "Not a valid one-change comparison";
+  return evidence.controlled ? evidence.detail.split(".")[0] : evidence.relationshipIssues[0] ?? "The one-change relationship could not be verified";
+}
+
+function comparisonOnlyMeaning(evidence: CaseHistoryEvidence) {
+  const issues = evidence.relationshipIssues.length ? evidence.relationshipIssues.join(" ") : "The declared relationship could not be verified.";
+  return `Caevera did not use this rerun to update the plan. ${issues}`;
 }
 
 function evidenceBasisLabel(basis: DiagnosticEvidence["basis"]) {
@@ -503,6 +508,9 @@ export default function Home() {
   const waveformWithinLimit = correlation >= REVIEW_THRESHOLDS.minimumCorrelation;
   const caseSummaries = useMemo(() => cases.map(summarizeCase), [cases]);
   const baselineSummary = caseSummaries.find((summary) => summary.item.id === caseBaselineId) ?? caseSummaries[0] ?? null;
+  const draftReferenceCase = draftRelationship
+    ? cases.find((item) => item.id === (draftRelationship.referenceCaseId ?? draftRelationship.baselineCaseId)) ?? null
+    : null;
 
   const inputRows = activeCase ? [
     ["Geometry + probes", `${activeCase.metadata.annulusMeanDiameterMm.toFixed(1)} mm mean diameter · ${activeCase.metadata.probePositionsDeg.length} probes · modes 1–${activeCase.metadata.maximumWaveCount}`],
@@ -528,7 +536,7 @@ export default function Home() {
     lead: `${activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus) : "Comparison only"}:`,
     title: `${changeLabel(activeCase?.relationship?.changedVariable ?? "other")} response`,
     detail: conciseOutcomeDetail(activeCaseEvidence),
-    meaning: activeCaseEvidence.controlled ? outcomeMeaning(activeCaseEvidence) : "This case changed more than one relevant input, so it cannot confirm or reject one explanation. Create a one-change rerun before using it to update the plan.",
+    meaning: activeCaseEvidence.controlled ? outcomeMeaning(activeCaseEvidence) : comparisonOnlyMeaning(activeCaseEvidence),
     tone: activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus).toLowerCase() as DecisionSummary["tone"] : "neutral",
   } : {
     label: "Current diagnosis",
@@ -555,6 +563,47 @@ export default function Home() {
     setTestPending(null); setCfdPending(null); setError(""); setShowLoader(true);
   }
 
+  function inheritStartingCase(referenceCaseId: string, previousReferenceCaseId?: string) {
+    const reference = cases.find((item) => item.id === referenceCaseId);
+    if (!reference) return;
+    if (!editingCaseId) {
+      setDraft((current) => {
+        const inherited = cloneMetadata(reference.metadata);
+        const previousReference = cases.find((item) => item.id === previousReferenceCaseId);
+        const currentName = current.name.trim();
+        const previousDefaultName = previousReference ? `${previousReference.metadata.name} rerun` : "";
+        inherited.name = !currentName || currentName === previousDefaultName
+          ? `${reference.metadata.name} rerun`
+          : current.name;
+        return inherited;
+      });
+    }
+    setTestPending(null);
+    setCfdPending(null);
+    setError("");
+  }
+
+  function chooseCaseFamily(baselineCaseId: string) {
+    if (!baselineCaseId) {
+      setDraftRelationship(null);
+      setTestPending(null);
+      setCfdPending(null);
+      return;
+    }
+    setDraftRelationship({
+      baselineCaseId,
+      referenceCaseId: baselineCaseId,
+      changedVariable: draftRelationship?.changedVariable ?? "other",
+      description: draftRelationship?.description ?? "",
+    });
+    inheritStartingCase(baselineCaseId);
+  }
+
+  function chooseStartingCase(referenceCaseId: string) {
+    setDraftRelationship((current) => current ? { ...current, referenceCaseId } : null);
+    inheritStartingCase(referenceCaseId, draftRelationship?.referenceCaseId);
+  }
+
   function applyCase() {
     if (!draft.name.trim()) return setError("Give this operating point a name.");
     if (!draft.comparisonMatchConfirmed) return setError("Confirm that experiment and CFD use the same geometry, operating point, probe locations, and comparison window.");
@@ -569,12 +618,14 @@ export default function Home() {
     if (Number.isFinite(draft.solverRuntimeHours) && draft.solverRuntimeHours <= 0) return setError("Runtime must be positive when supplied.");
     const textFields = [draft.solver, draft.solverVersion, draft.dimensionality, draft.spatialScheme, draft.numericalFlux, draft.limiterFilter, draft.temporalScheme, draft.turbulenceModel, draft.combustionModel, draft.chemistryModel, draft.chemistryIntegrator, draft.wallBoundaryCondition, draft.inletBoundaryCondition, draft.outletBoundaryCondition, draft.initializationMethod];
     if (textFields.some((value) => !value.trim())) return setError("Complete every required CFD model-card field. Enter “None” where a limiter, turbulence model, or combustion model is not used.");
-    if ((testPending && !cfdPending) || (!testPending && cfdPending)) return setError("Choose both the experimental and CFD multi-probe files.");
     try {
       const editingCase = cases.find((item) => item.id === editingCaseId) ?? null;
-      const nextTest = testPending?.signals ?? editingCase?.testSignals;
+      const referenceId = draftRelationship?.referenceCaseId ?? draftRelationship?.baselineCaseId;
+      const referenceCase = referenceId ? cases.find((item) => item.id === referenceId) ?? null : null;
+      const nextTest = testPending?.signals ?? editingCase?.testSignals ?? referenceCase?.testSignals;
       const nextCfd = cfdPending?.signals ?? editingCase?.cfdSignals;
-      if (!nextTest || !nextCfd) return setError("Choose both the experimental and CFD multi-probe files.");
+      if (!nextTest) return setError("Upload the experimental multi-probe file for this baseline case.");
+      if (!nextCfd) return setError(draftRelationship ? "Upload the new CFD multi-probe result for this rerun." : "Upload the CFD multi-probe file for this case.");
       if (nextTest.length !== draft.probePositionsDeg.length || nextCfd.length !== draft.probePositionsDeg.length) return setError(`The files contain ${nextTest.length} experiment and ${nextCfd.length} CFD probes, but ${draft.probePositionsDeg.length} probe angles were entered.`);
       compareProbeSets(nextTest, nextCfd);
       analyzeRdeProbeSet(nextTest, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed, sensorBandwidthKHz: draft.experimentSensorBandwidthKHz, filterCutoffKHz: draft.experimentFilterCutoffKHz });
@@ -582,13 +633,11 @@ export default function Home() {
       const id = editingCaseId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       if (draftRelationship?.baselineCaseId === id) return setError("A case cannot be its own baseline.");
       if (draftRelationship) {
-        const referenceId = draftRelationship.referenceCaseId ?? draftRelationship.baselineCaseId;
-        const reference = cases.find((item) => item.id === referenceId);
-        if (!reference || reference.id !== draftRelationship.baselineCaseId && reference.relationship?.baselineCaseId !== draftRelationship.baselineCaseId) return setError("Choose a starting case from the selected case family.");
+        if (!referenceCase || referenceCase.id !== draftRelationship.baselineCaseId && referenceCase.relationship?.baselineCaseId !== draftRelationship.baselineCaseId) return setError("Choose a starting case from the selected case family.");
       }
-      const nextImports = testPending && cfdPending
-        ? { experiment: testPending.provenance, cfd: cfdPending.provenance }
-        : editingCase?.imports ?? null;
+      const experimentProvenance = testPending?.provenance ?? editingCase?.imports?.experiment ?? referenceCase?.imports?.experiment;
+      const cfdProvenance = cfdPending?.provenance ?? editingCase?.imports?.cfd;
+      const nextImports = experimentProvenance && cfdProvenance ? { experiment: experimentProvenance, cfd: cfdProvenance } : null;
       const nextRelationship = draftRelationship ? { ...draftRelationship, referenceCaseId: draftRelationship.referenceCaseId ?? draftRelationship.baselineCaseId } : null;
       const nextCase: AnalysisCase = { id, source: editingCase?.source ?? "uploaded", relationship: nextRelationship, metadata: cloneMetadata(draft), testSignals: nextTest, cfdSignals: nextCfd, imports: nextImports };
       setCases((current) => editingCaseId ? current.map((item) => item.id === editingCaseId ? nextCase : item) : [...current, nextCase]);
@@ -886,14 +935,14 @@ export default function Home() {
 
       <div className="form-section"><h3>Case + geometry</h3><div className="form-grid four"><label><span>Case name</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label><label><span>Mean diameter (mm)</span><input type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label><label><span>Diameter uncertainty (mm)</span><input type="number" step="0.01" value={numberValue(draft.annulusDiameterUncertaintyMm)} onChange={(event) => updateNumber("annulusDiameterUncertaintyMm", event.target.value)} /></label><label><span>Maximum expected waves</span><input type="number" min="1" max="12" value={numberValue(draft.maximumWaveCount)} onChange={(event) => updateNumber("maximumWaveCount", event.target.value)} /></label></div><label className="probe-angle-editor"><span>Probe angles (deg) · minimum 3, nonuniform preferred</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input key={index} type="number" aria-label={`Probe ${index + 1} angle`} placeholder={`P${index + 1}`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}<button type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: [...current.probePositionsDeg, Number.NaN] }))}>+ probe</button>{draft.probePositionsDeg.length > 3 && <button type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.slice(0, -1) }))}>Remove</button>}</div></label><label className="confirmation-check"><input type="checkbox" checked={draft.probeSynchronizationConfirmed} onChange={(event) => setDraft((current) => ({ ...current, probeSynchronizationConfirmed: event.target.checked }))} /><span>I confirm every pressure probe in each file uses one synchronized acquisition time base.</span></label><label className="confirmation-check"><input type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label></div>
 
-      {cases.length > 0 && <div className="form-section"><h3>Related rerun · optional</h3><p className="form-help">Choose the family baseline and the exact case whose accepted settings started this rerun. Caevera compares only the declared one-variable change.</p><div className="form-grid four">
-        <label><span>Case family baseline</span><select value={draftRelationship?.baselineCaseId ?? ""} onChange={(event) => setDraftRelationship(event.target.value ? { baselineCaseId: event.target.value, referenceCaseId: event.target.value, changedVariable: draftRelationship?.changedVariable ?? "other", description: draftRelationship?.description ?? "" } : null)}><option value="">Not a related rerun</option>{cases.filter((item) => item.id !== editingCaseId && !item.relationship).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
-        <label><span>Starting settings</span><select disabled={!draftRelationship} value={draftRelationship?.referenceCaseId ?? draftRelationship?.baselineCaseId ?? ""} onChange={(event) => setDraftRelationship((current) => current ? { ...current, referenceCaseId: event.target.value } : null)}>{draftRelationship && cases.filter((item) => item.id !== editingCaseId && (item.id === draftRelationship.baselineCaseId || item.relationship?.baselineCaseId === draftRelationship.baselineCaseId)).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
+      {cases.length > 0 && <div className="form-section"><h3>Related rerun · optional</h3><p className="form-help">Choose the family baseline and exact starting case. Caevera copies its settings and experiment samples so you only enter the declared CFD change and new CFD result.</p><div className="form-grid four">
+        <label><span>Case family baseline</span><select value={draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseCaseFamily(event.target.value)}><option value="">Not a related rerun</option>{cases.filter((item) => item.id !== editingCaseId && !item.relationship).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
+        <label><span>Starting settings</span><select disabled={!draftRelationship} value={draftRelationship?.referenceCaseId ?? draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseStartingCase(event.target.value)}>{draftRelationship && cases.filter((item) => item.id !== editingCaseId && (item.id === draftRelationship.baselineCaseId || item.relationship?.baselineCaseId === draftRelationship.baselineCaseId)).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
         <label><span>Single CFD change</span><select disabled={!draftRelationship} value={draftRelationship?.changedVariable ?? "other"} onChange={(event) => setDraftRelationship((current) => current ? { ...current, changedVariable: event.target.value as SensitivityVariable } : null)}><option value="mesh">Mesh / spatial method</option><option value="time-step">Time step / temporal method</option><option value="chemistry">Chemistry model</option><option value="inlet">Inlet treatment</option><option value="wall">Wall treatment</option><option value="initialization">Initialization</option><option value="unsteadiness">Measured unsteady forcing</option><option value="other">Other / comparison only</option></select></label>
         <label><span>Change description</span><input disabled={!draftRelationship} value={draftRelationship?.description ?? ""} onChange={(event) => setDraftRelationship((current) => current ? { ...current, description: event.target.value } : null)} placeholder="e.g. 50% front-cell refinement" /></label>
-      </div></div>}
+      </div>{draftReferenceCase && !editingCaseId && <div className="rerun-inheritance"><strong>Starting case copied: {draftReferenceCase.metadata.name}</strong><span>Keep inherited inputs unchanged except the selected CFD group. Extra differences will be named and the case will remain comparison-only.</span></div>}</div>}
 
-      <div className="form-section"><div className="form-section-heading"><div><h3>Synchronized pressure probes</h3><p className="form-help">Map the actual headers in each file. Caevera converts the selected units to milliseconds and MPa, previews the converted values, and analyzes only after both mappings are confirmed.</p></div><button onClick={downloadExample}>Download example CSV</button></div><div className="file-mapper-grid"><PressureFileMapper key={`experiment-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}`} kind="Experiment" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.testSignals[0]?.name.split(" · ")[0] : undefined} onMapped={setTestPending} /><PressureFileMapper key={`cfd-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}`} kind="CFD" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.cfdSignals[0]?.name.split(" · ")[0] : undefined} onMapped={setCfdPending} /></div><div className="form-grid two measurement-chain"><label><span>Experiment sensor bandwidth (kHz)</span><input type="number" step="0.1" value={numberValue(draft.experimentSensorBandwidthKHz)} onChange={(event) => updateNumber("experimentSensorBandwidthKHz", event.target.value)} /></label><label><span>Experiment low-pass / anti-alias cutoff (kHz)</span><input type="number" step="0.1" value={numberValue(draft.experimentFilterCutoffKHz)} onChange={(event) => updateNumber("experimentFilterCutoffKHz", event.target.value)} /></label></div></div>
+      <div className="form-section"><div className="form-section-heading"><div><h3>Synchronized pressure probes</h3><p className="form-help">{draftReferenceCase && !editingCaseId ? "The exact experiment samples are inherited from the starting case. Upload and map only the new CFD result." : "Map the actual headers in each file. Caevera converts the selected units to milliseconds and MPa before analysis."}</p></div><button onClick={downloadExample}>Download example CSV</button></div><div className="file-mapper-grid">{draftReferenceCase && !editingCaseId ? <section className="inherited-experiment"><div><span>EXPERIMENT REUSED</span><strong>{draftReferenceCase.imports?.experiment.fileName ?? draftReferenceCase.testSignals[0]?.name.split(" · ")[0] ?? "Experiment data"}</strong></div><p>Exact samples inherited from <b>{draftReferenceCase.metadata.name}</b>. No experiment re-upload is needed.</p></section> : <PressureFileMapper key={`experiment-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}-${draftRelationship?.referenceCaseId ?? "standalone"}`} kind="Experiment" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.testSignals[0]?.name.split(" · ")[0] : undefined} onMapped={setTestPending} />}<PressureFileMapper key={`cfd-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}-${draftRelationship?.referenceCaseId ?? "standalone"}`} kind="CFD" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.cfdSignals[0]?.name.split(" · ")[0] : undefined} onMapped={setCfdPending} /></div><div className="form-grid two measurement-chain"><label><span>Experiment sensor bandwidth (kHz)</span><input type="number" step="0.1" value={numberValue(draft.experimentSensorBandwidthKHz)} onChange={(event) => updateNumber("experimentSensorBandwidthKHz", event.target.value)} /></label><label><span>Experiment low-pass / anti-alias cutoff (kHz)</span><input type="number" step="0.1" value={numberValue(draft.experimentFilterCutoffKHz)} onChange={(event) => updateNumber("experimentFilterCutoffKHz", event.target.value)} /></label></div></div>
 
       <div className="form-section"><h3>Operating conditions</h3><div className="form-grid four"><label><span>Inlet pressure (bar)</span><input type="number" value={numberValue(draft.inletPressureBar)} onChange={(event) => updateNumber("inletPressureBar", event.target.value)} /></label><label><span>Inlet temperature (K)</span><input type="number" value={numberValue(draft.inletTemperatureK)} onChange={(event) => updateNumber("inletTemperatureK", event.target.value)} /></label><label><span>Equivalence ratio</span><input type="number" step="0.01" value={numberValue(draft.equivalenceRatio)} onChange={(event) => updateNumber("equivalenceRatio", event.target.value)} /></label><label><span>Mass flow (kg/s)</span><input type="number" step="0.01" value={numberValue(draft.massFlowKgS)} onChange={(event) => updateNumber("massFlowKgS", event.target.value)} /></label></div></div>
 
