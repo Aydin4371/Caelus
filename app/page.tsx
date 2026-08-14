@@ -96,9 +96,9 @@ function conciseOutcomeDetail(evidence: CaseHistoryEvidence) {
 
 function conciseEvidence(observation: string) {
   const reduction = observation.match(/mean targeted error.*?fell by ([\d.]+)%, with no new resolved mismatch/i);
-  if (reduction) return `Targeted error ↓ ${reduction[1]}%; no new mismatch.`;
+  if (reduction) return `A one-variable rerun reduced the targeted error by ${reduction[1]}% without creating another mismatch.`;
   const rejected = observation.match(/targeted CFD outputs changed by only ([\d.]+)%, below the ([\d.]+)% response threshold/i);
-  if (rejected) return `${rejected[1]}% response; below ${rejected[2]}% threshold.`;
+  if (rejected) return `The changed setting moved the target by only ${rejected[1]}%, below the ${rejected[2]}% minimum.`;
   if (observation.length <= 115) return observation;
   const firstSentence = observation.match(/^(.{1,115}?[.!?])(?:\s|$)/)?.[1];
   return firstSentence ?? `${observation.slice(0, 112).trim()}…`;
@@ -133,20 +133,43 @@ function EvidenceLedgerColumn({
 
 function openQuestion(nextRun: ControlledNextRun) {
   const title = nextRun.title.toLowerCase();
-  if (title.includes("mesh-convergence")) return "Mesh convergence not complete.";
-  if (title.includes("time-step sequence")) return "Time-step convergence not complete.";
-  if (nextRun.stage === "Evidence gate") return "Evidence gate unresolved.";
-  if (nextRun.stage === "Physics sensitivity") return "Cause not yet isolated.";
-  if (nextRun.stage === "Validation expansion") return "Nearby operating point untested.";
-  return "Next controlled result not loaded.";
+  if (title.includes("mesh-convergence")) return "One finer mesh is still needed to show that the result no longer changes.";
+  if (title.includes("time-step sequence")) return "One smaller time step is still needed to show that the result no longer changes.";
+  if (nextRun.stage === "Evidence gate") return "The data pairing or record quality still has to be verified.";
+  if (nextRun.stage === "Physics sensitivity") return "The current data do not yet isolate this cause.";
+  if (nextRun.stage === "Validation expansion") return "The nearby operating point has not been tested.";
+  return "The next one-variable result has not been loaded.";
 }
 
 function prioritySummary(nextRun: ControlledNextRun) {
-  if (nextRun.stage === "Evidence gate") return "Required before any CFD model change.";
-  if (nextRun.stage === "Numerical verification" && nextRun.evidenceStrength === "High") return "Strong controlled result; close numerical convergence before changing physics.";
-  if (nextRun.stage === "Numerical verification") return "Check numerical independence before changing physics.";
-  if (nextRun.stage === "Physics sensitivity") return "Highest-supported unresolved one-variable test.";
-  return "No resolved mismatch remains; test the nearest operating point.";
+  const title = nextRun.title.toLowerCase();
+  if (nextRun.stage === "Evidence gate") return "Verify the data before changing any CFD setting.";
+  if (nextRun.stage === "Numerical verification" && nextRun.evidenceStrength === "High" && title.includes("mesh")) return "The mesh already changed the answer. Finish the mesh check before changing the physics.";
+  if (nextRun.stage === "Numerical verification" && nextRun.evidenceStrength === "High") return "The time step already changed the answer. Finish this check before changing the physics.";
+  if (nextRun.stage === "Numerical verification") return "Show that the answer is independent of this numerical setting before changing the physics.";
+  if (nextRun.stage === "Physics sensitivity") return "This is the best-supported remaining one-variable test.";
+  return "The current mismatch is resolved. Test the nearest operating point next.";
+}
+
+function hypothesisQuestion(causeId: string) {
+  if (causeId === "case-validity") return "Are the experiment and CFD cases matched correctly?";
+  if (causeId === "data-quality") return "Is the pressure record reliable enough to diagnose the mismatch?";
+  if (causeId === "spatial-resolution") return "Is the mesh changing the CFD result?";
+  if (causeId === "chemistry-timescale") return "Is reaction timing or time integration changing the result?";
+  if (causeId === "inlet-boundary") return "Is the inlet model causing the mismatch?";
+  if (causeId === "wall-loss") return "Is the wall-loss model causing the mismatch?";
+  if (causeId === "initialization-mode") return "Is the starting method selecting the wrong wave mode?";
+  if (causeId === "missing-unsteadiness") return "Is the CFD missing measured inlet fluctuations?";
+  return "Does the current agreement hold at the next operating point?";
+}
+
+function numericalOutcomeCopy(nextRun: ControlledNextRun) {
+  const convergence = nextRun.expectedOutcome.match(/at or below ([\d.]+)%/i)?.[1] ?? "2";
+  const improvement = nextRun.confirmationCriterion.match(/at least ([\d.]+)%/i)?.[1] ?? "25";
+  const response = nextRun.rejectionCriterion.match(/below ([\d.]+)%/i)?.[1] ?? "5";
+  const worsening = nextRun.rejectionCriterion.match(/worsens by at least ([\d.]+)%/i)?.[1] ?? "5";
+  const variable = nextRun.title.toLowerCase().includes("mesh") ? "mesh" : "time step";
+  return { convergence, improvement, response, worsening, variable };
 }
 
 function outcomeRule(nextRun: ControlledNextRun, outcome: "confirm" | "reject" | "unclear") {
@@ -447,32 +470,40 @@ function EngineeringDecisionPanel({
       </div>
       <section className="decision-reasoning" aria-label="Why Caevera recommends this run">
         <div className="decision-reasoning-heading">
-          <span>Why this test</span>
-          <h3>{ledger.hypothesisTitle}</h3>
+          <span>Question being tested</span>
+          <h3>{hypothesisQuestion(ledger.hypothesisId)}</h3>
         </div>
         <div className="reasoning-ledger">
-          <EvidenceLedgerColumn title="For" emptyMessage="No direct support." items={ledger.supports} tone="supports" />
-          <EvidenceLedgerColumn title="Against" emptyMessage="None loaded. Not proof." items={ledger.weakens} tone="weakens" />
-          <EvidenceLedgerColumn title="Open" emptyMessage={openQuestion(nextRun)} items={ledger.unknowns} tone="unknowns" />
+          <EvidenceLedgerColumn title="Evidence for it" emptyMessage="No direct supporting evidence." items={ledger.supports} tone="supports" />
+          <EvidenceLedgerColumn title="Evidence against it" emptyMessage="None loaded. That does not prove the cause." items={ledger.weakens} tone="weakens" />
+          <EvidenceLedgerColumn title="Still unknown" emptyMessage={openQuestion(nextRun)} items={ledger.unknowns} tone="unknowns" />
         </div>
         <div className="decision-priority">
-          <strong>Why first</strong>
+          <strong>Why it comes first</strong>
           <p>{prioritySummary(nextRun)}</p>
         </div>
       </section>
       <section className="decision-outcomes" aria-label="How the result changes the plan">
-        <div><span>After the run</span>{nextRun.stage === "Numerical verification" && <small>≤2% adjacent response = converged</small>}</div>
-        <div className="outcome-rules">
-          <article className="branch-confirmed"><strong>Confirm</strong><span>{outcomeRule(nextRun, "confirm")}</span><small>{outcomeAction(nextRun, "confirm")}</small></article>
-          <article className="branch-rejected"><strong>Reject</strong><span>{outcomeRule(nextRun, "reject")}</span><small>{outcomeAction(nextRun, "reject")}</small></article>
+        <div><span>What the result will mean</span></div>
+        {nextRun.stage === "Numerical verification" ? (() => {
+          const rule = numericalOutcomeCopy(nextRun);
+          return <div className="outcome-rules outcome-rules-four">
+            <article className="branch-converged"><strong>Converged</strong><span>Compared with the previous level, the targeted outputs change by ≤{rule.convergence}% and no new mismatch appears.</span><small>Stop refining; test the next cause.</small></article>
+            <article className="branch-confirmed"><strong>{rule.variable === "mesh" ? "Mesh still matters" : "Time step still matters"}</strong><span>Targeted error falls by ≥{rule.improvement}%, but outputs still change by &gt;{rule.convergence}% between levels.</span><small>Run the next {rule.variable} level.</small></article>
+            <article className="branch-rejected"><strong>Not supported</strong><span>It does not converge and the response is &lt;{rule.response}%, the error worsens by ≥{rule.worsening}%, or a new mismatch appears.</span><small>Stop this test; try the next cause.</small></article>
+            <article className="branch-inconclusive"><strong>Unclear</strong><span>None of the rules above is met.</span><small>Repeat with a larger one-variable change.</small></article>
+          </div>;
+        })() : <div className="outcome-rules">
+          <article className="branch-confirmed"><strong>Supports the cause</strong><span>{outcomeRule(nextRun, "confirm")}</span><small>{outcomeAction(nextRun, "confirm")}</small></article>
+          <article className="branch-rejected"><strong>Does not support it</strong><span>{outcomeRule(nextRun, "reject")}</span><small>{outcomeAction(nextRun, "reject")}</small></article>
           <article className="branch-inconclusive"><strong>Unclear</strong><span>{outcomeRule(nextRun, "unclear")}</span><small>{outcomeAction(nextRun, "unclear")}</small></article>
-        </div>
+        </div>}
       </section>
       <div className="decision-precedent" aria-label="Comparable controlled reruns">
         <span>What prior cases tell you</span>
         {precedent.matchedCount ? <>
-          <p><strong>{precedent.confirmedCount}/{precedent.matchedCount} similar {precedent.level === "Demonstration" ? "demo" : "company"} reruns confirmed the response.</strong></p>
-          {isDemo && <small>Demo only; not real-engine evidence.</small>}
+          <p><strong>{precedent.confirmedCount} of {precedent.matchedCount} similar {precedent.level === "Demonstration" ? "synthetic" : "company"} reruns showed the same response.</strong></p>
+          {isDemo && <small>Synthetic only. Do not treat this as engine evidence.</small>}
         </> : <>
           <p><strong>No comparable company rerun.</strong> Current-case evidence only.</p>
         </>}
