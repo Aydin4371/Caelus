@@ -126,6 +126,20 @@ function mean(values: number[]) {
   return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : Number.NaN;
 }
 
+function agreementDetail(errorReductionPct: number, newMismatchMetricIds: string[]) {
+  const agreement = !Number.isFinite(errorReductionPct)
+    ? "Experimental agreement could not be resolved from the targeted outputs."
+    : Math.abs(errorReductionPct) < 0.05
+      ? "Mean targeted experimental agreement was unchanged."
+      : errorReductionPct > 0
+        ? `Mean targeted experimental error fell by ${errorReductionPct.toFixed(1)}%.`
+        : `Mean targeted experimental error increased by ${Math.abs(errorReductionPct).toFixed(1)}%.`;
+  const mismatches = newMismatchMetricIds.length
+    ? ` A new resolved mismatch appeared in ${newMismatchMetricIds.join(", ")}.`
+    : " No new resolved mismatch appeared.";
+  return `${agreement}${mismatches}`;
+}
+
 export function summarizeCase(item: AnalysisCase): CaseSummary {
   const comparisons = compareProbeSets(item.testSignals, item.cfdSignals).comparisons;
   const modeOptions = { maximumWaveCount: item.metadata.maximumWaveCount, synchronizationConfirmed: item.metadata.probeSynchronizationConfirmed };
@@ -232,11 +246,9 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
     const newMismatches = newMismatchIds(reference, candidateSummary);
     const hasNewMismatch = newMismatches.length > 0;
     const numerical = rule.convergenceResponsePct !== null;
-    const converged = numerical
-      && Number.isFinite(incrementalResponsePct)
-      && incrementalResponsePct <= rule.convergenceResponsePct!
-      && !hasNewMismatch
-      && (!previous || previous.evidence.state === "supports" || errorReductionPct >= 0);
+    const numericalResponseAvailable = numerical && Number.isFinite(incrementalResponsePct);
+    const converged = numericalResponseAvailable && incrementalResponsePct <= rule.convergenceResponsePct!;
+    const numericalEffectRemains = numericalResponseAvailable && incrementalResponsePct > rule.convergenceResponsePct!;
     const confirmed = Number.isFinite(errorReductionPct)
       && errorReductionPct >= CONFIRMATION_ERROR_REDUCTION_PCT
       && !hasNewMismatch;
@@ -246,14 +258,20 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
     let state: CaseHistoryEvidence["state"] = "unknown";
     let sequenceStatus: RerunSequenceStatus = "inconclusive";
     let planDisposition: PlanDisposition = "repeat";
-    if (converged) {
-      state = "weakens";
-      sequenceStatus = "converged";
-      planDisposition = variable === "time-step" ? "continue" : "advance";
+    if (numerical) {
+      if (converged) {
+        state = "weakens";
+        sequenceStatus = "converged";
+        planDisposition = variable === "time-step" ? "continue" : "advance";
+      } else if (numericalEffectRemains) {
+        state = "supports";
+        sequenceStatus = "effect-confirmed";
+        planDisposition = "continue";
+      }
     } else if (confirmed) {
       state = "supports";
       sequenceStatus = "effect-confirmed";
-      planDisposition = numerical || variable === "initialization" ? "continue" : "advance";
+      planDisposition = variable === "initialization" ? "continue" : "advance";
     } else if (rejectedForResponse || rejectedForError || hasNewMismatch) {
       state = "weakens";
       sequenceStatus = "rejected";
@@ -261,10 +279,13 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
     }
 
     const change = relation.description || relation.changedVariable;
+    const agreement = agreementDetail(errorReductionPct, newMismatches);
     const detail = sequenceStatus === "converged"
-      ? `${change} completed the numerical check: the incremental targeted response was ${incrementalResponsePct.toFixed(1)}%, at or below the ${rule.convergenceResponsePct!.toFixed(1)}% convergence limit, with no new resolved mismatch.`
-      : sequenceStatus === "effect-confirmed"
-        ? `${change} produced the predicted response: mean targeted error across ${targets.join(", ")} fell by ${errorReductionPct.toFixed(1)}%, with no new resolved mismatch.`
+      ? `${change} completed the numerical check: targeted CFD outputs changed by ${incrementalResponsePct.toFixed(1)}%, at or below the ${rule.convergenceResponsePct!.toFixed(1)}% convergence limit. ${agreement}`
+      : sequenceStatus === "effect-confirmed" && numerical
+        ? `${change} did not complete numerical convergence: targeted CFD outputs changed by ${incrementalResponsePct.toFixed(1)}%, above the ${rule.convergenceResponsePct!.toFixed(1)}% limit. ${agreement}`
+        : sequenceStatus === "effect-confirmed"
+          ? `${change} produced the predicted response: mean targeted error across ${targets.join(", ")} fell by ${errorReductionPct.toFixed(1)}%, with no new resolved mismatch.`
         : sequenceStatus === "rejected" && hasNewMismatch
           ? `${change} was rejected because it created a new resolved mismatch in ${newMismatches.join(", ")}.`
           : sequenceStatus === "rejected" && rejectedForResponse

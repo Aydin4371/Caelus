@@ -261,20 +261,30 @@ heuristic; Caevera does not borrow a citation from an adjacent topic.
 For a verified one-variable rerun, Caevera evaluates the metrics predicted to
 respond to that variable:
 
-| Changed CFD group | Targeted outputs | Minimum response used for rejection |
+| Changed CFD group | Targeted outputs | Decision rule |
 |---|---|---:|
-| Mesh | Peak pressure, rise time, harmonics | 5% |
-| Time step | Frequency, rise time | 1% |
-| Chemistry | Frequency, amplitude, impulse | 2% |
-| Inlet | Mean pressure, frequency | 2% |
-| Wall | Amplitude, impulse | 2% |
+| Mesh | Peak pressure, rise time, harmonics | 2% adjacent-level convergence |
+| Time step | Frequency, rise time | 2% adjacent-level convergence |
+| Chemistry | Frequency, amplitude, impulse | 2% minimum response |
+| Inlet | Mean pressure, frequency | 2% minimum response |
+| Wall | Amplitude, impulse | 2% minimum response |
 | Initialization | Wave count, direction, transitions | categorical change |
-| Measured unsteady forcing | Cycle variability, frequency drift, phase jitter | 2% |
+| Measured unsteady forcing | Cycle variability, frequency drift, phase jitter | 2% minimum response |
 
-A rerun confirms the predicted signature when mean targeted error falls by at
-least 25%. It rejects that signature when the target response is below the
-listed threshold or targeted error worsens by at least 5%. Other outcomes are
-inconclusive. These are explicit prototype decision limits, not calibrated
+Numerical refinements and model sensitivities use different decision paths.
+For mesh and flow-time-step refinement, Caevera compares targeted CFD outputs
+between adjacent levels. A change at or below 2% completes that numerical
+sequence; a change above 2% means the solution remains sensitive and another
+level is required. Experimental agreement is reported separately. Improvement,
+worsening, or a new mismatch cannot by itself establish numerical convergence
+and does not cause a finer numerical setting to be discarded.
+
+For chemistry, inlet, wall, initialization, and measured-unsteadiness tests, a
+rerun supports the predicted signature when mean targeted error falls by at
+least 25% and no new resolved mismatch appears. It does not support the
+signature when the target response is below the listed threshold, targeted
+error worsens by at least 5%, or a new resolved mismatch appears. Other outcomes
+are inconclusive. These are explicit prototype decision limits, not calibrated
 probabilities and not proof that the associated model choice caused the original
 discrepancy.
 

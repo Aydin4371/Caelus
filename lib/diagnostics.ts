@@ -120,6 +120,7 @@ export type ControlledNextRun = {
     unknowns: DiagnosticEvidence[];
   };
   decisionPolicy: {
+    evaluationMode: "numerical-convergence" | "model-sensitivity" | "case-specific";
     changedVariable: ControlledSensitivityVariable | null;
     targetedMetricIds: string[];
     confirmationErrorReductionPct: number | null;
@@ -452,6 +453,11 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
     evidence: hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`),
     evidenceStrength: supporting.some((item) => item.strength === "strong") ? "High" as const : supporting.length ? "Moderate" as const : "Exploratory" as const,
     decisionPolicy: {
+      evaluationMode: plannedRule?.convergenceResponsePct != null
+        ? "numerical-convergence" as const
+        : plannedRule
+          ? "model-sensitivity" as const
+          : "case-specific" as const,
       changedVariable: plannedVariable,
       targetedMetricIds: plannedRule?.targets ?? [],
       confirmationErrorReductionPct: plannedRule ? CONFIRMATION_ERROR_REDUCTION_PCT : null,
@@ -461,8 +467,13 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
       requiresNoNewMismatch: Boolean(plannedRule),
     },
   };
-  const confirmationCriterion = `Mean targeted error falls by at least ${CONFIRMATION_ERROR_REDUCTION_PCT}% from the baseline and no new resolved mismatch appears.`;
-  const rejectionCriterion = `The targeted response stays below ${plannedRule?.minimumResponsePct ?? 2}%, mean targeted error worsens by at least ${REJECTION_ERROR_WORSENING_PCT}%, or a new resolved mismatch appears.`;
+  const numericalLimit = plannedRule?.convergenceResponsePct;
+  const confirmationCriterion = numericalLimit != null
+    ? `Targeted CFD outputs change by at most ${numericalLimit}% from the adjacent starting level.`
+    : `Mean targeted error falls by at least ${CONFIRMATION_ERROR_REDUCTION_PCT}% from the starting case and no new resolved mismatch appears.`;
+  const rejectionCriterion = numericalLimit != null
+    ? `Targeted CFD outputs change by more than ${numericalLimit}%; keep the new numerical setting and run the next adjacent level.`
+    : `The targeted response stays below ${plannedRule?.minimumResponsePct ?? 2}%, mean targeted error worsens by at least ${REJECTION_ERROR_WORSENING_PCT}%, or a new resolved mismatch appears.`;
 
   if (hypothesis.id === "case-validity") return {
     ...common,
@@ -775,12 +786,18 @@ function buildAdaptiveRunPlan(
     ...core,
     stage: stageFor(primary.id),
     whyThisRunFirst,
-    inconclusiveCriterion: `The result reaches neither ${CONFIRMATION_ERROR_REDUCTION_PCT}% mean error reduction nor a rejection rule, and it does not reach the ${NUMERICAL_CONVERGENCE_RESPONSE_PCT}% adjacent-level convergence limit when that limit applies.`,
+    inconclusiveCriterion: core.decisionPolicy.evaluationMode === "numerical-convergence"
+      ? "The adjacent levels cannot be compared or the targeted CFD outputs are unavailable."
+      : `The result reaches neither ${CONFIRMATION_ERROR_REDUCTION_PCT}% mean error reduction nor a rejection rule.`,
     ifConfirmed: confirmationBranch(primary.id),
-    ifRejected: evidenceGate
+    ifRejected: core.decisionPolicy.evaluationMode === "numerical-convergence"
+      ? `Keep the new ${core.decisionPolicy.changedVariable ?? "numerical"} setting and run the next adjacent level; report experimental agreement separately.`
+      : evidenceGate
       ? "Keep the comparison blocked and repair the unresolved evidence before changing CFD."
       : `${core.alternativeHypothesis}${alternative ? ` The next ranked hypothesis is ${alternative.title}.` : ""}`,
-    ifInconclusive: "Increase the controlled perturbation or reduce the relevant uncertainty, then repeat without changing additional model settings.",
+    ifInconclusive: core.decisionPolicy.evaluationMode === "numerical-convergence"
+      ? "Repair the adjacent-level comparison or restore the unavailable targeted outputs, then repeat the same one-variable numerical run."
+      : "Increase the controlled perturbation or reduce the relevant uncertainty, then repeat without changing additional model settings.",
     latestControlledResult: latestControlledResult(caseHistory, primary.id),
     precedent,
     reasoningLedger: {

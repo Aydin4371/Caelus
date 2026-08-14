@@ -53,7 +53,7 @@ discrepancy.
   does not display a percentage confidence until a real calibration dataset can
   support one.
 
-## v1.4 branch and provenance update
+## v1.4.1 branch, provenance, and outcome-policy update
 
 - Every controlled rerun now records both its case-family baseline and the exact
   starting case whose settings it inherited.
@@ -69,6 +69,13 @@ discrepancy.
 - Outcome limits are passed to the interface as structured numerical policy.
   The interface no longer extracts thresholds or case conclusions from canned
   strings.
+- Numerical refinement is now judged only by adjacent-level CFD change. Whether
+  agreement with experiment improved, worsened, or created another mismatch is
+  calculated and reported separately rather than being mistaken for mesh or
+  time-step convergence.
+- The outcome panel selects a general rule set from the recommended variable:
+  numerical convergence for mesh/time step, model-sensitivity evidence for
+  physics changes, and case-specific pass/fail criteria for evidence gates.
 
 ## Version 1.0 product contract
 

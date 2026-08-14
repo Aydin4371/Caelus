@@ -326,6 +326,10 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   assert.match(result.nextRun.change, /0\.125 mm/, "the next run must start from the accepted fine mesh, not stale baseline metadata");
   assert.equal(result.nextRun.latestControlledResult.status, "Confirmed");
   assert.equal(result.nextRun.latestControlledResult.caseName, "Fine mesh");
+  assert.equal(result.nextRun.decisionPolicy.evaluationMode, "numerical-convergence");
+  assert.match(result.nextRun.confirmationCriterion, /at most 2%/i);
+  assert.match(result.nextRun.rejectionCriterion, /more than 2%/i);
+  assert.match(result.nextRun.inconclusiveCriterion, /adjacent levels cannot be compared/i);
   assert.equal(result.nextRun.precedent.level, "Demonstration");
   assert.equal(result.nextRun.precedent.matchedCount, 1);
   assert.equal(result.nextRun.precedent.confirmedCount, 1);
@@ -334,6 +338,40 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   close(result.nextRun.precedent.meanRuntimeMultiplier ?? 0, 1.8, 1e-12, "precedent runtime multiplier");
   assert.equal(result.nextRun.precedent.runtimeCaseCount, 1);
   assert.ok(result.nextRun.precedent.metricImprovements.some((item) => item.metricId === "peak-pressure" && item.meanReductionPct > 0));
+});
+
+test("numerical convergence stays separate from experiment agreement", () => {
+  const demo = makeDemoProbeSignals();
+  const blend = (factor: number) => demo.cfd.map((signal, probe) => ({
+    ...signal,
+    pressure: signal.pressure.map((value, index) => value + factor * (demo.test[probe].pressure[index] - value)),
+  }));
+  const baseline: AnalysisCase = { id: "base", source: "demo", relationship: null, metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
+  const fine: AnalysisCase = {
+    id: "fine",
+    source: "demo",
+    relationship: { baselineCaseId: baseline.id, referenceCaseId: baseline.id, changedVariable: "mesh", description: "First mesh refinement" },
+    metadata: { ...DEMO_METADATA, name: "Fine mesh", meshCells: 5_000_000, minimumCellSizeMm: 0.125, cellsPerInductionLength: 16, nearWallCellSizeMm: 0.05 },
+    testSignals: demo.test,
+    cfdSignals: blend(0.95),
+  };
+  const finer: AnalysisCase = {
+    id: "finer",
+    source: "demo",
+    relationship: { baselineCaseId: baseline.id, referenceCaseId: fine.id, changedVariable: "mesh", description: "Second mesh refinement" },
+    metadata: { ...fine.metadata, name: "Finer mesh", meshCells: 10_000_000, minimumCellSizeMm: 0.0625, cellsPerInductionLength: 32, nearWallCellSizeMm: 0.025 },
+    testSignals: demo.test,
+    cfdSignals: blend(0.55),
+  };
+
+  const history = buildCaseHistoryEvidence([baseline, fine, finer], baseline.id);
+  assert.ok((history[1].incrementalResponsePct ?? 0) > 2, "the adjacent mesh response must remain above the convergence limit");
+  assert.ok((history[1].errorReductionPct ?? 0) < -5, "agreement must worsen for this regression case");
+  assert.equal(history[1].sequenceStatus, "effect-confirmed", "worse agreement must not be mistaken for mesh independence");
+  assert.equal(history[1].planDisposition, "continue");
+  assert.match(history[1].detail, /did not complete numerical convergence/i);
+  assert.match(history[1].detail, /experimental error increased/i);
+  assert.equal(selectPlanningEvidence(history, baseline.id)?.caseId, finer.id, "the finer numerical setting remains the accepted starting point");
 });
 
 test("a rejected chained rerun resumes from the latest accepted case without reusing baseline error reduction", () => {
@@ -456,7 +494,7 @@ test("adaptive plan exposes rejected and inconclusive controlled outcomes", () =
   assert.match(rejected.nextRun.ifRejected, /next|repair|keep/i);
   assert.equal(inconclusive.nextRun.latestControlledResult.status, "Inconclusive");
   assert.match(inconclusive.nextRun.title, /repeat the mesh test/i);
-  assert.match(inconclusive.nextRun.ifInconclusive, /perturbation|uncertainty/i);
+  assert.match(inconclusive.nextRun.ifInconclusive, /adjacent-level|unavailable/i);
 });
 
 test("a related case is diagnostic only when every experiment sample and one CFD group match", () => {
@@ -539,11 +577,16 @@ test("a second numerical level below two percent closes mesh convergence and adv
 
 test("the displayed rerun criteria match the classifier thresholds", () => {
   const demo = makeDemoProbeSignals();
-  const result = buildCaseAssessment(DEMO_METADATA, compareProbeSets(demo.test, demo.cfd).comparisons, analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82), analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82));
+  const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
+  const experiment = analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82);
+  const simulation = analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82);
+  const result = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation);
   assert.match(result.nextRun.confirmationCriterion, /25%/);
   assert.match(result.nextRun.confirmationCriterion, /no new resolved mismatch/i);
   assert.match(result.nextRun.rejectionCriterion, /5%/);
-  assert.match(result.nextRun.inconclusiveCriterion, /2%/);
+  assert.doesNotMatch(result.nextRun.inconclusiveCriterion, /adjacent-level convergence/i);
+  assert.equal(result.nextRun.decisionPolicy.evaluationMode, "model-sensitivity");
+  assert.equal(result.nextRun.decisionPolicy.convergenceResponsePct, null);
 });
 
 test("diagnostic source records are complete and mapped", () => {

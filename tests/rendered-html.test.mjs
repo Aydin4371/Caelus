@@ -103,12 +103,13 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /title="Evidence against it"/);
   assert.match(page, /title="Still unknown"/);
   assert.match(page, /Why it comes first/);
-  assert.match(page, /What the result will mean/);
+  assert.match(page, /How this run will be judged/);
   assert.match(page, /still matters/);
-  assert.match(page, /Carry the setting forward; test the next cause/);
-  assert.match(page, /Not supported/);
+  assert.match(page, /Keep the new setting; run the next/);
+  assert.match(page, /Reported separately:/);
+  assert.match(page, /Does not support it/);
   assert.match(page, /outcome-rules/);
-  assert.match(page, /outcome-rules-four/);
+  assert.doesNotMatch(page, /outcome-rules-four/);
   assert.doesNotMatch(page, /Caevera decides this when:/);
   assert.match(page, /reasoningLedger/);
   assert.match(page, /decisionPolicy/);
