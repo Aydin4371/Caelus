@@ -61,14 +61,21 @@ test("ships an installable Caevera app manifest and service worker", async () =>
   assert.match(serviceWorker, /request\.mode === "navigate"/);
 });
 
-test("streamlines diagnosis, next run, and evidence into one decision card", async () => {
+test("separates the case conclusion from the next-run recommendation", async () => {
   const { readFile } = await import("node:fs/promises");
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(css, /\.engineering-decision-card[^}]*border[^}]*border-radius: 14px/s);
+  assert.match(css, /\.decision-block[^}]*border[^}]*border-radius: 9px/s);
   assert.match(page, /Engineering decision/);
   assert.match(page, /Likely issue:/);
   assert.match(page, /Result of this rerun/);
+  assert.match(page, /What this rerun concluded/);
+  assert.match(page, /What this case shows/);
+  assert.match(page, /What to run next/);
+  assert.match(page, /decision-conclusion-block/);
+  assert.match(page, /decision-recommendation-block/);
+  assert.ok(page.indexOf("What this rerun concluded") < page.indexOf("What to run next"));
   assert.doesNotMatch(page, /What this means:/);
   assert.match(page, /Do this next/);
   assert.match(page, /Change only this/);
@@ -78,7 +85,9 @@ test("streamlines diagnosis, next run, and evidence into one decision card", asy
   assert.match(page, /Decision quality/);
   assert.match(page, /Generated data; not real-engine evidence/);
   assert.match(page, /Why \{decisionQuality\.score\}\/\{decisionQuality\.maximumScore\}\?/);
-  assert.match(page, /Shared family plan/);
+  assert.match(page, /Starting point/);
+  assert.match(page, /The selected change was rejected and is not carried forward/);
+  assert.match(page, /This is the latest confirmed setting/);
   assert.match(page, /Plan reference:/);
   assert.match(page, /publicAnalyzerValidation/);
   assert.match(page, /Public cases do not count as company precedent/);
