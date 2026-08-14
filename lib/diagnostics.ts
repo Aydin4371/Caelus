@@ -72,6 +72,7 @@ export type CaseHistoryEvidence = {
   responseMagnitudePct?: number | null;
   incrementalResponsePct?: number | null;
   newMismatchMetricIds?: string[];
+  relationshipIssues?: string[];
   metricErrorReductionPct?: Record<string, number>;
   baselineMismatchMetricIds?: string[];
   runtimeMultiplier?: number | null;

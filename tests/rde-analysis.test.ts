@@ -516,7 +516,22 @@ test("a related case is diagnostic only when every experiment sample and one CFD
   assert.equal(evidence.controlled, false);
   assert.equal(evidence.sequenceStatus, "comparison-only");
   assert.equal(evidence.planDisposition, "ignore");
-  assert.match(evidence.detail, /experiment trace|physical case/i);
+  assert.ok(evidence.relationshipIssues.some((issue) => /experiment pressure samples differ/i.test(issue)));
+  assert.ok(evidence.relationshipIssues.some((issue) => /turbulence model/i.test(issue)));
+  assert.match(evidence.detail, /experiment pressure samples differ/i);
+  assert.match(evidence.detail, /additional CFD settings changed: turbulence model/i);
+
+  const unchangedInlet: AnalysisCase = {
+    id: "unchanged-inlet",
+    source: "demo",
+    relationship: { baselineCaseId: "base", referenceCaseId: "base", changedVariable: "inlet", description: "Declared inlet rerun" },
+    metadata: { ...DEMO_METADATA, name: "Unchanged inlet" },
+    testSignals: demo.test,
+    cfdSignals: demo.cfd,
+  };
+  const unchangedEvidence = buildCaseHistoryEvidence([baseline, unchangedInlet], baseline.id)[0];
+  assert.equal(unchangedEvidence.controlled, false);
+  assert.deepEqual(unchangedEvidence.relationshipIssues, ["No inlet setting changed from Synthetic test."]);
 });
 
 test("measured unsteady forcing has a classifiable rerun path", () => {

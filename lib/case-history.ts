@@ -49,6 +49,7 @@ export type CaseHistoryEvidence = {
   baselineMismatchMetricIds: string[];
   runtimeMultiplier: number | null;
   newMismatchMetricIds: string[];
+  relationshipIssues: string[];
   sequenceStatus: RerunSequenceStatus;
   planDisposition: PlanDisposition;
 };
@@ -70,6 +71,50 @@ const PHYSICAL_CASE_FIELDS: (keyof CaseMetadata)[] = [
   "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS", "comparisonMatchConfirmed",
   "pressureUncertaintyPct", "timingUncertaintyUs",
 ];
+
+const FIELD_LABELS: Partial<Record<keyof CaseMetadata, string>> = {
+  annulusMeanDiameterMm: "annulus diameter",
+  annulusDiameterUncertaintyMm: "diameter uncertainty",
+  probePositionsDeg: "probe positions",
+  maximumWaveCount: "maximum expected wave count",
+  probeSynchronizationConfirmed: "probe synchronization confirmation",
+  experimentSensorBandwidthKHz: "sensor bandwidth",
+  experimentFilterCutoffKHz: "filter cutoff",
+  inletPressureBar: "inlet pressure",
+  inletTemperatureK: "inlet temperature",
+  equivalenceRatio: "equivalence ratio",
+  massFlowKgS: "mass flow",
+  comparisonMatchConfirmed: "comparison-match confirmation",
+  pressureUncertaintyPct: "experiment pressure uncertainty",
+  timingUncertaintyUs: "experiment timing uncertainty",
+  solver: "solver",
+  solverVersion: "solver version",
+  dimensionality: "dimensionality",
+  spatialScheme: "spatial scheme",
+  spatialOrder: "spatial order",
+  numericalFlux: "numerical flux",
+  limiterFilter: "limiter/filter",
+  temporalScheme: "temporal scheme",
+  temporalOrder: "temporal order",
+  cfl: "CFL",
+  turbulenceModel: "turbulence model",
+  combustionModel: "combustion model",
+  chemistryModel: "chemical mechanism",
+  chemistrySpecies: "chemistry species count",
+  chemistryReactions: "chemistry reaction count",
+  chemistryIntegrator: "chemistry integrator",
+  meshCells: "mesh cell count",
+  minimumCellSizeMm: "minimum front cell",
+  cellsPerInductionLength: "cells per induction length",
+  nearWallCellSizeMm: "near-wall cell size",
+  timeStepUs: "time step",
+  wallBoundaryCondition: "wall treatment",
+  inletBoundaryCondition: "inlet treatment",
+  outletBoundaryCondition: "outlet treatment",
+  initializationMethod: "initialization",
+  cfdPressureUncertaintyPct: "CFD pressure uncertainty",
+  cfdTimingUncertaintyUs: "CFD timing uncertainty",
+};
 
 function metric(summary: CaseSummary, id: string) { return summary.metrics[id]; }
 function numberValue(value: number | string) { return typeof value === "number" ? value : Number.NaN; }
@@ -110,9 +155,12 @@ function changedCfdSettings(baseline: CaseMetadata, candidate: CaseMetadata) {
   return fields.filter((field) => !valueEqual(baseline[field], candidate[field]));
 }
 
-function samePhysicalCase(baseline: AnalysisCase, candidate: AnalysisCase) {
-  return PHYSICAL_CASE_FIELDS.every((key) => valueEqual(baseline.metadata[key], candidate.metadata[key]))
-    && signalsEqual(baseline.testSignals, candidate.testSignals);
+function fieldNames(fields: (keyof CaseMetadata)[]) {
+  return fields.map((field) => FIELD_LABELS[field] ?? String(field)).join(", ");
+}
+
+function physicalCaseDifferences(baseline: AnalysisCase, candidate: AnalysisCase) {
+  return PHYSICAL_CASE_FIELDS.filter((field) => !valueEqual(baseline.metadata[field], candidate.metadata[field]));
 }
 
 function newMismatchIds(baseline: CaseSummary, candidate: CaseSummary) {
@@ -195,13 +243,25 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
     const referenceCase = requestedReference ?? previous?.item ?? baseline;
     const referenceSummary = summaryFor(referenceCase);
     const changedSettings = changedCfdSettings(referenceCase.metadata, candidate.metadata);
-    const physicalCaseMatches = samePhysicalCase(referenceCase, candidate);
+    const physicalDifferences = physicalCaseDifferences(referenceCase, candidate);
+    const experimentMatches = signalsEqual(referenceCase.testSignals, candidate.testSignals);
+    const physicalCaseMatches = physicalDifferences.length === 0 && experimentMatches;
+    const referenceInFamily = referenceCase.id === baseline.id || referenceCase.relationship?.baselineCaseId === baseline.id;
+    const expectedChangedSettings = rule ? changedSettings.filter((field) => GROUP_FIELDS[variable].includes(field)) : [];
+    const extraChangedSettings = rule ? changedSettings.filter((field) => !GROUP_FIELDS[variable].includes(field)) : changedSettings;
+    const relationshipIssues: string[] = [];
+    if (!rule || variable === "other") relationshipIssues.push("Choose one declared CFD change instead of Other / comparison only.");
+    if (!referenceInFamily) relationshipIssues.push("The selected starting case is outside this case family.");
+    if (physicalDifferences.length) relationshipIssues.push(`Case inputs changed: ${fieldNames(physicalDifferences)}.`);
+    if (!experimentMatches) relationshipIssues.push(`Experiment pressure samples differ from ${referenceCase.metadata.name}.`);
+    if (rule && expectedChangedSettings.length === 0) relationshipIssues.push(`No ${variable === "time-step" ? "time-step" : variable} setting changed from ${referenceCase.metadata.name}.`);
+    if (extraChangedSettings.length) relationshipIssues.push(`Additional CFD settings changed: ${fieldNames(extraChangedSettings)}.`);
     const controlled = Boolean(rule)
       && referenceCase.id !== candidate.id
-      && (referenceCase.id === baseline.id || referenceCase.relationship?.baselineCaseId === baseline.id)
+      && referenceInFamily
       && physicalCaseMatches
-      && changedSettings.length > 0
-      && changedSettings.every((field) => GROUP_FIELDS[variable].includes(field));
+      && expectedChangedSettings.length > 0
+      && extraChangedSettings.length === 0;
     const fallbackCause = rule?.causeId ?? "validation-coverage";
 
     if (!controlled || !rule || variable === "other") return {
@@ -226,9 +286,10 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       baselineMismatchMetricIds: referenceSummary.assessment.metrics.filter((result) => result.tone === "review").map((result) => result.id),
       runtimeMultiplier: null,
       newMismatchMetricIds: [],
+      relationshipIssues,
       sequenceStatus: "comparison-only" as const,
       planDisposition: "ignore" as const,
-      detail: `Comparison only: ${physicalCaseMatches ? "the physical case matches" : "the physical case, experiment trace, or uncertainty definition changed"}; detected CFD setting changes: ${changedSettings.join(", ") || "none"}.`,
+      detail: `Comparison only: ${relationshipIssues.join(" ") || "the declared relationship could not be verified."}`,
     };
 
     const candidateSummary = summaryFor(candidate);
@@ -319,6 +380,7 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
         ? candidate.metadata.solverRuntimeHours / referenceCase.metadata.solverRuntimeHours
         : null,
       newMismatchMetricIds: newMismatches,
+      relationshipIssues: [],
       sequenceStatus,
       planDisposition,
       detail,

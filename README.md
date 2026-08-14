@@ -29,6 +29,18 @@ The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
 
+## v1.4.2 controlled-rerun setup
+
+- Selecting a case-family baseline and starting case now copies the complete
+  starting model card into a new rerun.
+- The exact experiment pressure samples are inherited from the starting case;
+  the user uploads only the new CFD result.
+- A relationship that cannot be used names every detected problem, including
+  changed physical inputs, different experiment samples, a missing declared
+  setting change, or extra CFD setting groups.
+- The calculated result remains comparison-only until the declared one-change
+  relationship passes all checks.
+
 ## v1.3 reasoning-engine update
 
 - Uses the latest accepted rerun settings, so a follow-up mesh recommendation
