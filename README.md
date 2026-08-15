@@ -29,6 +29,16 @@ The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
 
+## v1.4.4 immutable case relationships
+
+- A saved case keeps the family, starting case, and declared CFD variable that
+  were recorded when it was analyzed.
+- The edit screen displays those relationship fields as locked and directs the
+  user to add a new case when testing a different variable.
+- Saving an edited case uses its stored relationship even if transient form
+  state is modified, preventing a mesh rerun from being relabeled as an
+  initialization rerun.
+
 ## v1.4.3 controlled-rerun guardrails
 
 - After a starting case is selected, geometry, operating point, experiment
