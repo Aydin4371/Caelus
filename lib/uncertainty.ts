@@ -37,7 +37,7 @@ export function assessResolvedDifference(
       combined: null,
       status: "inconclusive",
       label: "Uncertainty incomplete",
-      explanation: "The difference is reported, but its significance cannot be resolved without both uncertainty inputs.",
+      explanation: "Caevera can report the difference, but it needs both the experiment and CFD uncertainty values to decide whether that difference is meaningful.",
     };
   }
   const combined = rss(experimentUncertainty, cfdUncertainty);
@@ -47,13 +47,13 @@ export function assessResolvedDifference(
         combined,
         status: "resolved-mismatch",
         label: "Resolved mismatch",
-        explanation: "The absolute CFD–experiment difference exceeds the combined one-standard-uncertainty estimate.",
+        explanation: "The absolute CFD-to-experiment difference is larger than the combined one-standard-uncertainty estimate, so Caevera treats it as a resolved mismatch.",
       }
     : {
         combined,
         status: "within-uncertainty",
         label: "Within uncertainty",
-        explanation: "The CFD–experiment difference is not larger than the combined one-standard-uncertainty estimate.",
+        explanation: "The CFD-to-experiment difference is no larger than the combined one-standard-uncertainty estimate, so this case cannot distinguish the difference from the stated uncertainty.",
       };
 }
 

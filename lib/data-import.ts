@@ -210,7 +210,7 @@ export function mapProbeTable(table: DelimitedTable, mapping: ImportMapping): Ma
   const warnings: string[] = [];
   if (droppedRows) warnings.push(`${droppedRows} source row${droppedRows === 1 ? " was" : "s were"} omitted because at least one mapped value was missing or non-numeric.`);
   if (table.rows.some((row) => row.length !== table.headers.length)) warnings.push("At least one source row has a different number of fields than the header.");
-  if (!warnings.length) warnings.push("All source rows contain finite values in the mapped columns.");
+  if (!warnings.length) warnings.push("Every file row contains a numeric time and numeric pressure value in each selected column.");
 
   return {
     signals,

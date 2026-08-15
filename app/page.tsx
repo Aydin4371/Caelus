@@ -52,9 +52,26 @@ function signed(value: number, digits: number) {
   return `${value > 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
 }
 
-function outcomeLabel(state: "supports" | "weakens" | "unknown", sequenceStatus?: CaseHistoryEvidence["sequenceStatus"]) {
-  if (sequenceStatus === "converged") return "Converged";
-  return state === "supports" ? "Confirmed" : state === "weakens" ? "Rejected" : "Inconclusive";
+function outcomeLabel(evidence: CaseHistoryEvidence) {
+  if (evidence.sequenceStatus === "converged") return "Numerically converged";
+  if (evidence.state === "supports" && ["mesh", "time-step"].includes(evidence.changedVariable)) return "Numerical sensitivity found";
+  if (evidence.state === "supports") return "Supports explanation";
+  if (evidence.state === "weakens") return "Does not support explanation";
+  return "Inconclusive";
+}
+
+function outcomeTone(evidence: CaseHistoryEvidence): DecisionSummary["tone"] {
+  if (evidence.sequenceStatus === "converged") return "converged";
+  if (evidence.state === "supports") return "confirmed";
+  if (evidence.state === "weakens") return "rejected";
+  return "inconclusive";
+}
+
+function latestResultLabel(status: ControlledNextRun["latestControlledResult"]["status"], policy: ControlledNextRun["decisionPolicy"]) {
+  if (status === "Confirmed") return policy.evaluationMode === "numerical-convergence" ? "Numerical sensitivity found" : "Supports explanation";
+  if (status === "Converged") return "Numerically converged";
+  if (status === "Rejected") return "Does not support explanation";
+  return status;
 }
 
 function changeLabel(variable: SensitivityVariable) {
@@ -74,18 +91,18 @@ function caseTabSummary(item: AnalysisCase) {
 }
 
 function outcomeMeaning(evidence: CaseHistoryEvidence) {
-  if (evidence.sequenceStatus === "converged") return `Carry forward ${evidence.caseName}; the numerical sequence can now advance.`;
-  if (evidence.state === "supports" && evidence.planDisposition === "continue") return `Carry forward ${evidence.caseName}; one adjacent numerical level is still required.`;
-  if (evidence.state === "supports") return `Carry forward ${evidence.caseName}; the next unresolved cause can now be tested.`;
-  if (evidence.state === "weakens") return `Do not carry forward ${evidence.caseName}; resume from ${evidence.referenceCaseName}.`;
-  return `Do not carry forward ${evidence.caseName} yet; repeat from ${evidence.referenceCaseName} with a stronger one-variable contrast.`;
+  if (evidence.sequenceStatus === "converged") return `Keep ${evidence.caseName}. The numerical setting passed the convergence rule, so the next unresolved explanation can now be tested.`;
+  if (evidence.state === "supports" && evidence.planDisposition === "continue") return `Keep ${evidence.caseName}. The changed numerical setting still affects the CFD result, so run the next adjacent level before changing the physics.`;
+  if (evidence.state === "supports") return `Keep ${evidence.caseName}. This one-change result supports the tested explanation, so the next unresolved explanation can now be tested.`;
+  if (evidence.state === "weakens") return `Do not keep the tested change. Return to ${evidence.referenceCaseName} and test the next unresolved explanation.`;
+  return `Do not keep the tested change yet. Repeat from ${evidence.referenceCaseName} with a clearer one-variable difference.`;
 }
 
 function conciseOutcomeDetail(evidence: CaseHistoryEvidence) {
-  if (evidence.sequenceStatus === "converged" && Number.isFinite(evidence.incrementalResponsePct)) return `Adjacent-level response ${evidence.incrementalResponsePct!.toFixed(1)}% · converged`;
-  if (evidence.state === "supports" && Number.isFinite(evidence.errorReductionPct)) return `Targeted error ↓ ${Math.abs(evidence.errorReductionPct!).toFixed(1)}%${evidence.newMismatchMetricIds?.length ? " · new mismatch found" : " · no new mismatch"}`;
-  if (evidence.state === "weakens" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted response ${evidence.responseMagnitudePct!.toFixed(1)}% · rejected`;
-  if (evidence.state === "unknown" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted response ${evidence.responseMagnitudePct!.toFixed(1)}% · inconclusive`;
+  if (evidence.sequenceStatus === "converged" && Number.isFinite(evidence.incrementalResponsePct)) return `Targeted CFD values changed ${evidence.incrementalResponsePct!.toFixed(1)}% between adjacent levels · convergence rule passed`;
+  if (evidence.state === "supports" && Number.isFinite(evidence.errorReductionPct)) return `Mean targeted CFD-to-experiment error fell ${Math.abs(evidence.errorReductionPct!).toFixed(1)}%${evidence.newMismatchMetricIds?.length ? " · a new mismatch appeared" : " · no new mismatch appeared"}`;
+  if (evidence.state === "weakens" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted CFD values changed ${evidence.responseMagnitudePct!.toFixed(1)}% · a rejection rule was met`;
+  if (evidence.state === "unknown" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted CFD values changed ${evidence.responseMagnitudePct!.toFixed(1)}% · no classification rule was met`;
   return evidence.controlled ? evidence.detail.split(".")[0] : evidence.relationshipIssues[0] ?? "The one-change relationship could not be verified";
 }
 
@@ -95,10 +112,10 @@ function comparisonOnlyMeaning(evidence: CaseHistoryEvidence) {
 }
 
 function evidenceBasisLabel(basis: DiagnosticEvidence["basis"]) {
-  if (basis === "case-history") return "Controlled rerun";
-  if (basis === "literature") return "Engineering rule";
-  if (basis === "policy") return "Required next evidence";
-  return "Current case";
+  if (basis === "case-history") return "Calculated from a related one-change rerun";
+  if (basis === "literature") return "Supported by published research";
+  if (basis === "policy") return "Result still required";
+  return "Calculated from this case";
 }
 
 function EvidenceLedgerColumn({
@@ -118,21 +135,21 @@ function EvidenceLedgerColumn({
       <small>{evidenceBasisLabel(item.basis)}</small>
       <strong>{item.observation}</strong>
     </li>)}</ul> : <div className="reasoning-empty">{emptyMessage}</div>}
-    {items.length > 2 && <small className="reasoning-more">+{items.length - 2} more in report</small>}
+    {items.length > 2 && <small className="reasoning-more">+{items.length - 2} more findings in the report</small>}
   </article>;
 }
 
 function ResearchBasis({ claims, sources }: { claims: DiagnosticResearchClaim[]; sources: DiagnosticSource[] }) {
   return <details className="research-basis">
-    <summary>Research basis · {sources.length ? `${sources.length} mapped source${sources.length === 1 ? "" : "s"}` : "no direct paper"}</summary>
+    <summary>Research supporting this test · {sources.length ? `${sources.length} published source${sources.length === 1 ? "" : "s"}` : "no directly applicable paper"}</summary>
     {claims.length ? <div className="research-claims">{claims.map((claim) => {
       const claimSources = sourcesFor(claim.sourceIds);
       return <article key={claim.statement}>
         <p>{claim.statement}</p>
         <div>{claimSources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>
-        <small>Limit: {claim.boundary}</small>
+        <small>What the research does not establish: {claim.boundary}</small>
       </article>;
-    })}</div> : <p className="research-unmapped">No directly applicable paper is attached to this branch. It remains an explicitly labeled prototype policy.</p>}
+    })}</div> : <p className="research-unmapped">No published paper is mapped to this specific recommendation. Caevera treats it as a prototype product rule, not a research conclusion.</p>}
   </details>;
 }
 
@@ -389,9 +406,9 @@ function EngineeringDecisionPanel({
         ? "This is the latest accepted setting in the case family."
         : "This accepted setting is carried forward.";
   return <section className={`engineering-decision-card decision-${summary.tone}${isDemo ? " decision-demo" : ""}`} aria-label="Engineering decision">
-    <div className="decision-quality" aria-label={`Decision quality ${decisionQuality.score} out of ${decisionQuality.maximumScore}`}>
-      <div className="decision-quality-score"><span>Decision quality</span><strong>{decisionQuality.score}<small>/{decisionQuality.maximumScore}</small></strong></div>
-      <div className="decision-quality-copy"><strong>{decisionQuality.label}</strong><small>{isDemo ? "Generated data; not real-engine evidence." : decisionQuality.score >= 4 ? "Enough evidence to act; engineering review still required." : "Useful next test; evidence is incomplete."}</small></div>
+    <div className="decision-quality" aria-label={`Evidence readiness ${decisionQuality.score} out of ${decisionQuality.maximumScore}`}>
+      <div className="decision-quality-score"><span>Evidence readiness</span><strong>{decisionQuality.score}<small>/{decisionQuality.maximumScore}</small></strong></div>
+      <div className="decision-quality-copy"><strong>{decisionQuality.label}</strong><small>{decisionQuality.explanation}</small></div>
       <div className="decision-quality-scale" aria-hidden="true">{Array.from({ length: decisionQuality.maximumScore }, (_, index) => <i key={index} className={index < decisionQuality.score ? "filled" : ""} />)}</div>
     </div>
     <section className="decision-block decision-conclusion-block" aria-labelledby="decision-conclusion-heading">
@@ -402,10 +419,10 @@ function EngineeringDecisionPanel({
         {summary.detail && <p className="decision-detail">{summary.detail}</p>}
         <p className="decision-meaning">{summary.meaning}</p>
       </header>
-      {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Latest family result: {nextRun.latestControlledResult.status}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{nextRun.latestControlledResult.detail}</p></div>}
+      {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Latest case-family result: {latestResultLabel(nextRun.latestControlledResult.status, policy)}</strong><span>{nextRun.latestControlledResult.caseName}</span><p>{nextRun.latestControlledResult.detail}</p></div>}
     </section>
     <section className="decision-block decision-recommendation-block" aria-labelledby="decision-recommendation-heading">
-      <div className="decision-block-heading"><b>2</b><h2 id="decision-recommendation-heading">Shared next run for this case family</h2></div>
+      <div className="decision-block-heading"><b>2</b><h2 id="decision-recommendation-heading">Next CFD run for this case family</h2></div>
       {planUsesDifferentCase && <div className="decision-scope">
         <strong>Starting point</strong>
         <span>Use <b>{planningCaseName}</b>. {startingPointReason}</span>
@@ -414,60 +431,61 @@ function EngineeringDecisionPanel({
         <span>Do this next</span><h3>{nextRun.title}</h3>
       </div>
       <div className="next-run-action">
-        <p><strong>Change only this</strong><span>{nextRun.change}</span></p>
-        <p><strong>Keep fixed</strong><span>{nextRun.holdFixed.join(" · ")}</span></p>
-        <p><strong>Success looks like</strong><span>{nextRun.expectedOutcome}</span></p>
+        <p><strong>Change</strong><span>{nextRun.change}</span></p>
+        <p><strong>Keep unchanged</strong><span>{nextRun.holdFixed.join(" · ")}</span></p>
+        <p><strong>Compare</strong><span>{nextRun.expectedOutcome}</span></p>
       </div>
       <section className="decision-reasoning" aria-label="Why Caevera recommends this run">
         <div className="decision-reasoning-heading">
           <span>Question being tested</span>
           <h3>{nextRun.question}</h3>
+          <p>These findings are calculated from the analyzed cases. They are not columns or labels in the CSV files.</p>
         </div>
         <div className="reasoning-ledger">
-          <EvidenceLedgerColumn title="Evidence for it" emptyMessage="No direct supporting evidence." items={ledger.supports} tone="supports" />
-          <EvidenceLedgerColumn title="Evidence against it" emptyMessage="None loaded. That does not prove the cause." items={ledger.weakens} tone="weakens" />
-          <EvidenceLedgerColumn title="Still unknown" emptyMessage="No unresolved evidence item." items={ledger.unknowns} tone="unknowns" />
+          <EvidenceLedgerColumn title="Findings that support this explanation" emptyMessage="No analyzed finding directly supports this explanation." items={ledger.supports} tone="supports" />
+          <EvidenceLedgerColumn title="Findings that contradict this explanation" emptyMessage="No finding in the analyzed cases contradicts this explanation. That does not confirm it." items={ledger.weakens} tone="weakens" />
+          <EvidenceLedgerColumn title="Evidence still needed" emptyMessage="Caevera has not identified another missing result for this decision." items={ledger.unknowns} tone="unknowns" />
         </div>
         <div className="decision-priority">
-          <strong>Why it comes first</strong>
+          <strong>Why this is the next test</strong>
           <p>{nextRun.whyThisRunFirst}</p>
         </div>
       </section>
       <section className="decision-outcomes" aria-label="How the result changes the plan">
-        <div><span>How this run will be judged</span>{policy.basis === "prototype-policy" && <small>Prototype policy {policy.version}. These limits are not taken from the cited papers.</small>}</div>
+        <div><span>How Caevera will classify the result</span>{policy.basis === "prototype-policy" && <small>Prototype product policy {policy.version}. Caevera chose these decision limits; the cited papers did not.</small>}</div>
         {isNumericalPolicy ? <>
           <div className="outcome-rules">
-            <article className="branch-converged"><strong>Converged</strong><span>Targeted CFD outputs change by ≤{policy.convergenceResponsePct!.toFixed(1)}% from the starting level.</span><small>Keep the new setting; continue the plan.</small></article>
-            <article className="branch-confirmed"><strong>{changeLabel(policy.changedVariable!)} still matters</strong><span>Targeted CFD outputs change by &gt;{policy.convergenceResponsePct!.toFixed(1)}% from the starting level.</span><small>Keep the new setting; run the next {testedVariable} level.</small></article>
-            <article className="branch-inconclusive"><strong>Cannot judge</strong><span>The levels cannot be compared or the targeted outputs are unavailable.</span><small>Fix the comparison and repeat this one-variable run.</small></article>
+            <article className="branch-converged"><strong>Numerically converged</strong><span>The targeted CFD values change by no more than {policy.convergenceResponsePct!.toFixed(1)}% between the two adjacent levels.</span><small>Keep the newer setting and move to the next unresolved explanation.</small></article>
+            <article className="branch-confirmed"><strong>{changeLabel(policy.changedVariable!)} still changes the result</strong><span>The targeted CFD values change by more than {policy.convergenceResponsePct!.toFixed(1)}% between the two adjacent levels.</span><small>Keep the newer setting and test the next {testedVariable} level before changing the physics.</small></article>
+            <article className="branch-inconclusive"><strong>Cannot classify</strong><span>The two levels are not a valid one-change pair, or a required targeted value cannot be calculated.</span><small>Correct the case relationship or data problem, then repeat the same comparison.</small></article>
           </div>
-          <p className="decision-agreement-note"><strong>Reported separately:</strong> whether agreement with the experiment improved, worsened, or created a new mismatch.</p>
+          <p className="decision-agreement-note"><strong>Separate question:</strong> Caevera also reports whether the newer CFD result moved closer to the experiment, moved farther away, or created a new mismatch.</p>
         </> : isModelSensitivityPolicy ? <div className="outcome-rules">
-          <article className="branch-confirmed"><strong>Supports the cause</strong><span>Mean targeted error falls by ≥{policy.confirmationErrorReductionPct!.toFixed(1)}% and no new mismatch appears.</span><small>Carry the change forward; continue the plan.</small></article>
-          <article className="branch-rejected"><strong>Does not support it</strong><span>Response is &lt;{policy.minimumResponsePct!.toFixed(1)}%, error worsens by ≥{policy.rejectionErrorWorseningPct!.toFixed(1)}%, or a new mismatch appears.</span><small>Return to the starting settings; test the next cause.</small></article>
-          <article className="branch-inconclusive"><strong>Unclear</strong><span>None of the rules above is met.</span><small>Repeat with a larger one-variable change or lower uncertainty.</small></article>
+          <article className="branch-confirmed"><strong>Supports this explanation</strong><span>The mean CFD-to-experiment error in the targeted values falls by at least {policy.confirmationErrorReductionPct!.toFixed(1)}%, with no new resolved mismatch.</span><small>Keep the tested setting and move to the next unresolved explanation.</small></article>
+          <article className="branch-rejected"><strong>Does not support this explanation</strong><span>The targeted CFD response is below {policy.minimumResponsePct!.toFixed(1)}%, the targeted error increases by at least {policy.rejectionErrorWorseningPct!.toFixed(1)}%, or a new resolved mismatch appears.</span><small>Return to the starting setting and test the next explanation.</small></article>
+          <article className="branch-inconclusive"><strong>Inconclusive</strong><span>The result meets neither rule above.</span><small>Repeat the same one-variable test with a larger change or lower uncertainty.</small></article>
         </div> : <div className="outcome-rules">
           <article className="branch-confirmed"><strong>Passes</strong><span>{nextRun.confirmationCriterion}</span><small>{nextRun.ifConfirmed}</small></article>
           <article className="branch-rejected"><strong>Does not pass</strong><span>{nextRun.rejectionCriterion}</span><small>{nextRun.ifRejected}</small></article>
-          <article className="branch-inconclusive"><strong>Unclear</strong><span>{nextRun.inconclusiveCriterion}</span><small>{nextRun.ifInconclusive}</small></article>
+          <article className="branch-inconclusive"><strong>Cannot classify</strong><span>{nextRun.inconclusiveCriterion}</span><small>{nextRun.ifInconclusive}</small></article>
         </div>}
       </section>
       <div className="decision-precedent" aria-label="Comparable controlled reruns">
-        <span>What prior cases tell you</span>
+        <span>Independent evidence from other case families</span>
         {precedent.matchedCount ? <>
-          <p><strong>{precedent.confirmedCount} of {precedent.matchedCount} similar {precedent.level === "Demonstration" ? "synthetic" : "company"} reruns showed the same response.</strong></p>
-          {isDemo && <small>Synthetic only. Do not treat this as engine evidence.</small>}
+          <p><strong>{precedent.confirmedCount} of {precedent.matchedCount} comparable one-change reruns met the same decision rule.</strong></p>
+          {isDemo && <small>These are generated demonstrations, not evidence from a physical engine.</small>}
         </> : <>
-          <p><strong>No independent prior rerun.</strong> Current-family evidence only.</p>
+          <p><strong>No comparable rerun from another case family has been analyzed.</strong> The findings above come only from this case family.</p>
         </>}
       </div>
       <ResearchBasis claims={researchClaims} sources={publishedSources} />
       <details className="decision-evidence">
-        <summary>Why {decisionQuality.score}/{decisionQuality.maximumScore}?</summary>
+        <summary>Why is evidence readiness {decisionQuality.score}/{decisionQuality.maximumScore}?</summary>
         <p className="selected-data-source"><strong>{selectedCaseName}</strong> · {selectedAnalysisInput.experimentSamples.toLocaleString()} experiment + {selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values · {selectedAnalysisInput.probeCount} probes</p>
         {planUsesDifferentCase && <p className="planning-data-source"><strong>Plan reference:</strong> {planningCaseName}</p>}
         <ul>{decisionQuality.gates.map((gate) => <li key={gate.id} className={gate.satisfied ? "" : "evidence-missing"}><i>{gate.satisfied ? "✓" : "–"}</i><strong>{gate.label}</strong><small>{gate.result}</small></li>)}</ul>
-        <p>{publishedSources.length} mapped engineering source{publishedSources.length === 1 ? "" : "s"} · {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} analyzer checks · method support only</p>
+        <p>{publishedSources.length} published reference{publishedSources.length === 1 ? "" : "s"} {publishedSources.length === 1 ? "supports" : "support"} the method · {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} public validation cases test the analyzer · neither proves the cause in this case</p>
       </details>
       {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
     </section>
@@ -574,17 +592,17 @@ export default function Home() {
   const likelySources = likelyHypothesis ? sourcesFor(likelyHypothesis.sourceIds) : [];
   const decisionSummary: DecisionSummary = activeCaseEvidence ? {
     label: "Result of this rerun",
-    lead: `${activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus) : "Comparison only"}:`,
+    lead: `${activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence) : "Comparison only"}:`,
     title: `${changeLabel(activeCase?.relationship?.changedVariable ?? "other")} response`,
     detail: conciseOutcomeDetail(activeCaseEvidence),
     meaning: activeCaseEvidence.controlled ? outcomeMeaning(activeCaseEvidence) : comparisonOnlyMeaning(activeCaseEvidence),
-    tone: activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence.state, activeCaseEvidence.sequenceStatus).toLowerCase() as DecisionSummary["tone"] : "neutral",
+    tone: activeCaseEvidence.controlled ? outcomeTone(activeCaseEvidence) : "neutral",
   } : {
     label: "Current diagnosis",
     lead: "Likely issue:",
     title: likelyHypothesis?.title ?? "Cannot assess",
     detail: null,
-    meaning: planAssessment?.nextRun.reason ?? "The loaded evidence does not support a next-run decision.",
+    meaning: planAssessment?.nextRun.reason ?? "Caevera cannot choose a next run from the analyzed case data.",
     tone: "neutral",
   };
   const showDetailedEvidence = false;
@@ -680,13 +698,31 @@ export default function Home() {
     if (!Number.isFinite(draft.annulusMeanDiameterMm) || draft.annulusMeanDiameterMm <= 0) return setError("Enter a positive annulus mean diameter.");
     if (draft.probePositionsDeg.length < 3 || draft.probePositionsDeg.some((value) => !Number.isFinite(value))) return setError("Enter at least three valid probe angles.");
     if (!Number.isInteger(draft.maximumWaveCount) || draft.maximumWaveCount < 1 || draft.maximumWaveCount > 12) return setError("Maximum expected wave count must be an integer from 1 to 12.");
-    const positive = [draft.experimentSensorBandwidthKHz, draft.experimentFilterCutoffKHz, draft.inletPressureBar, draft.inletTemperatureK, draft.equivalenceRatio, draft.massFlowKgS, draft.spatialOrder, draft.temporalOrder, draft.cfl, draft.meshCells, draft.minimumCellSizeMm, draft.cellsPerInductionLength, draft.nearWallCellSizeMm, draft.timeStepUs, draft.chemistrySpecies, draft.chemistryReactions];
-    if (positive.some((value) => !Number.isFinite(value) || value <= 0)) return setError("Complete every required operating-condition, resolution, chemistry, and numerical field with a positive value.");
-    const uncertainties = [draft.annulusDiameterUncertaintyMm, draft.pressureUncertaintyPct, draft.timingUncertaintyUs, draft.cfdPressureUncertaintyPct, draft.cfdTimingUncertaintyUs];
-    if (uncertainties.some((value) => !Number.isFinite(value) || value < 0)) return setError("Enter non-negative experiment and CFD uncertainty values.");
+    const positiveInputs: Array<[string, number]> = [
+      ["Experiment sensor bandwidth", draft.experimentSensorBandwidthKHz], ["Experiment filter cutoff", draft.experimentFilterCutoffKHz],
+      ["Inlet pressure", draft.inletPressureBar], ["Inlet temperature", draft.inletTemperatureK], ["Equivalence ratio", draft.equivalenceRatio], ["Mass flow", draft.massFlowKgS],
+      ["Spatial order", draft.spatialOrder], ["Temporal order", draft.temporalOrder], ["CFL", draft.cfl], ["Total mesh cells", draft.meshCells],
+      ["Minimum front cell", draft.minimumCellSizeMm], ["Cells per induction length", draft.cellsPerInductionLength], ["Near-wall cell", draft.nearWallCellSizeMm],
+      ["Time step", draft.timeStepUs], ["Chemistry species", draft.chemistrySpecies], ["Chemistry reactions", draft.chemistryReactions],
+    ];
+    const invalidPositive = positiveInputs.find(([, value]) => !Number.isFinite(value) || value <= 0);
+    if (invalidPositive) return setError(`${invalidPositive[0]} must be a number greater than zero.`);
+    const uncertaintyInputs: Array<[string, number]> = [
+      ["Diameter uncertainty", draft.annulusDiameterUncertaintyMm], ["Experiment pressure uncertainty", draft.pressureUncertaintyPct],
+      ["Experiment timing uncertainty", draft.timingUncertaintyUs], ["CFD pressure uncertainty", draft.cfdPressureUncertaintyPct], ["CFD timing uncertainty", draft.cfdTimingUncertaintyUs],
+    ];
+    const invalidUncertainty = uncertaintyInputs.find(([, value]) => !Number.isFinite(value) || value < 0);
+    if (invalidUncertainty) return setError(`${invalidUncertainty[0]} must be zero or greater.`);
     if (Number.isFinite(draft.solverRuntimeHours) && draft.solverRuntimeHours <= 0) return setError("Runtime must be positive when supplied.");
-    const textFields = [draft.solver, draft.solverVersion, draft.dimensionality, draft.spatialScheme, draft.numericalFlux, draft.limiterFilter, draft.temporalScheme, draft.turbulenceModel, draft.combustionModel, draft.chemistryModel, draft.chemistryIntegrator, draft.wallBoundaryCondition, draft.inletBoundaryCondition, draft.outletBoundaryCondition, draft.initializationMethod];
-    if (textFields.some((value) => !value.trim())) return setError("Complete every required CFD model-card field. Enter “None” where a limiter, turbulence model, or combustion model is not used.");
+    const textInputs: Array<[string, string]> = [
+      ["Solver", draft.solver], ["Solver version", draft.solverVersion], ["Dimensionality", draft.dimensionality], ["Spatial scheme", draft.spatialScheme],
+      ["Numerical flux", draft.numericalFlux], ["Limiter, filter, or dissipation", draft.limiterFilter], ["Temporal scheme", draft.temporalScheme],
+      ["Turbulence model", draft.turbulenceModel], ["Combustion model", draft.combustionModel], ["Chemical mechanism", draft.chemistryModel],
+      ["Chemistry integration", draft.chemistryIntegrator], ["Wall thermal condition", draft.wallBoundaryCondition], ["Inlet treatment", draft.inletBoundaryCondition],
+      ["Outlet treatment", draft.outletBoundaryCondition], ["Ignition or initialization", draft.initializationMethod],
+    ];
+    const missingText = textInputs.find(([, value]) => !value.trim());
+    if (missingText) return setError(`${missingText[0]} is required. Enter “None” only when that model or treatment is not used.`);
     try {
       const editingCase = cases.find((item) => item.id === editingCaseId) ?? null;
       const effectiveRelationship = editingCase?.relationship ?? draftRelationship;
@@ -818,26 +854,26 @@ export default function Home() {
       publishedValidationSources: PUBLISHED_VALIDATION_SOURCES,
       evidenceRoles: {
         directCaseEvidence: activeCase.source === "demo"
-          ? "Generated demonstration arrays, entered metadata, declared uncertainties, and verified controlled relationships determine this calculated result. It is not engine evidence."
-          : "Uploaded experiment and CFD arrays, entered metadata, declared uncertainties, and verified controlled relationships determine the calculated metrics and recommendation.",
+          ? "Generated demonstration pressure values, entered case settings, declared uncertainties, and verified one-change relationships determine this result. It is not evidence from a physical engine."
+          : "The user-provided experiment and CFD pressure values, entered case settings, declared uncertainties, and verified one-change relationships determine the metrics and recommendation.",
         recommendationScope: {
           selectedCase: activeCase.metadata.name,
           planningReferenceCase: planningCase.metadata.name,
           sharedAcrossCaseFamily: caseHistoryEvidence.length > 0,
-          explanation: "The selected-case diagnosis or rerun outcome is recalculated from that case. The next-run plan is shared across the case family and starts from the latest accepted case on the declared rerun branch.",
+          explanation: "Caevera recalculates the selected case's diagnosis or rerun result from that case. A case family contains one baseline plus qualifying one-change reruns. Its next-run plan starts from the most recent rerun that passed a support or convergence rule.",
         },
-        storageBoundary: "Saved workspaces contain inputs, pressure arrays, metadata, file mappings, and case relationships only. They do not contain cached metrics, diagnoses, outcomes, or recommendations.",
+        storageBoundary: "A saved workspace stores the entered settings, pressure values, file mappings, and case relationships. When the workspace is reopened, Caevera recalculates the metrics, diagnoses, rerun classifications, and recommendation.",
         diagnosticRuleSources: likelySources,
         methodSources: WAVE_METHOD_SOURCES,
         publicAnalyzerValidation: {
           summary: PUBLISHED_VALIDATION_SUMMARY,
           cases: RAW_DATASET_VALIDATION_CASES,
-          role: "Regression validation only. Public cases do not count as company precedent and do not determine the recommendation for this uploaded case.",
+          role: "Software validation only. Public benchmark cases test the analyzer; they do not count as independent case-family evidence and do not choose the recommendation for this user-provided case.",
         },
       },
       perProbe: comparisons,
       methods: ["shared bounded cross-correlation", "Hann-windowed FFT pressure spectrum", "cycle-by-cycle passage tracking", "sliding-window circumferential phase-mode fit", "uncertainty resolution by RSS", "structured diagnostic rules", "adaptive controlled-rerun outcome classification"],
-      limitations: ["Hypotheses prioritize controlled sensitivity runs; they do not prove causality.", "Adaptive confirmation and rejection limits are explicit prototype rules and are not calibrated probabilities.", "Pressure and timing uncertainty are propagated only into supported scalar outputs.", "Mode inference assumes synchronized probes and one dominant rotating mode; ambiguous and simultaneous modes are reported as not identifiable.", "Thermal, performance, combustion, and flowfield agreement are outside this pressure-and-wave product scope."],
+      limitations: ["The ranked explanations choose which one-change CFD test to run next; they do not prove causality.", "The support, rejection, and convergence limits are Caevera prototype product rules. They are not probabilities and are not taken from the cited papers.", "Caevera propagates pressure and timing uncertainty only into the scalar outputs that support that calculation.", "Wave-mode inference requires synchronized probes and assumes one dominant rotating mode. Caevera reports ambiguous or simultaneous modes as not identifiable.", "This product version does not assess thermal, performance, combustion, or flowfield agreement."],
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
     const link = document.createElement("a"); link.href = url; link.download = "caevera-rde-case-report.json"; link.click(); URL.revokeObjectURL(url);
@@ -916,8 +952,8 @@ export default function Home() {
     <section className="content" id="top">
       {!activeCase || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
         <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>Welcome to Caevera</h1>
-        <p>Compare experimental pressure-probe data with CFD to see where the simulated pressure and rotating-wave behavior disagree with measurements. Caevera recommends the next controlled CFD run, evaluates its result, and updates the plan through confirmed, rejected, or inconclusive branches.</p>
-        <span className="empty-status">No cases loaded</span>
+        <p>Compare experimental pressure-probe data with CFD. Caevera identifies differences larger than the stated uncertainty, recommends one CFD change, and uses the rerun result to choose what happens next.</p>
+        <span className="empty-status">No case has been added yet</span>
         <div className="empty-actions"><button className="button primary" onClick={openNewCase}>Add first case →</button><label className="button secondary workspace-file-button">Open saved workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary" onClick={loadExampleCaseHistory}>Load synthetic case history</button></div>
         <div className="empty-requirements"><span><b>1</b><i><strong>Compare</strong> matched experiment and CFD pressure traces</i></span><span><b>2</b><i><strong>Diagnose</strong> pressure and rotating-wave mismatches</i></span><span><b>3</b><i><strong>Run and update</strong> the adaptive CFD plan</i></span></div>
       </section> : <>
@@ -928,7 +964,7 @@ export default function Home() {
         </section>
 
         {workspaceView === "compare" && baselineSummary ? <section className="case-history-comparison" aria-label="Case history">
-          <div className="case-history-heading"><div><span className="empty-kicker">CASE HISTORY</span><h1>Related reruns for one case</h1><p>A rerun becomes diagnostic evidence only when the experiment and operating point are unchanged and exactly one recorded CFD variable group changes.</p></div><label className="baseline-select"><span>Baseline case</span><select value={baselineSummary.item.id} onChange={(event) => setCaseBaselineId(event.target.value)}>{caseSummaries.map((summary) => <option key={summary.item.id} value={summary.item.id}>{summary.item.metadata.name}</option>)}</select></label></div>
+          <div className="case-history-heading"><div><span className="empty-kicker">CASE HISTORY</span><h1>One baseline and its related reruns</h1><p>A case family contains one baseline plus reruns that reuse its experiment and physical operating point. A rerun affects the plan only when exactly one CFD setting group changes.</p></div><label className="baseline-select"><span>Show family for baseline</span><select value={baselineSummary.item.id} onChange={(event) => setCaseBaselineId(event.target.value)}>{caseSummaries.map((summary) => <option key={summary.item.id} value={summary.item.id}>{summary.item.metadata.name}</option>)}</select></label></div>
           <div className="case-history-table-wrap"><table className="case-history-table direct-delta-table">
             <thead><tr><th>Case</th><th>Operating change vs baseline</th><th>Experimental change</th><th>CFD error change</th><th>Case status</th></tr></thead>
             <tbody>{caseSummaries.map((summary) => {
@@ -941,20 +977,20 @@ export default function Home() {
                 <td>{isBaseline ? <strong>Reference condition</strong> : <><strong>φ {signed(delta.condition.equivalenceRatio, 2)} · pressure {signed(delta.condition.inletPressureBar, 1)} bar</strong><span>Temperature {signed(delta.condition.inletTemperatureK, 0)} K</span><span>Mass flow {signed(delta.condition.massFlowKgS, 2)} kg/s</span></>}</td>
                 <td>{isBaseline ? <strong>Reference behavior</strong> : <><strong>Frequency {signed(delta.experiment.frequencyKHz, 2)} kHz</strong><span>Peak pressure {signed(delta.experiment.peakPressureMpa, 3)} MPa</span><span>Amplitude {signed(delta.experiment.pressureAmplitudeMpa, 3)} MPa · variability {signed(delta.experiment.cycleVariabilityPoints, 1)} pt</span></>}</td>
                 <td>{isBaseline ? <strong>Reference error</strong> : <><strong>Frequency error {signed(delta.cfdAgreement.frequencyErrorPointChange, 1)} pt</strong><span>Peak error {signed(delta.cfdAgreement.peakPressureErrorPointChange, 1)} pt</span><span>Amplitude error {signed(delta.cfdAgreement.amplitudeErrorPointChange, 1)} pt</span></>}</td>
-                <td><span className={`comparison-status ${relationEvidence?.state === "supports" || relationEvidence?.sequenceStatus === "converged" ? "pass" : relationEvidence?.controlled ? "review" : summary.assessment.validity.status === "Blocked" || caseReviews ? "review" : "neutral"}`}>{isBaseline ? "Baseline case" : relationEvidence?.controlled ? outcomeLabel(relationEvidence.state, relationEvidence.sequenceStatus) : "Comparison only"}</span></td>
+                <td><span className={`comparison-status ${relationEvidence?.state === "supports" || relationEvidence?.sequenceStatus === "converged" ? "pass" : relationEvidence?.controlled ? "review" : summary.assessment.validity.status === "Blocked" || caseReviews ? "review" : "neutral"}`}>{isBaseline ? "Baseline case" : relationEvidence?.controlled ? outcomeLabel(relationEvidence) : "Comparison only"}</span></td>
               </tr>;
             })}</tbody>
           </table></div>
-          <p className="case-history-note"><strong>How this works:</strong> this view keeps a baseline and its related controlled reruns together. A controlled result confirms, rejects, or leaves the predicted response inconclusive, then updates the adaptive plan. Unrelated operating points remain comparisons.</p>
+          <p className="case-history-note"><strong>How this works:</strong> Caevera checks the saved settings and experiment samples. A valid one-change rerun updates the plan; a case with multiple changes remains a comparison and does not update the plan.</p>
         </section> : <>
-          <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div><h1>{activeCase.metadata.name}</h1><p>{activeCase.relationship ? `Controlled ${changeLabel(activeCase.relationship.changedVariable).toLowerCase()} rerun starting from ${activeReferenceName ?? baselineCaseName ?? "the family baseline"}` : `Baseline for ${caseHistoryEvidence.length} controlled rerun${caseHistoryEvidence.length === 1 ? "" : "s"}`} · deterministic local analysis</p></div>
+          <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "User-provided case"}</span></div><h1>{activeCase.metadata.name}</h1><p>{activeCase.relationship ? `One-change ${changeLabel(activeCase.relationship.changedVariable).toLowerCase()} rerun starting from ${activeReferenceName ?? baselineCaseName ?? "the family baseline"}` : `Baseline for ${caseHistoryEvidence.length} related rerun${caseHistoryEvidence.length === 1 ? "" : "s"}`} · calculated from this case</p></div>
 
           <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} publishedSources={likelySources} researchClaims={likelyHypothesis?.researchClaims ?? []} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
 
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
-            <div><span>COMPARISON CONCLUSION</span><h2>{assessment.validity.status === "Blocked" ? "Assessment blocked until case matching is confirmed" : totalReview ? `${totalReview} evidence check${totalReview === 1 ? "" : "s"} require review` : "No selected mismatch is resolved beyond current uncertainty"}</h2><p>{assessment.validity.status === "Blocked" ? "Do not tune the CFD from this pairing yet." : totalReview ? "The highlighted evidence drives the ranked hypotheses and one-variable next-run plan below." : "This does not prove the CFD is universally valid; it means this pressure case does not expose a resolved discrepancy."}</p></div>
-            <strong>{assessment.validity.status === "Blocked" ? "BLOCKED" : totalReview ? "REVIEW" : "UNRESOLVED"}</strong>
+            <div><span>COMPARISON CONCLUSION</span><h2>{assessment.validity.status === "Blocked" ? "Assessment blocked until case matching is confirmed" : totalReview ? `${totalReview} evidence check${totalReview === 1 ? "" : "s"} require review` : "No selected CFD-to-experiment difference exceeds current uncertainty"}</h2><p>{assessment.validity.status === "Blocked" ? "Do not change the CFD model from this pairing yet." : totalReview ? "The highlighted findings determine the ranked explanations and one-variable next-run plan below." : "This does not prove the CFD is valid for every output or operating point. It means this pressure case does not contain a resolved discrepancy."}</p></div>
+            <strong>{assessment.validity.status === "Blocked" ? "BLOCKED" : totalReview ? "REVIEW" : "NO RESOLVED MISMATCH"}</strong>
           </section>
 
           <section className="coverage-grid" aria-label="Validation coverage">
@@ -971,7 +1007,7 @@ export default function Home() {
             <div className="flow-arrow" aria-hidden="true"><span>ANALYZE</span><i>→</i></div>
             <article className="outputs-panel"><div className="panel-heading"><div><span className="step-number">04</span><div><h2>Experiment vs CFD</h2><p>CFD minus experiment, resolved against uncertainty where supported</p></div></div></div>
               <div className="comparison-table-wrap"><table className="comparison-table uncertainty-table">
-                <thead><tr><th>Quantity</th><th>Experiment</th><th>CFD</th><th>CFD − experiment</th><th>Combined uncertainty / method limit</th><th>Assessment</th></tr></thead>
+                <thead><tr><th>Quantity</th><th>Experiment</th><th>CFD</th><th>CFD − experiment</th><th>Combined uncertainty or Caevera prototype limit</th><th>Assessment</th></tr></thead>
                 <tbody>{assessment.metrics.map((metric) => <tr key={metric.id} className={metric.tone === "review" ? "comparison-row-review" : metric.tone === "neutral" ? "comparison-row-neutral" : ""}>
                   <th scope="row"><strong>{metric.label}</strong><small>{metric.purpose}</small></th>
                   <td>{formatMetricValue(metric, metric.experiment)}</td><td>{formatMetricValue(metric, metric.cfd)}</td><td className="difference-cell">{formatMetricDifference(metric)}</td>
@@ -981,10 +1017,10 @@ export default function Home() {
               </table></div>
 
               <section className="result-block mismatch-block"><div><span className="result-index">05</span><h3>Waveform agreement</h3></div><div className="comparison-metrics">
-                <div className={waveformWithinLimit ? "metric-pass" : "metric-review"}><span>Aligned correlation</span><strong>{correlation.toFixed(3)}</strong><small>{waveformWithinLimit ? "Within method limit · target ≥ 0.700" : "Review · target ≥ 0.700"}</small></div>
+                <div className={waveformWithinLimit ? "metric-pass" : "metric-review"}><span>Aligned correlation</span><strong>{correlation.toFixed(3)}</strong><small>{waveformWithinLimit ? "Passes Caevera prototype limit: at least 0.700" : "Outside Caevera prototype limit: below 0.700"}</small></div>
                 <div><span>Normalized RMSE</span><strong>{(nrmse * 100).toFixed(1)}<i>%</i></strong><small>Residual relative to experimental oscillation RMS</small></div>
                 <div><span>Mean pressure bias</span><strong>{signed(pressureBias, 3)} <i>MPa</i></strong><small>Its significance is assessed in the mean-pressure row above</small></div>
-              </div><p className="metric-note">Correlation and harmonic/variability checks use explicit prototype method limits. Pressure, frequency, speed, impulse, and rise-time rows use the supplied experiment/CFD uncertainties. {inconclusiveMetrics ? `${inconclusiveMetrics} metric${inconclusiveMetrics === 1 ? " is" : "s are"} inconclusive.` : ""}</p></section>
+              </div><p className="metric-note">Correlation, harmonic, and variability checks use Caevera prototype product limits. The cited papers did not set these limits. Pressure, frequency, speed, impulse, and rise-time rows use the entered experiment and CFD uncertainties. {inconclusiveMetrics ? `${inconclusiveMetrics} metric${inconclusiveMetrics === 1 ? " cannot" : "s cannot"} be classified from the available case data.` : ""}</p></section>
 
               <section className="result-block causes-block"><div><span className="result-index">06</span><h3>Ranked diagnostic hypotheses</h3></div><ol>{assessment.hypotheses.map((hypothesis, index) => <li key={hypothesis.title}><b>{index + 1}. {hypothesis.title}</b><span>{hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`).join(" ")}</span><small>Model inputs: {hypothesis.modelInputs.filter(Boolean).join(" · ")}</small></li>)}</ol><small>These are transparent sensitivity-test priorities, not causal proof.</small></section>
 
@@ -995,13 +1031,13 @@ export default function Home() {
           </>}
 
           <section className="evidence-panel" aria-label="Calculated signal evidence"><div className="evidence-heading"><div><span className="calculated-label">CALCULATED AFTER CASE ANALYSIS</span><h2>Pressure and wave evidence</h2><p>Every trace, spectrum, propagation phase, and cycle statistic is calculated from the active case.</p></div><div className="control-group"><div className="probe-tabs" aria-label="Probe selection">{activeCase.testSignals.map((_, probe) => <button key={probe} className={activeProbe === probe ? "active" : ""} onClick={() => setActiveProbe(probe)}>P{probe + 1}</button>)}</div><div className="view-tabs" aria-label="Evidence view"><button className={activeView === "signals" ? "active" : ""} onClick={() => setActiveView("signals")}>Pressure</button><button className={activeView === "spectrum" ? "active" : ""} onClick={() => setActiveView("spectrum")}>Spectrum</button><button className={activeView === "residual" ? "active" : ""} onClick={() => setActiveView("residual")}>Residual</button><button className={activeView === "phase" ? "active" : ""} onClick={() => setActiveView("phase")}>Propagation</button><button className={activeView === "cycles" ? "active" : ""} onClick={() => setActiveView("cycles")}>Cycle stability</button></div></div></div><div className="chart-heading"><span>{activeView === "phase" ? `${activeCase.testSignals.length} probes · ${testMode.identifiability.toLowerCase()} experimental mode` : activeView === "cycles" ? `${testMode.cycleSeries.length} experiment cycles · ${cfdMode.cycleSeries.length} CFD cycles` : `Probe P${activeProbe + 1} · ${activeCase.metadata.probePositionsDeg[activeProbe]}° · ${activeComparison.time.length.toLocaleString()} aligned samples`}</span><Legend residual={activeView === "residual"} /></div>{activeView === "signals" && <SignalChart comparison={activeComparison} />}{activeView === "spectrum" && <SpectrumChart comparison={activeComparison} />}{activeView === "residual" && <ResidualChart comparison={activeComparison} />}{activeView === "phase" && <PhaseChart experiment={testMode} simulation={cfdMode} positionsDeg={activeCase.metadata.probePositionsDeg} />}{activeView === "cycles" && <CycleChart experiment={testMode} simulation={cfdMode} />}<div className="wave-summary"><span><b>{probeSetComparison?.sharedLagUs.toFixed(2)} µs</b> shared experiment–CFD alignment</span><span><b>{testMode.identifiability === "Not identifiable" ? "Not identifiable" : `${testMode.waveCount}-wave ${testMode.direction.toLowerCase()}`}</b> experiment · {testMode.identifiability}</span><span><b>{cfdMode.identifiability === "Not identifiable" ? "Not identifiable" : `${cfdMode.waveCount}-wave ${cfdMode.direction.toLowerCase()}`}</b> CFD · {cfdMode.identifiability}</span><span><b>{testMode.identifiability === "Not identifiable" || cfdMode.identifiability === "Not identifiable" ? "Not identifiable" : `${testMode.phaseJitterDeg.toFixed(1)}° / ${cfdMode.phaseJitterDeg.toFixed(1)}°`}</b> phase jitter</span></div>{[...testMode.warnings, ...cfdMode.warnings].length > 0 && <ul className="wave-warnings">{[...new Set([...testMode.warnings, ...cfdMode.warnings])].map((warning) => <li key={warning}>{warning}</li>)}</ul>}</section>
-          <footer><span>Caevera v{ANALYSIS_VERSION} · deterministic analysis</span><span>{cases.length} case{cases.length === 1 ? "" : "s"} in this browser session · not certification evidence</span></footer>
+          <footer><span>Caevera v{ANALYSIS_VERSION} · calculated from the saved case data</span><span>{cases.length} case{cases.length === 1 ? "" : "s"} in this browser session · not a certification or causal proof</span></footer>
         </>}
       </>}
     </section>
 
     {showLoader && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowLoader(false)}><section className="loader-modal" role="dialog" aria-modal="true" aria-labelledby="loader-title" onMouseDown={(event) => event.stopPropagation()}>
-      <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close case loader">×</button><div className="loader-intro"><div><span className="modal-kicker">RDE CASE INPUTS</span><h2 id="loader-title">{reviewingRerun ? "Review controlled rerun" : editingCaseId ? "Edit operating point" : "Add operating point"}</h2></div>{!reviewingRerun && <button className="input-help-button" onClick={() => setShowHelp(true)}>What does each input mean?</button>}</div>{!reviewingRerun && <p>Required fields feed a calculation, validity check, uncertainty assessment, or diagnostic rule. Optional convergence results strengthen the recommendation when available.</p>}
+      <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close case inputs">×</button><div className="loader-intro"><div><span className="modal-kicker">RDE CASE INPUTS</span><h2 id="loader-title">{reviewingRerun ? "Review one-change rerun" : editingCaseId ? "Edit case" : "Add case"}</h2></div>{!reviewingRerun && <button className="input-help-button" onClick={() => setShowHelp(true)}>What does each input mean?</button>}</div>{!reviewingRerun && <p>Required fields are used in a calculation or a check. Optional documented convergence values are entered manually and are not read from the pressure CSV files.</p>}
 
       {reviewingRerun && draftReferenceCase && draftRelationship && cfdPending ? <section className="rerun-review-step" aria-label="Controlled rerun review">
         <span>Ready to analyze</span>
@@ -1018,9 +1054,9 @@ export default function Home() {
 
       <div className="form-section"><h3>Case + geometry</h3><div className="form-grid four"><label><span>Case name</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label><label><span>Mean diameter (mm)</span><input disabled={rerunFieldLocked("annulusMeanDiameterMm")} type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label><label><span>Diameter uncertainty (mm)</span><input disabled={rerunFieldLocked("annulusDiameterUncertaintyMm")} type="number" step="0.01" value={numberValue(draft.annulusDiameterUncertaintyMm)} onChange={(event) => updateNumber("annulusDiameterUncertaintyMm", event.target.value)} /></label><label><span>Maximum expected waves</span><input disabled={rerunFieldLocked("maximumWaveCount")} type="number" min="1" max="12" value={numberValue(draft.maximumWaveCount)} onChange={(event) => updateNumber("maximumWaveCount", event.target.value)} /></label></div><label className="probe-angle-editor"><span>Probe angles (deg) · minimum 3, nonuniform preferred</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input disabled={rerunFieldLocked("probePositionsDeg")} key={index} type="number" aria-label={`Probe ${index + 1} angle`} placeholder={`P${index + 1}`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}<button disabled={controlledRerunDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: [...current.probePositionsDeg, Number.NaN] }))}>+ probe</button>{draft.probePositionsDeg.length > 3 && <button disabled={controlledRerunDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.slice(0, -1) }))}>Remove</button>}</div></label><label className="confirmation-check"><input disabled={rerunFieldLocked("probeSynchronizationConfirmed")} type="checkbox" checked={draft.probeSynchronizationConfirmed} onChange={(event) => setDraft((current) => ({ ...current, probeSynchronizationConfirmed: event.target.checked }))} /><span>I confirm every pressure probe in each file uses one synchronized acquisition time base.</span></label><label className="confirmation-check"><input disabled={rerunFieldLocked("comparisonMatchConfirmed")} type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label></div>
 
-      {cases.length > 0 && <div className="form-section"><h3>{editingCaseId ? "Case relationship" : "Related rerun · optional"}</h3><p className="form-help">{editingCaseId ? "The relationship is locked after analysis. Add a new case to test a different CFD change." : "Choose the family baseline and exact starting case. Caevera copies its settings and experiment samples so you only enter the declared CFD change and new CFD result."}</p><div className="form-grid four">
+      {cases.length > 0 && <div className="form-section"><h3>{editingCaseId ? "Case relationship" : "Related rerun · optional"}</h3><p className="form-help">{editingCaseId ? "This relationship is locked because changing it would change the meaning of the saved result. Add a new case to test a different CFD change." : "A case family is one baseline plus reruns that reuse its experiment and physical operating point. Choose the family baseline and the exact case whose CFD settings you are changing."}</p><div className="form-grid four">
         <label><span>Case family baseline</span><select disabled={Boolean(editingCaseId)} value={draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseCaseFamily(event.target.value)}><option value="">Not a related rerun</option>{cases.filter((item) => item.id !== editingCaseId && !item.relationship).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
-        <label><span>Starting settings</span><select disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.referenceCaseId ?? draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseStartingCase(event.target.value)}>{draftRelationship && cases.filter((item) => item.id !== editingCaseId && (item.id === draftRelationship.baselineCaseId || item.relationship?.baselineCaseId === draftRelationship.baselineCaseId)).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
+        <label><span>Starting case</span><select disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.referenceCaseId ?? draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseStartingCase(event.target.value)}>{draftRelationship && cases.filter((item) => item.id !== editingCaseId && (item.id === draftRelationship.baselineCaseId || item.relationship?.baselineCaseId === draftRelationship.baselineCaseId)).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
         <label><span>Single CFD change</span><select disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.changedVariable ?? "other"} onChange={(event) => chooseChangedVariable(event.target.value as SensitivityVariable)}><option value="mesh">Mesh / spatial method</option><option value="time-step">Time step / temporal method</option><option value="chemistry">Chemistry model</option><option value="inlet">Inlet treatment</option><option value="wall">Wall treatment</option><option value="initialization">Initialization</option><option value="unsteadiness">Measured unsteady forcing</option><option value="other">Choose one</option></select></label>
         <label><span>Change description</span><input disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.description ?? ""} onChange={(event) => setDraftRelationship((current) => current ? { ...current, description: event.target.value } : null)} placeholder="e.g. 50% front-cell refinement" /></label>
       </div>{editingCaseId ? <div className="rerun-inheritance"><strong>{draftRelationship ? "Controlled-rerun definition locked" : "Baseline definition locked"}</strong><span>Create a new case to test a different starting point or CFD variable.</span></div> : draftReferenceCase && <div className="rerun-inheritance"><strong>Starting case copied: {draftReferenceCase.metadata.name}</strong><span>{draftRelationship?.changedVariable === "other" ? "Choose the one CFD change being tested." : `Only ${changeLabel(draftRelationship!.changedVariable).toLowerCase()} settings are editable. Comparison inputs are locked.`}</span></div>}</div>}
@@ -1031,7 +1067,7 @@ export default function Home() {
 
       <div className="form-section"><h3>Solver + numerical schemes</h3><div className="form-grid four"><label><span>Solver</span><input disabled={rerunFieldLocked("solver")} value={draft.solver} onChange={(event) => updateText("solver", event.target.value)} /></label><label><span>Version</span><input disabled={rerunFieldLocked("solverVersion")} value={draft.solverVersion} onChange={(event) => updateText("solverVersion", event.target.value)} /></label><label><span>Dimensionality</span><select disabled={rerunFieldLocked("dimensionality")} value={draft.dimensionality} onChange={(event) => setDraft((current) => ({ ...current, dimensionality: event.target.value as Dimensionality }))}><option value="">Select</option><option value="2D">2D</option><option value="3D">3D</option></select></label><label><span>Runtime (hours) · optional</span><input disabled={rerunFieldLocked("solverRuntimeHours")} type="number" min="0" step="0.1" value={numberValue(draft.solverRuntimeHours)} onChange={(event) => updateNumber("solverRuntimeHours", event.target.value)} /></label><label><span>Spatial scheme</span><input disabled={rerunFieldLocked("spatialScheme")} value={draft.spatialScheme} onChange={(event) => updateText("spatialScheme", event.target.value)} /></label><label><span>Spatial order</span><input disabled={rerunFieldLocked("spatialOrder")} type="number" value={numberValue(draft.spatialOrder)} onChange={(event) => updateNumber("spatialOrder", event.target.value)} /></label><label><span>Numerical flux</span><input disabled={rerunFieldLocked("numericalFlux")} value={draft.numericalFlux} onChange={(event) => updateText("numericalFlux", event.target.value)} /></label><label><span>Limiter / filter / dissipation</span><input disabled={rerunFieldLocked("limiterFilter")} placeholder="Enter None if unused" value={draft.limiterFilter} onChange={(event) => updateText("limiterFilter", event.target.value)} /></label><label><span>Temporal scheme</span><input disabled={rerunFieldLocked("temporalScheme")} value={draft.temporalScheme} onChange={(event) => updateText("temporalScheme", event.target.value)} /></label><label><span>Temporal order</span><input disabled={rerunFieldLocked("temporalOrder")} type="number" value={numberValue(draft.temporalOrder)} onChange={(event) => updateNumber("temporalOrder", event.target.value)} /></label><label><span>Time step (µs)</span><input disabled={rerunFieldLocked("timeStepUs")} type="number" step="0.001" value={numberValue(draft.timeStepUs)} onChange={(event) => updateNumber("timeStepUs", event.target.value)} /></label><label><span>CFL</span><input disabled={rerunFieldLocked("cfl")} type="number" step="0.01" value={numberValue(draft.cfl)} onChange={(event) => updateNumber("cfl", event.target.value)} /></label></div></div>
 
-      <div className="form-section"><h3>Resolution + convergence</h3><div className="form-grid four"><label><span>Total mesh cells</span><input disabled={rerunFieldLocked("meshCells")} type="number" value={numberValue(draft.meshCells)} onChange={(event) => updateNumber("meshCells", event.target.value)} /></label><label><span>Minimum front cell (mm)</span><input disabled={rerunFieldLocked("minimumCellSizeMm")} type="number" step="0.001" value={numberValue(draft.minimumCellSizeMm)} onChange={(event) => updateNumber("minimumCellSizeMm", event.target.value)} /></label><label><span>Cells / induction length</span><input disabled={rerunFieldLocked("cellsPerInductionLength")} type="number" step="0.1" value={numberValue(draft.cellsPerInductionLength)} onChange={(event) => updateNumber("cellsPerInductionLength", event.target.value)} /></label><label><span>Near-wall cell (mm)</span><input disabled={rerunFieldLocked("nearWallCellSizeMm")} type="number" step="0.001" value={numberValue(draft.nearWallCellSizeMm)} onChange={(event) => updateNumber("nearWallCellSizeMm", event.target.value)} /></label><label><span>Mesh-change result (%) · optional</span><input disabled={rerunFieldLocked("meshConvergencePct")} type="number" step="0.1" value={numberValue(draft.meshConvergencePct)} onChange={(event) => updateNumber("meshConvergencePct", event.target.value)} /></label><label><span>Time-step-change result (%) · optional</span><input disabled={rerunFieldLocked("timeStepConvergencePct")} type="number" step="0.1" value={numberValue(draft.timeStepConvergencePct)} onChange={(event) => updateNumber("timeStepConvergencePct", event.target.value)} /></label></div></div>
+      <div className="form-section"><h3>Resolution + convergence</h3><div className="form-grid four"><label><span>Total mesh cells</span><input disabled={rerunFieldLocked("meshCells")} type="number" value={numberValue(draft.meshCells)} onChange={(event) => updateNumber("meshCells", event.target.value)} /></label><label><span>Minimum front cell (mm)</span><input disabled={rerunFieldLocked("minimumCellSizeMm")} type="number" step="0.001" value={numberValue(draft.minimumCellSizeMm)} onChange={(event) => updateNumber("minimumCellSizeMm", event.target.value)} /></label><label><span>Cells / induction length</span><input disabled={rerunFieldLocked("cellsPerInductionLength")} type="number" step="0.1" value={numberValue(draft.cellsPerInductionLength)} onChange={(event) => updateNumber("cellsPerInductionLength", event.target.value)} /></label><label><span>Near-wall cell (mm)</span><input disabled={rerunFieldLocked("nearWallCellSizeMm")} type="number" step="0.001" value={numberValue(draft.nearWallCellSizeMm)} onChange={(event) => updateNumber("nearWallCellSizeMm", event.target.value)} /></label><label><span>Documented mesh-study change (%) · optional</span><input disabled={rerunFieldLocked("meshConvergencePct")} type="number" step="0.1" value={numberValue(draft.meshConvergencePct)} onChange={(event) => updateNumber("meshConvergencePct", event.target.value)} /></label><label><span>Documented time-step-study change (%) · optional</span><input disabled={rerunFieldLocked("timeStepConvergencePct")} type="number" step="0.1" value={numberValue(draft.timeStepConvergencePct)} onChange={(event) => updateNumber("timeStepConvergencePct", event.target.value)} /></label></div></div>
 
       <div className="form-section"><h3>Physics + boundaries</h3><div className="form-grid four"><label><span>Chemical mechanism</span><input disabled={rerunFieldLocked("chemistryModel")} value={draft.chemistryModel} onChange={(event) => updateText("chemistryModel", event.target.value)} /></label><label><span>Species</span><input disabled={rerunFieldLocked("chemistrySpecies")} type="number" value={numberValue(draft.chemistrySpecies)} onChange={(event) => updateNumber("chemistrySpecies", event.target.value)} /></label><label><span>Reactions</span><input disabled={rerunFieldLocked("chemistryReactions")} type="number" value={numberValue(draft.chemistryReactions)} onChange={(event) => updateNumber("chemistryReactions", event.target.value)} /></label><label><span>Chemistry integration</span><input disabled={rerunFieldLocked("chemistryIntegrator")} value={draft.chemistryIntegrator} onChange={(event) => updateText("chemistryIntegrator", event.target.value)} /></label><label><span>Turbulence model</span><input disabled={rerunFieldLocked("turbulenceModel")} placeholder="Enter None if unused" value={draft.turbulenceModel} onChange={(event) => updateText("turbulenceModel", event.target.value)} /></label><label><span>Combustion model</span><input disabled={rerunFieldLocked("combustionModel")} placeholder="Enter None if unused" value={draft.combustionModel} onChange={(event) => updateText("combustionModel", event.target.value)} /></label><label><span>Wall thermal condition</span><input disabled={rerunFieldLocked("wallBoundaryCondition")} value={draft.wallBoundaryCondition} onChange={(event) => updateText("wallBoundaryCondition", event.target.value)} /></label><label><span>Inlet treatment</span><input disabled={rerunFieldLocked("inletBoundaryCondition")} value={draft.inletBoundaryCondition} onChange={(event) => updateText("inletBoundaryCondition", event.target.value)} /></label><label><span>Outlet treatment</span><input disabled={rerunFieldLocked("outletBoundaryCondition")} value={draft.outletBoundaryCondition} onChange={(event) => updateText("outletBoundaryCondition", event.target.value)} /></label><label><span>Ignition / initialization</span><input disabled={rerunFieldLocked("initializationMethod")} value={draft.initializationMethod} onChange={(event) => updateText("initializationMethod", event.target.value)} /></label></div></div>
 

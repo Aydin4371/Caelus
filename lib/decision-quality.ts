@@ -22,12 +22,12 @@ export type DecisionQuality = {
 };
 
 function controlledResultLabel(status: DecisionQualityInput["controlledResultStatus"]) {
-  if (status === "effect-confirmed") return "Confirmed";
-  if (status === "converged") return "Converged";
-  if (status === "rejected") return "Rejected";
-  if (status === "inconclusive") return "Inconclusive";
-  if (status === "comparison-only") return "Comparison only";
-  return "Not run for this selected case";
+  if (status === "effect-confirmed") return "A one-change rerun met the support rule";
+  if (status === "converged") return "Adjacent numerical levels met the convergence rule";
+  if (status === "rejected") return "A one-change rerun met a rejection rule";
+  if (status === "inconclusive") return "A one-change rerun was analyzed but could not be classified";
+  if (status === "comparison-only") return "The selected rerun changed more than one relevant input";
+  return "No one-change result has been analyzed for the selected case";
 }
 
 export function buildDecisionQuality(input: DecisionQualityInput): DecisionQuality {
@@ -35,35 +35,35 @@ export function buildDecisionQuality(input: DecisionQualityInput): DecisionQuali
   const gates: DecisionQualityGate[] = [
     {
       id: "real-data",
-      label: "Real paired experiment + CFD data",
+      label: "Physical experiment paired with CFD",
       satisfied: input.source === "uploaded",
-      result: input.source === "uploaded" ? "Uploaded" : "Generated demonstration only",
+      result: input.source === "uploaded" ? "Uses user-provided experiment and CFD data" : "Uses generated demonstration signals only",
     },
     {
       id: "validity",
-      label: "Comparison validity",
+      label: "Case-matching checks passed",
       satisfied: input.validityStatus === "Valid",
-      result: input.validityStatus,
+      result: input.validityStatus === "Valid" ? "Geometry, operating point, probes, and time window are confirmed" : input.validityStatus === "Blocked" ? "A required case-matching check is not confirmed" : "At least one validity check still needs review",
     },
     {
       id: "data-quality",
-      label: "Signal quality",
+      label: "Signal-quality checks passed",
       satisfied: input.dataQualityStatus === "Ready",
-      result: input.dataQualityStatus,
+      result: input.dataQualityStatus === "Ready" ? "Sampling, duration, continuity, clipping, and spectral checks passed" : "At least one signal-quality check needs review",
     },
     {
       id: "controlled-result",
-      label: "Decisive one-change result",
+      label: "One-change rerun has a classified result",
       satisfied: decisiveControlledResult,
       result: controlledResultLabel(input.controlledResultStatus),
     },
     {
       id: "company-precedent",
-      label: "Comparable company precedent",
+      label: "Independent result from another case family",
       satisfied: input.uploadedPrecedentCount > 0,
       result: input.uploadedPrecedentCount > 0
-        ? `${input.uploadedPrecedentCount} uploaded controlled rerun${input.uploadedPrecedentCount === 1 ? "" : "s"}`
-        : "None loaded",
+        ? `${input.uploadedPrecedentCount} comparable user-provided one-change rerun${input.uploadedPrecedentCount === 1 ? "" : "s"} from another family`
+        : "No comparable rerun from another case family has been analyzed",
     },
   ];
   const score = gates.filter((gate) => gate.satisfied).length;
@@ -80,14 +80,14 @@ export function buildDecisionQuality(input: DecisionQualityInput): DecisionQuali
             : "Not decision-ready";
 
   const explanation = input.source === "demo"
-    ? "The calculations and branching logic ran, but generated signals cannot establish confidence for a real engine decision."
+    ? "Generated signals verify the workflow only. They are not evidence from a physical engine."
     : input.validityStatus === "Blocked"
-      ? "The comparison is blocked. Repair the case match before using the recommendation to change CFD."
+      ? "Do not change the CFD model from this result. First correct the failed case-matching check."
       : input.dataQualityStatus === "Review"
-        ? "The loaded signals limit the decision. Resolve the data-quality findings before relying on the recommendation."
+        ? "A signal-quality problem limits this decision. Correct the listed problem before relying on the recommendation."
         : score >= 4
-          ? "The selected case has direct, decision-relevant support. Engineering review is still required."
-          : "The recommendation is usable as the next controlled test, but it still lacks one or more real evidence layers.";
+          ? "The evidence is strong enough to use this next-run plan after engineering review."
+          : "The plan can guide the next controlled test. The missing evidence layers are listed below.";
 
   return { score, maximumScore: 5, label, explanation, gates };
 }

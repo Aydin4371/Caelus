@@ -2,7 +2,7 @@
 
 Caevera uses a reviewed, versioned record of primary RDE literature and
 general V&V guidance. A source makes a hypothesis traceable and supplies an
-applicability boundary; it does not independently prove causality for a loaded
+applicability boundary; it does not independently prove causality for an analyzed
 case. Runtime records live in `lib/diagnostic-knowledge.ts`.
 
 | ID | Verified source | Runtime use |
