@@ -1,4 +1,4 @@
-export const KNOWLEDGE_BASE_VERSION = "2026.08.2";
+export const KNOWLEDGE_BASE_VERSION = "2026.08.3";
 
 export type DiagnosticCauseId =
   | "case-validity"
@@ -23,6 +23,12 @@ export type DiagnosticSource = {
   finding: string;
   limitation: string;
   reviewedAt: string;
+};
+
+export type DiagnosticResearchClaim = {
+  statement: string;
+  sourceIds: string[];
+  boundary: string;
 };
 
 export const DIAGNOSTIC_SOURCES: DiagnosticSource[] = [
@@ -142,6 +148,50 @@ export const SOURCE_IDS_BY_CAUSE: Record<DiagnosticCauseId, string[]> = {
   "initialization-mode": ["yao-wang-2016"],
   "missing-unsteadiness": [],
   "validation-coverage": ["tobias-agrawal-paxson-2022", "nist-ir-8298"],
+};
+
+export const RESEARCH_CLAIMS_BY_CAUSE: Record<DiagnosticCauseId, DiagnosticResearchClaim[]> = {
+  "case-validity": [{
+    statement: "CFD validation should separate numerical, model-input, and experimental uncertainty before agreement is interpreted.",
+    sourceIds: ["nist-ir-8298"],
+    boundary: "General CFD V&V guidance, not an RDE-specific acceptance limit.",
+  }],
+  "data-quality": [],
+  "spatial-resolution": [{
+    statement: "RDE studies show that spatial resolution can change local pressure and rotating-wave dynamics even when integral outputs appear less sensitive.",
+    sourceIds: ["strakey-ferguson-2022", "batista-et-al-2026"],
+    boundary: "The cited configurations do not define a universal mesh size or convergence percentage.",
+  }, {
+    statement: "Mesh independence must be demonstrated separately from agreement with experiment.",
+    sourceIds: ["nist-ir-8298"],
+    boundary: "This is general verification guidance rather than RDE-specific causal evidence.",
+  }],
+  "chemistry-timescale": [{
+    statement: "Flow and chemistry time resolution are distinct numerical sensitivities that can affect local RDE wave dynamics.",
+    sourceIds: ["batista-et-al-2026", "nist-ir-8298"],
+    boundary: "The studies do not prescribe one universal flow step, chemistry substep, or mechanism.",
+  }],
+  "inlet-boundary": [{
+    statement: "Injection state, slot-generated nonuniformity, and detonation-driven backflow can change RDE pressure gain, operability, and wave structure.",
+    sourceIds: ["dille-et-al-2024", "yan-teng-ng-2021", "paxson-miki-2022"],
+    boundary: "Pressure probes alone cannot identify which inlet mechanism is responsible in a new engine.",
+  }],
+  "wall-loss": [{
+    statement: "Wall heat-loss treatment is a documented RDE pressure-response sensitivity worth isolating in a controlled rerun.",
+    sourceIds: ["strakey-ferguson-2022"],
+    boundary: "The cited combustor does not establish a universal wall model or heat-loss correction.",
+  }],
+  "initialization-mode": [{
+    statement: "Different physically defined ignition patterns can select different rotating-wave modes.",
+    sourceIds: ["yao-wang-2016"],
+    boundary: "The demonstrated mode selection is configuration-specific and does not predict the mode of another RDE.",
+  }],
+  "missing-unsteadiness": [],
+  "validation-coverage": [{
+    statement: "Experiment-CFD validation should use multiple observables and demonstrate agreement over the intended operating envelope.",
+    sourceIds: ["tobias-agrawal-paxson-2022", "nist-ir-8298"],
+    boundary: "Agreement in one combustor or operating point does not validate another configuration.",
+  }],
 };
 
 export function sourcesFor(ids: string[]) {
