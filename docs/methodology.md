@@ -250,6 +250,14 @@ case remains comparison-only and the evidence record lists each changed
 physical input, experiment-sample difference, missing declared setting change,
 or additional CFD setting group.
 
+The new-rerun loader prevents those relationship errors before analysis.
+Comparison inputs and unrelated CFD groups are disabled after a starting case
+and declared variable are chosen. Changing the declared variable restores the
+starting model card before exposing the newly selected group. Solver runtime
+and CFD-result uncertainty remain editable because they describe the result,
+not an additional causal model change. A review gate then verifies that the
+declared group changed and identifies the inherited experiment and new CFD file.
+
 Classification also uses the declared starting case. Targeted error reduction,
 CFD response, newly introduced mismatches, adjacent-level convergence, and
 runtime multiplier are calculated between the starting case and the rerun.
