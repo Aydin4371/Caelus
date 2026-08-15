@@ -258,6 +258,13 @@ and CFD-result uncertainty remain editable because they describe the result,
 not an additional causal model change. A review gate then verifies that the
 declared group changed and identifies the inherited experiment and new CFD file.
 
+Once a case is analyzed, its family baseline, starting case, and declared CFD
+variable are immutable. Editing the case can correct metadata or replace its
+mapped signals, but it cannot reinterpret the existing result as a different
+controlled experiment. Testing another variable requires a new related case,
+which preserves the audit trail and prevents stale settings from being
+misclassified under a new label.
+
 Classification also uses the declared starting case. Targeted error reduction,
 CFD response, newly introduced mismatches, adjacent-level convergence, and
 runtime multiplier are calculated between the starting case and the rerun.

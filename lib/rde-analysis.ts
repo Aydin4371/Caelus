@@ -75,7 +75,7 @@ export type Recommendation = {
   evidence: string;
 };
 
-export const ANALYSIS_VERSION = "1.4.3";
+export const ANALYSIS_VERSION = "1.4.4";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
