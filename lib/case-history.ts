@@ -163,6 +163,14 @@ export function caseFieldLabel(field: keyof CaseMetadata) {
   return FIELD_LABELS[field] ?? String(field);
 }
 
+export function selectIndependentPrecedents(
+  evidence: CaseHistoryEvidence[],
+  currentBaselineCaseId: string | null,
+  source: AnalysisCase["source"],
+) {
+  return evidence.filter((item) => item.baselineCaseId !== currentBaselineCaseId && (source === "demo" ? item.caseSource === "demo" : item.caseSource !== "demo"));
+}
+
 function physicalCaseDifferences(baseline: AnalysisCase, candidate: AnalysisCase) {
   return PHYSICAL_CASE_FIELDS.filter((field) => !valueEqual(baseline.metadata[field], candidate.metadata[field]));
 }
