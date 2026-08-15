@@ -125,6 +125,10 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /Review controlled rerun/);
   assert.match(page, /Comparison inputs are locked/);
   assert.match(page, /changedRerunFields\.map\(caseFieldLabel\)/);
+  assert.match(page, /The relationship is locked after analysis/);
+  assert.match(page, /Controlled-rerun definition locked/);
+  assert.match(page, /effectiveRelationship = editingCase\?\.relationship \?\? draftRelationship/);
+  assert.match(page, /disabled=\{Boolean\(editingCaseId\)\}/);
   assert.match(page, /relationshipIssues/);
   assert.match(page, /Caevera did not use this rerun to update the plan/);
   assert.match(page, /nextRun\.latestControlledResult\.status/);
