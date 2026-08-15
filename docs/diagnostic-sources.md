@@ -1,6 +1,6 @@
 # Diagnostic source ledger
 
-Caevera v0.6 uses a reviewed, versioned record of primary RDE literature and
+Caevera uses a reviewed, versioned record of primary RDE literature and
 general V&V guidance. A source makes a hypothesis traceable and supplies an
 applicability boundary; it does not independently prove causality for a loaded
 case. Runtime records live in `lib/diagnostic-knowledge.ts`.
@@ -17,8 +17,10 @@ case. Runtime records live in `lib/diagnostic-knowledge.ts`.
 | `nist-ir-8298` | Yeo, “A Summary of Industrial Verification, Validation, and Uncertainty Quantification Procedures in Computational Fluid Dynamics,” NISTIR 8298, [doi:10.6028/NIST.IR.8298](https://doi.org/10.6028/NIST.IR.8298) | General CFD V&V and uncertainty guardrails |
 
 Each runtime source record includes authors, year, title, publication, DOI,
-URL, configuration, finding, limitation, and review date. Diagnostic hypotheses
-store source IDs; the downloadable report expands those IDs into the complete
+URL, configuration, finding, limitation, and review date. Each displayed
+research claim stores the exact source IDs that support it plus a separate
+applicability boundary. The interface links those sources for the active
+recommendation, and the downloadable report expands the IDs into the complete
 records used for that case.
 
 Mappings are deliberately narrower than the source list. The Tobias paper is
