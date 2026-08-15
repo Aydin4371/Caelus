@@ -532,6 +532,18 @@ test("a related case is diagnostic only when every experiment sample and one CFD
   const unchangedEvidence = buildCaseHistoryEvidence([baseline, unchangedInlet], baseline.id)[0];
   assert.equal(unchangedEvidence.controlled, false);
   assert.deepEqual(unchangedEvidence.relationshipIssues, ["No inlet setting changed from Synthetic test."]);
+
+  const uncertaintyUpdated: AnalysisCase = {
+    id: "uncertainty-updated",
+    source: "demo",
+    relationship: { baselineCaseId: "base", referenceCaseId: "base", changedVariable: "mesh", description: "Mesh rerun with updated result uncertainty" },
+    metadata: { ...DEMO_METADATA, name: "Mesh uncertainty update", minimumCellSizeMm: 0.125, cfdPressureUncertaintyPct: 1.5, cfdTimingUncertaintyUs: 0.15 },
+    testSignals: demo.test,
+    cfdSignals: demo.cfd,
+  };
+  const uncertaintyEvidence = buildCaseHistoryEvidence([baseline, uncertaintyUpdated], baseline.id)[0];
+  assert.equal(uncertaintyEvidence.controlled, true, "run-result uncertainty metadata is not an additional CFD model change");
+  assert.deepEqual(uncertaintyEvidence.changedSettings, ["minimumCellSizeMm"]);
 });
 
 test("measured unsteady forcing has a classifiable rerun path", () => {

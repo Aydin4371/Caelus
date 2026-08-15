@@ -487,10 +487,23 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 .form-grid.two { grid-template-columns: repeat(2, 1fr); }
 .form-grid label { min-width: 0; display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
 .form-grid input, .form-grid select { width: 100%; height: 42px; padding: 0 11px; border: 1px solid var(--line); border-radius: 5px; background: #ffffff; color: var(--text); font-size: 12px; }
+.form-grid input:disabled, .form-grid select:disabled, .angle-inputs input:disabled { border-color: #dbe5e4; background: #edf2f1; color: #738484; cursor: not-allowed; opacity: 1; }
+.angle-inputs button:disabled { color: #8b9998; cursor: not-allowed; opacity: .55; }
+.confirmation-check:has(input:disabled) { background: #edf2f1; cursor: not-allowed; }
 .form-help { max-width: 760px; margin: -3px 0 13px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .rerun-inheritance { margin-top: 10px; padding: 10px 12px; display: grid; gap: 3px; border-left: 3px solid var(--test); background: var(--surface-blue); }
 .rerun-inheritance strong { font-size: 12px; }
 .rerun-inheritance span { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.rerun-review-step { margin-top: 22px; padding: 23px; border: 1px solid var(--line-strong); border-radius: 9px; background: #fffaf1; }
+.rerun-review-step > span { color: var(--test); font-size: 11px; font-weight: 700; }
+.rerun-review-step h3 { margin: 6px 0 18px; font-size: 22px; font-weight: 650; letter-spacing: -.025em; }
+.rerun-review-list { display: grid; border-top: 1px solid var(--line); }
+.rerun-review-list p { margin: 0; padding: 12px 0; display: grid; grid-template-columns: 170px 1fr; gap: 20px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.rerun-review-list strong { color: var(--text); }
+.rerun-review-list span { color: var(--muted); }
+.rerun-review-confirmation { margin-top: 14px; padding: 11px 13px; display: grid; gap: 3px; border-left: 3px solid var(--test); background: var(--surface-blue); }
+.rerun-review-confirmation strong { font-size: 12px; }
+.rerun-review-confirmation span { color: var(--muted); font-size: 11px; line-height: 1.4; }
 .probe-angle-editor { display: grid; gap: 7px; margin-top: 12px; color: var(--muted); font-size: 11px; }
 .angle-inputs { display: flex; flex-wrap: wrap; gap: 6px; }
 .angle-inputs input { width: 82px; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; background: #fff; }
@@ -596,6 +609,7 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
   .wave-summary { grid-template-columns: 1fr; }
   .loader-intro { align-items: flex-start; flex-direction: column; }
   .input-help-button { margin-right: 0; }
+  .rerun-review-list p { grid-template-columns: 1fr; gap: 4px; }
   .help-modal { padding: 25px 17px; }
   .help-group { padding: 17px; }
   .help-group dl { grid-template-columns: 1fr; }

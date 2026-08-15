@@ -29,6 +29,17 @@ The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
 
+## v1.4.3 controlled-rerun guardrails
+
+- After a starting case is selected, geometry, operating point, experiment
+  setup, and unrelated CFD settings are inherited and locked.
+- Only the declared CFD variable group, run time, and new CFD uncertainty may
+  be edited. Switching the declared group restores the starting settings first.
+- A rerun cannot reach analysis until at least one setting in the declared group
+  changed and a new CFD result was mapped.
+- A short review step names the starting case, reused experiment, changed
+  settings, and new CFD file before the calculation begins.
+
 ## v1.4.2 controlled-rerun setup
 
 - Selecting a case-family baseline and starting case now copies the complete

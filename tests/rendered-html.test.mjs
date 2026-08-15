@@ -119,6 +119,12 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /inheritStartingCase/);
   assert.match(page, /EXPERIMENT REUSED/);
   assert.match(page, /Upload and map only the new CFD result/);
+  assert.match(page, /rerunFieldLocked/);
+  assert.match(page, /chooseChangedVariable/);
+  assert.match(page, /Review rerun →/);
+  assert.match(page, /Review controlled rerun/);
+  assert.match(page, /Comparison inputs are locked/);
+  assert.match(page, /changedRerunFields\.map\(caseFieldLabel\)/);
   assert.match(page, /relationshipIssues/);
   assert.match(page, /Caevera did not use this rerun to update the plan/);
   assert.match(page, /nextRun\.latestControlledResult\.status/);
