@@ -29,6 +29,21 @@ The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
 
+## v1.5.0 traceable generated recommendations
+
+- Comparable precedent excludes the active case family, so a rerun cannot
+  count itself as independent prior evidence.
+- The decision card exposes the exact reviewed claim, DOI-linked sources, and
+  applicability boundary for the active recommendation.
+- Literature is attached claim by claim. Branches without a directly
+  applicable paper say so instead of borrowing a nearby citation.
+- Numerical and model-sensitivity limits are visibly labeled as versioned
+  prototype policies rather than literature-derived acceptance limits.
+- Next-run text is assembled from the selected variable, current setting,
+  target metrics, calculated evidence, and structured policy fields. The old
+  cause-specific recommendation paragraph bank and legacy single-trace
+  recommendation function were removed.
+
 ## v1.4.4 immutable case relationships
 
 - A saved case keeps the family, starting case, and declared CFD variable that
