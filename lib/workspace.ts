@@ -37,6 +37,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
 }
 
+function readableFieldName(key: string) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .replace(/\bcfd\b/g, "CFD")
+    .replace(/\bmm\b/g, "mm")
+    .replace(/\bus\b/g, "µs")
+    .replace(/\bpct\b/g, "%")
+    .replace(/\bkg s\b/g, "kg/s");
+}
+
 function validateSignal(value: unknown, label: string) {
   if (!isObject(value) || !Array.isArray(value.time) || !Array.isArray(value.pressure)) throw new Error(`${label} is not a pressure signal.`);
   if (value.time.length < 32 || value.time.length !== value.pressure.length) throw new Error(`${label} has an invalid sample count.`);
@@ -70,17 +81,17 @@ const REQUIRED_TEXT_METADATA = [
 function validateMetadata(metadata: Record<string, unknown>, label: string) {
   for (const key of REQUIRED_POSITIVE_METADATA) {
     const value = metadata[key];
-    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new Error(`${label} has an invalid ${key} value.`);
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new Error(`${label}: ${readableFieldName(key)} must be a number greater than zero.`);
   }
   for (const key of REQUIRED_NONNEGATIVE_METADATA) {
     const value = metadata[key];
-    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(`${label} has an invalid ${key} value.`);
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(`${label}: ${readableFieldName(key)} must be zero or greater.`);
   }
   for (const key of REQUIRED_TEXT_METADATA) {
-    if (typeof metadata[key] !== "string" || !metadata[key].trim()) throw new Error(`${label} is missing ${key}.`);
+    if (typeof metadata[key] !== "string" || !metadata[key].trim()) throw new Error(`${label}: ${readableFieldName(key)} is required.`);
   }
-  if (typeof metadata.solverRuntimeHours !== "number" || Number.isFinite(metadata.solverRuntimeHours) && metadata.solverRuntimeHours <= 0) throw new Error(`${label} has an invalid solverRuntimeHours value.`);
-  if (metadata.dimensionality !== "2D" && metadata.dimensionality !== "3D") throw new Error(`${label} has an invalid dimensionality.`);
+  if (typeof metadata.solverRuntimeHours !== "number" || Number.isFinite(metadata.solverRuntimeHours) && metadata.solverRuntimeHours <= 0) throw new Error(`${label}: runtime must be greater than zero when it is supplied.`);
+  if (metadata.dimensionality !== "2D" && metadata.dimensionality !== "3D") throw new Error(`${label}: dimensionality must be 2D or 3D.`);
   if (typeof metadata.maximumWaveCount !== "number" || !Number.isInteger(metadata.maximumWaveCount) || metadata.maximumWaveCount < 1 || metadata.maximumWaveCount > 12) throw new Error(`${label} has an invalid maximum wave count.`);
   if (typeof metadata.probeSynchronizationConfirmed !== "boolean" || typeof metadata.comparisonMatchConfirmed !== "boolean") throw new Error(`${label} is missing confirmation states.`);
   if (!Array.isArray(metadata.probePositionsDeg) || metadata.probePositionsDeg.length < 3 || metadata.probePositionsDeg.some((value) => typeof value !== "number" || !Number.isFinite(value))) throw new Error(`${label} has invalid probe angles.`);

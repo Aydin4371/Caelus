@@ -253,7 +253,7 @@ test("case assessment connects validity, uncertainty, model inputs, and next run
   assert.match(result.nextRun.confirmationCriterion, /%|cycles|uncertainty/i);
   assert.ok(["Evidence gate", "Numerical verification", "Physics sensitivity", "Validation expansion"].includes(result.nextRun.stage));
   assert.match(result.nextRun.whyThisRunFirst, /first|prerequisite/i);
-  assert.match(result.nextRun.inconclusiveCriterion, /neither|uncertainty/i);
+  assert.match(result.nextRun.inconclusiveCriterion, /does not reach.*does not meet|uncertainty/i);
   assert.ok(result.nextRun.ifConfirmed.length > 30);
   assert.ok(result.nextRun.ifRejected.length > 30);
   assert.ok(result.nextRun.ifInconclusive.length > 30);
@@ -328,9 +328,9 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   assert.equal(result.nextRun.latestControlledResult.status, "Confirmed");
   assert.equal(result.nextRun.latestControlledResult.caseName, "Fine mesh");
   assert.equal(result.nextRun.decisionPolicy.evaluationMode, "numerical-convergence");
-  assert.match(result.nextRun.confirmationCriterion, /at most 2%/i);
+  assert.match(result.nextRun.confirmationCriterion, /no more than 2%/i);
   assert.match(result.nextRun.rejectionCriterion, /more than 2%/i);
-  assert.match(result.nextRun.inconclusiveCriterion, /adjacent levels cannot be compared/i);
+  assert.match(result.nextRun.inconclusiveCriterion, /not a valid one-change pair|targeted CFD value is unavailable/i);
   assert.equal(result.nextRun.precedent.level, "Demonstration");
   assert.equal(result.nextRun.precedent.matchedCount, 1);
   assert.equal(result.nextRun.precedent.confirmedCount, 1);
@@ -371,7 +371,7 @@ test("numerical convergence stays separate from experiment agreement", () => {
   assert.equal(history[1].sequenceStatus, "effect-confirmed", "worse agreement must not be mistaken for mesh independence");
   assert.equal(history[1].planDisposition, "continue");
   assert.match(history[1].detail, /did not complete numerical convergence/i);
-  assert.match(history[1].detail, /experimental error increased/i);
+  assert.match(history[1].detail, /CFD-to-experiment error.*increased/i);
   assert.equal(selectPlanningEvidence(history, baseline.id)?.caseId, finer.id, "the finer numerical setting remains the accepted starting point");
 });
 
@@ -411,7 +411,7 @@ test("a rejected chained rerun resumes from the latest accepted case without reu
   const plan = buildCaseAssessment(fine.metadata, compareProbeSets(fine.testSignals, fine.cfdSignals).comparisons, fineSummary.experiment, fineSummary.simulation, history);
   assert.match(plan.nextRun.title, /mesh.*convergence/i);
   assert.match(plan.nextRun.change, /0\.125 mm/);
-  assert.ok(plan.nextRun.reasoningLedger.unknowns.some((item) => /convergence limit/i.test(item.observation)));
+  assert.ok(plan.nextRun.reasoningLedger.unknowns.some((item) => /convergence rule/i.test(item.observation)));
 });
 
 test("uploaded pressure arrays determine precedent effects instead of preset values", () => {
@@ -520,7 +520,7 @@ test("a related case is diagnostic only when every experiment sample and one CFD
   assert.ok(evidence.relationshipIssues.some((issue) => /experiment pressure samples differ/i.test(issue)));
   assert.ok(evidence.relationshipIssues.some((issue) => /turbulence model/i.test(issue)));
   assert.match(evidence.detail, /experiment pressure samples differ/i);
-  assert.match(evidence.detail, /additional CFD settings changed: turbulence model/i);
+  assert.match(evidence.detail, /more than one CFD setting group changed.*additional changes: turbulence model/i);
 
   const unchangedInlet: AnalysisCase = {
     id: "unchanged-inlet",
@@ -532,7 +532,7 @@ test("a related case is diagnostic only when every experiment sample and one CFD
   };
   const unchangedEvidence = buildCaseHistoryEvidence([baseline, unchangedInlet], baseline.id)[0];
   assert.equal(unchangedEvidence.controlled, false);
-  assert.deepEqual(unchangedEvidence.relationshipIssues, ["No inlet setting changed from Synthetic test."]);
+  assert.deepEqual(unchangedEvidence.relationshipIssues, ["No inlet setting differs from the starting case Synthetic test."]);
 
   const uncertaintyUpdated: AnalysisCase = {
     id: "uncertainty-updated",

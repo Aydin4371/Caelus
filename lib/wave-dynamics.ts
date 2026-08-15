@@ -344,17 +344,17 @@ export function analyzeRdeProbeSet(
       : "Unstable";
 
   const warnings: string[] = [];
-  if (signals.length === 3) warnings.push("Three probes can leave competing wave modes unresolved; four or more nonuniform probes are recommended.");
-  if (equalSpacingRisk(positionsDeg)) warnings.push("Equal circumferential spacing can alias wave count and direction.");
+  if (signals.length === 3) warnings.push("With only three probes, different wave modes can produce similar phase patterns. Use four or more nonuniform probe locations to separate them more reliably.");
+  if (equalSpacingRisk(positionsDeg)) warnings.push("Equal probe spacing can make different wave counts or directions produce the same measured phase pattern.");
   if (options.synchronizationConfirmed === false) warnings.push("Probe synchronization was not confirmed, so wave count and direction are not identifiable.");
-  if (!phaseQualityUsable) warnings.push("At least one probe fails the phase-quality gate; wave count, direction, propagation speed, and phase jitter are not identifiable.");
+  if (!phaseQualityUsable) warnings.push("At least one probe does not meet the minimum sampling or spectral signal-to-noise requirement. Caevera therefore does not report wave count, direction, propagation speed, or phase jitter as identified results.");
   if (complexModeDetected && spectralResult.significantNonHarmonic) warnings.push(`A second non-harmonic pressure component at ${spectralResult.significantNonHarmonic.frequencyKHz.toFixed(2)} kHz is ${(100 * spectralResult.significantNonHarmonic.relativeAmplitude).toFixed(0)}% of the shared spectral peak; a single-mode phase fit is not a complete mode description.`);
-  if (identifiability !== "Identified") warnings.push(`Dominant mode is ${identifiability.toLowerCase()}; the next candidate is ${alternative.waveCount}-wave ${alternative.direction.toLowerCase()}.`);
+  if (identifiability !== "Identified") warnings.push(`Caevera cannot uniquely identify one rotating mode. The best fit is ${best.waveCount}-wave ${best.direction.toLowerCase()}, and the next-best fit is ${alternative.waveCount}-wave ${alternative.direction.toLowerCase()}.`);
   const minimumNyquist = Math.min(...qualities.map((quality) => quality.nyquistKHz));
-  if (minimumNyquist < 3 * waveFrequencyKHz) warnings.push("Sampling Nyquist frequency does not cover the third harmonic of the passage frequency.");
+  if (minimumNyquist < 3 * waveFrequencyKHz) warnings.push("The sample rate is too low to represent the third harmonic of the detected wave-passage frequency.");
   if (Number.isFinite(options.sensorBandwidthKHz) && options.sensorBandwidthKHz! < 2 * waveFrequencyKHz) warnings.push("Experimental sensor bandwidth does not cover the second harmonic; sharp-front and harmonic comparisons are limited.");
   if (Number.isFinite(options.filterCutoffKHz) && options.filterCutoffKHz! < 2 * waveFrequencyKHz) warnings.push("Experimental filter cutoff attenuates the second-harmonic band.");
-  if (Number.isFinite(options.filterCutoffKHz) && options.filterCutoffKHz! > minimumNyquist) warnings.push("Filter cutoff exceeds the digital Nyquist frequency; verify anti-alias filtering before interpreting the spectrum.");
+  if (Number.isFinite(options.filterCutoffKHz) && options.filterCutoffKHz! > minimumNyquist) warnings.push("The entered filter cutoff is above half the sample rate. Verify the anti-alias filter before interpreting the spectrum.");
 
   return {
     waveFrequencyKHz,

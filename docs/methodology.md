@@ -275,12 +275,21 @@ explicitly resumes from the last accepted settings.
 
 Primary literature provides traceable applicability context and identifies
 physically defensible sensitivity directions. It never proves that a paper's
-reported mechanism caused the discrepancy in the loaded case. That claim
+reported mechanism caused the discrepancy in the analyzed case. That claim
 requires a controlled rerun whose result supports or weakens the hypothesis.
 Each displayed research claim stores its own source IDs and applicability
 boundary. Sources are mapped only to claims they directly support. A diagnostic
 branch with no directly applicable reviewed source is visibly labeled as a
 prototype policy; Caevera does not borrow a citation from an adjacent topic.
+
+The pressure files contain time and pressure values only. Caevera creates the
+evidence findings after it analyzes the active case and its verified
+one-change reruns. In the interface, "supports" means a calculated finding is
+consistent with the explanation, "contradicts" means a calculated finding
+weighs against it, and "still needed" identifies the result required before a
+classification can be made. A zero count means no analyzed finding was placed
+in that category. It never means that a contradictory CSV column was expected
+or missing.
 
 For a verified one-variable rerun, Caevera evaluates the metrics predicted to
 respond to that variable:
@@ -317,11 +326,11 @@ and outcome criteria are assembled from structured fields: the selected
 variable, current case setting, target metric IDs, calculated observations,
 case-history state, and versioned policy values. Caevera does not select a
 stored paragraph for a named cause. Static interface labels remain fixed, but
-the decision content is generated from the loaded case state.
+the decision content is generated from the analyzed case state.
 
 ## 10. Comparable-case intelligence
 
-Caevera aggregates completed controlled reruns across the loaded workspace when
+Caevera aggregates completed controlled reruns across the open workspace when
 they share the selected cause and overlap the active mismatch signature. The
 active case family is excluded from this pool because its reruns are already
 used as direct case-history evidence and are not independent precedent. The
@@ -351,7 +360,7 @@ metrics from the stored experiment and CFD pressure arrays, verifies the
 one-variable relationship from entered metadata, classifies the result, and
 then aggregates it. Runtime multipliers use only user-entered solver hours.
 The engineering rule definitions and decision thresholds are versioned code;
-their application and all displayed numerical results depend on the loaded
+their application and all displayed numerical results depend on the analyzed
 inputs.
 
 One or two uploaded precedents are labeled limited evidence. Three or more are

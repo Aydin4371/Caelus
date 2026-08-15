@@ -5,6 +5,7 @@ import {
   CONFIRMATION_ERROR_REDUCTION_PCT,
   CONTROLLED_RERUN_RULES,
   REJECTION_ERROR_WORSENING_PCT,
+  TARGET_METRIC_LABELS,
   type ControlledSensitivityVariable,
 } from "./recommendation-rules.ts";
 import { compareProbeSets, analyzeRdeProbeSet, type RdeModeResult } from "./wave-dynamics.ts";
@@ -107,6 +108,8 @@ const FIELD_LABELS: Partial<Record<keyof CaseMetadata, string>> = {
   minimumCellSizeMm: "minimum front cell",
   cellsPerInductionLength: "cells per induction length",
   nearWallCellSizeMm: "near-wall cell size",
+  meshConvergencePct: "documented mesh-study change",
+  timeStepConvergencePct: "documented time-step-study change",
   timeStepUs: "time step",
   wallBoundaryCondition: "wall treatment",
   inletBoundaryCondition: "inlet treatment",
@@ -159,6 +162,10 @@ function fieldNames(fields: (keyof CaseMetadata)[]) {
   return fields.map(caseFieldLabel).join(", ");
 }
 
+function metricNames(ids: string[]) {
+  return ids.map((id) => TARGET_METRIC_LABELS[id] ?? id.replaceAll("-", " ")).join(", ");
+}
+
 export function caseFieldLabel(field: keyof CaseMetadata) {
   return FIELD_LABELS[field] ?? String(field);
 }
@@ -188,14 +195,14 @@ function mean(values: number[]) {
 
 function agreementDetail(errorReductionPct: number, newMismatchMetricIds: string[]) {
   const agreement = !Number.isFinite(errorReductionPct)
-    ? "Experimental agreement could not be resolved from the targeted outputs."
+    ? "Caevera could not calculate the mean CFD-to-experiment error change for the targeted values."
     : Math.abs(errorReductionPct) < 0.05
-      ? "Mean targeted experimental agreement was unchanged."
+      ? "The mean CFD-to-experiment error in the targeted values was unchanged."
       : errorReductionPct > 0
-        ? `Mean targeted experimental error fell by ${errorReductionPct.toFixed(1)}%.`
-        : `Mean targeted experimental error increased by ${Math.abs(errorReductionPct).toFixed(1)}%.`;
+        ? `The mean CFD-to-experiment error in the targeted values fell by ${errorReductionPct.toFixed(1)}%.`
+        : `The mean CFD-to-experiment error in the targeted values increased by ${Math.abs(errorReductionPct).toFixed(1)}%.`;
   const mismatches = newMismatchMetricIds.length
-    ? ` A new resolved mismatch appeared in ${newMismatchMetricIds.join(", ")}.`
+    ? ` A new resolved mismatch appeared in ${metricNames(newMismatchMetricIds)}.`
     : " No new resolved mismatch appeared.";
   return `${agreement}${mismatches}`;
 }
@@ -262,12 +269,12 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
     const expectedChangedSettings = rule ? changedSettings.filter((field) => CONTROLLED_RERUN_FIELDS[variable].includes(field)) : [];
     const extraChangedSettings = rule ? changedSettings.filter((field) => !CONTROLLED_RERUN_FIELDS[variable].includes(field)) : changedSettings;
     const relationshipIssues: string[] = [];
-    if (!rule || variable === "other") relationshipIssues.push("Choose one declared CFD change instead of Other / comparison only.");
+    if (!rule || variable === "other") relationshipIssues.push("No single CFD setting group was declared. Choose one named change if this rerun should update the plan.");
     if (!referenceInFamily) relationshipIssues.push("The selected starting case is outside this case family.");
-    if (physicalDifferences.length) relationshipIssues.push(`Case inputs changed: ${fieldNames(physicalDifferences)}.`);
-    if (!experimentMatches) relationshipIssues.push(`Experiment pressure samples differ from ${referenceCase.metadata.name}.`);
-    if (rule && expectedChangedSettings.length === 0) relationshipIssues.push(`No ${variable === "time-step" ? "time-step" : variable} setting changed from ${referenceCase.metadata.name}.`);
-    if (extraChangedSettings.length) relationshipIssues.push(`Additional CFD settings changed: ${fieldNames(extraChangedSettings)}.`);
+    if (physicalDifferences.length) relationshipIssues.push(`Physical or comparison inputs changed: ${fieldNames(physicalDifferences)}.`);
+    if (!experimentMatches) relationshipIssues.push(`Experiment pressure samples differ from the starting case ${referenceCase.metadata.name}.`);
+    if (rule && expectedChangedSettings.length === 0) relationshipIssues.push(`No ${variable === "time-step" ? "time-step" : variable} setting differs from the starting case ${referenceCase.metadata.name}.`);
+    if (extraChangedSettings.length) relationshipIssues.push(`More than one CFD setting group changed. Additional changes: ${fieldNames(extraChangedSettings)}.`);
     const controlled = Boolean(rule)
       && referenceCase.id !== candidate.id
       && referenceInFamily
@@ -301,7 +308,7 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       relationshipIssues,
       sequenceStatus: "comparison-only" as const,
       planDisposition: "ignore" as const,
-      detail: `Comparison only: ${relationshipIssues.join(" ") || "the declared relationship could not be verified."}`,
+      detail: `Comparison only. Caevera did not use this case to update the plan. ${relationshipIssues.join(" ") || "The saved case relationship is not a valid one-change rerun."}`,
     };
 
     const candidateSummary = summaryFor(candidate);
@@ -353,19 +360,22 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
 
     const change = relation.description || relation.changedVariable;
     const agreement = agreementDetail(errorReductionPct, newMismatches);
+    const targetNames = metricNames(targets);
     const detail = sequenceStatus === "converged"
-      ? `${change} completed the numerical check: targeted CFD outputs changed by ${incrementalResponsePct.toFixed(1)}%, at or below the ${rule.convergenceResponsePct!.toFixed(1)}% convergence limit. ${agreement}`
+      ? `Compared with ${referenceCase.metadata.name}, ${change} changed ${targetNames} by ${incrementalResponsePct.toFixed(1)}%. This is at or below the ${rule.convergenceResponsePct!.toFixed(1)}% prototype convergence limit, so the numerical sequence is converged. ${agreement}`
       : sequenceStatus === "effect-confirmed" && numerical
-        ? `${change} did not complete numerical convergence: targeted CFD outputs changed by ${incrementalResponsePct.toFixed(1)}%, above the ${rule.convergenceResponsePct!.toFixed(1)}% limit. ${agreement}`
+        ? `Compared with ${referenceCase.metadata.name}, ${change} changed ${targetNames} by ${incrementalResponsePct.toFixed(1)}%. This is above the ${rule.convergenceResponsePct!.toFixed(1)}% prototype limit, so the numerical setting still changes the CFD result and did not complete numerical convergence. ${agreement}`
         : sequenceStatus === "effect-confirmed"
-          ? `${change} produced the predicted response: mean targeted error across ${targets.join(", ")} fell by ${errorReductionPct.toFixed(1)}%, with no new resolved mismatch.`
+          ? `Compared with ${referenceCase.metadata.name}, ${change} reduced the mean CFD-to-experiment error in ${targetNames} by ${errorReductionPct.toFixed(1)}%, with no new resolved mismatch. This meets the prototype support rule.`
         : sequenceStatus === "rejected" && hasNewMismatch
-          ? `${change} was rejected because it created a new resolved mismatch in ${newMismatches.join(", ")}.`
+          ? `${change} does not support the tested explanation because it created a new resolved mismatch in ${metricNames(newMismatches)}.`
           : sequenceStatus === "rejected" && rejectedForResponse
-            ? `${change} rejected the predicted response: targeted CFD outputs changed by only ${responseMagnitudePct.toFixed(1)}%, below the ${rule.minimumResponsePct.toFixed(1)}% response threshold.`
+            ? `${change} does not support the tested explanation because ${targetNames} changed by only ${responseMagnitudePct.toFixed(1)}%, below the ${rule.minimumResponsePct.toFixed(1)}% prototype response limit.`
             : sequenceStatus === "rejected"
-              ? `${change} rejected the predicted response: mean targeted error increased by ${Math.abs(errorReductionPct).toFixed(1)}%.`
-              : `${change} was inconclusive: mean targeted error changed by ${Number.isFinite(errorReductionPct) ? Math.abs(errorReductionPct).toFixed(1) : "an unresolvable amount"}% and did not meet a confirmation, rejection, or convergence rule.`;
+              ? `${change} does not support the tested explanation because the mean CFD-to-experiment error in ${targetNames} increased by ${Math.abs(errorReductionPct).toFixed(1)}%.`
+              : Number.isFinite(errorReductionPct)
+                ? `Caevera cannot classify ${change}. The mean CFD-to-experiment error in ${targetNames} changed by ${Math.abs(errorReductionPct).toFixed(1)}%, which meets neither the support rule nor a rejection rule.`
+                : `Caevera cannot classify ${change} because it could not calculate the error change for ${targetNames}.`;
 
     const evidence: CaseHistoryEvidence = {
       baselineCaseId: baseline.id,

@@ -7,7 +7,7 @@ uncertainty, orders traceable diagnostic hypotheses by evidence state, and recom
 controlled next simulation. When a related rerun is added, Caevera classifies
 the predicted response as confirmed, converged, rejected, or inconclusive and
 updates the next recommendation. It also aggregates comparable controlled
-reruns already loaded in the workspace, showing observed outcome counts,
+reruns already analyzed in the workspace, showing observed outcome counts,
 metric-error improvement, and runtime multiplier without inventing precedent.
 The interface leads with the engineering conclusion and keeps the underlying
 case counts available as a disclosure rather than presenting unexplained raw
@@ -28,6 +28,22 @@ case rather than embedded examples.
 The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
+
+## v1.5.1 plain-language decision states
+
+- Every evidence column now says exactly what its findings mean. A zero count
+  means no analyzed finding was classified in that direction; it does not mean
+  the CSV is incomplete.
+- The interface explicitly distinguishes pressure-file values from findings
+  that Caevera calculates after comparing cases.
+- Numerical-convergence, model-sensitivity, evidence-readiness, prior-family,
+  and research-source descriptions now name what is compared, which rule is
+  applied, and what the user should do next.
+- Input help distinguishes values read from pressure files from manually
+  entered study results, and case-entry errors identify the exact field that
+  needs correction.
+- The downloadable report uses the same plain-language definitions as the
+  interface.
 
 ## v1.5.0 traceable generated recommendations
 
@@ -90,7 +106,7 @@ discrepancy.
   changes before a related rerun can affect the plan.
 - Adds a classifiable measured-unsteadiness branch and makes data-quality gates
   outrank CFD tuning.
-- Adds comparable-case intelligence using only loaded, verified controlled
+- Adds comparable-case intelligence using only analyzed, verified controlled
   reruns. Synthetic precedents remain visibly labeled and do not influence
   uploaded cases.
 - Recalculates every recommendation, outcome, metric improvement, and runtime
@@ -179,7 +195,7 @@ uncertainty, evidence-state, source, and next-run records.
   modules as not assessed when those measurements are absent
 - Caevera branding throughout the interface and reports
 
-That release also used deterministic local analysis rather than an LLM.
+That release also calculated every result directly from the saved case data rather than using an LLM.
 
 ## v0.6 changes implemented
 
@@ -241,8 +257,8 @@ No LLM is used in v0.7.
   sequence.
 - Reproduces five published RDE frequency/wave-count/geometry-to-speed values
   and runs two checksum-locked Zenodo pressure fixtures through the same
-  multimode analyzer used for uploads. These are analyzer regression tests,
-  never paired experiment–CFD evidence or company precedent.
+  multimode analyzer used for user-provided cases. These are analyzer regression
+  tests, never paired experiment-CFD evidence or independent case-family evidence.
 
 No heat, thrust, LLM, or automatic CFD execution is included in v1.0.
 
@@ -331,7 +347,7 @@ The suite also covers adaptive confirmed, rejected, and inconclusive branches.
 Uncertainty statuses use a root-sum-square one-standard-uncertainty estimate
 (`k = 1`) from the inputs supplied by the user. This is not a certification
 tolerance. Harmonic and cycle-variability checks still use clearly labeled
-prototype method limits because estimator/repeatability uncertainty is not yet
+Caevera prototype product limits because estimator/repeatability uncertainty is not yet
 available.
 
 Diagnostic hypotheses prioritize controlled sensitivity studies; they are not

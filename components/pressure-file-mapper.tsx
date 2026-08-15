@@ -77,7 +77,7 @@ export function PressureFileMapper({
       <label className="file-picker">Choose CSV / TSV<input type="file" accept=".csv,.tsv,.txt" onChange={readFile} hidden /></label>
     </div>
 
-    {!table && <p className="mapper-empty">{currentFileName ? "Choose a file only if you want to replace the current mapped data." : "Upload an ordinary delimited export, then identify the time and pressure columns."}</p>}
+    {!table && <p className="mapper-empty">{currentFileName ? "The current mapped file will be kept unless you choose a replacement." : "Choose a CSV, TSV, or delimited text file. Then select the time column and one pressure column for each probe."}</p>}
 
     {table && mapping && <>
       <div className="mapper-source-summary"><span>{table.sourceRows.toLocaleString()} source rows</span><span>{table.headers.length} columns</span><span>{table.delimiter === "\t" ? "tab" : table.delimiter === "," ? "comma" : "semicolon"} delimited</span></div>
@@ -92,11 +92,11 @@ export function PressureFileMapper({
           <label><span>Pressure unit in file</span><select value={probe.unit} onChange={(event) => invalidate({ ...mapping, probes: mapping.probes.map((item, itemIndex) => itemIndex === index ? { ...item, unit: event.target.value as PressureUnit } : item) })}>{PRESSURE_UNITS.map((unit) => <option key={unit}>{unit}</option>)}</select></label>
         </div>)}
       </div>
-      <button type="button" className="button secondary mapper-confirm" onClick={confirmMapping}>Apply mapping and preview</button>
+      <button type="button" className="button secondary mapper-confirm" onClick={confirmMapping}>Check mapping and preview values</button>
     </>}
 
     {mapped && <div className="mapped-preview">
-      <div className="preview-summary"><strong>Mapped successfully</strong><span>{mapped.provenance.validRows.toLocaleString()} usable rows · {mapped.preview.sampleRateKHz.toFixed(2)} kHz · {mapped.preview.durationMs.toFixed(3)} ms</span></div>
+      <div className="preview-summary"><strong>File mapping is ready</strong><span>{mapped.provenance.validRows.toLocaleString()} rows will be analyzed · {mapped.preview.sampleRateKHz.toFixed(2)} kHz sample rate · {mapped.preview.durationMs.toFixed(3)} ms duration</span></div>
       <div className="preview-table-wrap"><table><thead><tr>{mapped.preview.headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{mapped.preview.rows.map((row, index) => <tr key={index}><td>{row.timeMs.toPrecision(6)}</td>{row.pressureMpa.map((value, probe) => <td key={probe}>{value.toPrecision(6)}</td>)}</tr>)}</tbody></table></div>
       <ul>{mapped.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
     </div>}

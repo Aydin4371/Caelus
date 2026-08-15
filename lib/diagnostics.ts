@@ -225,7 +225,7 @@ function resolvedPressureMetric({
     percentDifference: Number.isFinite(test) ? 100 * difference / Math.max(Math.abs(test), 1e-12) : null,
     unit,
     uncertainty: assessment.combined,
-    uncertaintyLabel: "Combined measurement + numerical uncertainty (RSS, k=1)",
+    uncertaintyLabel: "Combined measurement and CFD uncertainty (root-sum-square, one standard uncertainty)",
     assessment,
     tone: statusTone(assessment.status),
   };
@@ -235,7 +235,7 @@ function prototypeAssessment(matches: boolean, label: string, explanation: strin
   return {
     combined: null,
     status: matches ? "within-limit" : "review",
-    label: matches ? "Within method limit" : "Review",
+    label: matches ? label : "Outside prototype limit",
     explanation,
   };
 }
@@ -263,7 +263,7 @@ function inconclusiveMetric(id: string, label: string, purpose: string, experime
     combined: null,
     status: "inconclusive",
     label: "Not identifiable",
-    explanation: "The available probe geometry or data quality does not support this conclusion.",
+    explanation: "Caevera cannot calculate this result reliably from the probe locations and signal quality in this case.",
   };
   return {
     id,
@@ -275,7 +275,7 @@ function inconclusiveMetric(id: string, label: string, purpose: string, experime
     percentDifference: null,
     unit: "",
     uncertainty: null,
-    uncertaintyLabel: "Withheld by identifiability gate",
+    uncertaintyLabel: "Not reported because the mode could not be identified reliably",
     assessment,
     tone: "neutral",
   };
@@ -349,26 +349,26 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
     add("spatial-resolution", "Spatial resolution or numerical dissipation", [
       evidence(`CFD peak pressure is ${Math.abs(peakPressure!.percentDifference ?? 0).toFixed(1)}% low.`, "supports", "moderate"),
       evidence(`CFD pressure rise is ${Math.abs(riseTime?.percentDifference ?? 0).toFixed(1)}% longer.`, "supports", "moderate"),
-      ...(!hasControlledMeshEvidence ? [evidence(Number.isFinite(metadata.meshConvergencePct) ? `User-entered mesh-change effect is ${metadata.meshConvergencePct.toFixed(1)}%.` : "No controlled mesh-convergence result was supplied.", Number.isFinite(metadata.meshConvergencePct) ? (metadata.meshConvergencePct > NUMERICAL_CONVERGENCE_RESPONSE_PCT ? "supports" : "weakens") : "unknown", "strong")] : []),
+      ...(!hasControlledMeshEvidence ? [evidence(Number.isFinite(metadata.meshConvergencePct) ? `The manually entered documented mesh-study change is ${metadata.meshConvergencePct.toFixed(1)}%.` : "This family has no analyzed one-change mesh rerun, and no documented mesh-study percentage was entered.", Number.isFinite(metadata.meshConvergencePct) ? (metadata.meshConvergencePct > NUMERICAL_CONVERGENCE_RESPONSE_PCT ? "supports" : "weakens") : "unknown", "strong")] : []),
     ], [`${metadata.minimumCellSizeMm} mm minimum cell`, `${metadata.cellsPerInductionLength} cells/induction length`, metadata.numericalFlux, metadata.limiterFilter]);
   }
   if (isMismatch(frequency)) {
     add("chemistry-timescale", "Chemistry timescale or temporal resolution", [evidence(`Wave-frequency difference is ${Math.abs(frequency!.percentDifference ?? 0).toFixed(1)}% and is ${frequency!.assessment.label.toLowerCase()}.`, "supports")], [metadata.chemistryModel, metadata.chemistryIntegrator, `${metadata.timeStepUs} µs time step`]);
-    add("inlet-boundary", "Inlet state or backflow representation", [evidence("A resolved wave-frequency mismatch is consistent with, but not unique to, inlet-state, injection, or backflow error.", "supports", "context")], [metadata.inletBoundaryCondition, `${metadata.inletPressureBar} bar`, `${metadata.inletTemperatureK} K`, `φ ${metadata.equivalenceRatio}`]);
+    add("inlet-boundary", "Inlet state or backflow representation", [evidence("An incorrect inlet state, injection model, or backflow treatment can produce a wave-frequency mismatch, but frequency alone cannot identify which inlet mechanism is responsible.", "supports", "context")], [metadata.inletBoundaryCondition, `${metadata.inletPressureBar} bar`, `${metadata.inletTemperatureK} K`, `φ ${metadata.equivalenceRatio}`]);
   }
   if (isMismatch(meanPressure)) {
     add("inlet-boundary", "Inlet state or backflow representation", [evidence(`Mean-pressure bias is ${numeric(meanPressure!.difference).toFixed(3)} MPa.`, "supports")], [metadata.inletBoundaryCondition, `${metadata.massFlowKgS} kg/s`, `${metadata.inletPressureBar} bar`]);
   }
   if (isMismatch(amplitude) || isMismatch(impulse)) {
     add("wall-loss", "Wall heat-loss treatment", [
-      evidence(isMismatch(amplitude) ? `Pressure-amplitude difference is ${Math.abs(amplitude!.percentDifference ?? 0).toFixed(1)}% and exceeds combined uncertainty.` : "Pressure amplitude is not independently resolved.", isMismatch(amplitude) ? "supports" : "unknown"),
-      evidence(isMismatch(impulse) ? `Wave-passage impulse difference is ${Math.abs(impulse!.percentDifference ?? 0).toFixed(1)}% and exceeds combined uncertainty.` : "Pressure impulse is not independently resolved.", isMismatch(impulse) ? "supports" : "unknown"),
+      evidence(isMismatch(amplitude) ? `Pressure-amplitude difference is ${Math.abs(amplitude!.percentDifference ?? 0).toFixed(1)}% and exceeds combined uncertainty.` : "The pressure-amplitude difference does not exceed combined uncertainty, so it neither supports nor contradicts this explanation.", isMismatch(amplitude) ? "supports" : "unknown"),
+      evidence(isMismatch(impulse) ? `Wave-passage impulse difference is ${Math.abs(impulse!.percentDifference ?? 0).toFixed(1)}% and exceeds combined uncertainty.` : "The pressure-impulse difference does not exceed combined uncertainty, so it neither supports nor contradicts this explanation.", isMismatch(impulse) ? "supports" : "unknown"),
     ], [metadata.wallBoundaryCondition, `${metadata.nearWallCellSizeMm} mm near-wall cell`, metadata.chemistryModel, metadata.chemistryIntegrator]);
   }
   if (isMismatch(mode) || isMismatch(phasePattern) || isMismatch(modeTransitions)) {
     add("initialization-mode", "Initialization or domain-mode sensitivity", [
       evidence(isMismatch(mode) ? "Experiment and CFD identify different rotating-wave counts." : "Wave count matches across the full record.", isMismatch(mode) ? "supports" : "unknown", "strong"),
-      evidence(isMismatch(phasePattern) ? `CFD circumferential phase pattern differs by ${numeric(phasePattern!.difference).toFixed(1)}° RMS.` : "Circumferential phase pattern is within the current method limit.", isMismatch(phasePattern) ? "supports" : "weakens"),
+      evidence(isMismatch(phasePattern) ? `CFD circumferential phase pattern differs by ${numeric(phasePattern!.difference).toFixed(1)}° RMS.` : "The phase-pattern difference is within Caevera's prototype product limit.", isMismatch(phasePattern) ? "supports" : "weakens"),
       evidence(isMismatch(modeTransitions) ? "Experiment and CFD contain different numbers of window-to-window mode transitions." : "Mode-transition counts match.", isMismatch(modeTransitions) ? "supports" : "weakens"),
     ], [metadata.initializationMethod, metadata.dimensionality, `${metadata.meshCells.toLocaleString()} cells`, `${metadata.probePositionsDeg.length} pressure probes`]);
   }
@@ -377,7 +377,7 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
   }
   if ((isMismatch(variability) && numeric(variability!.cfd) < numeric(variability!.experiment)) || isMismatch(frequencyDrift) || (isMismatch(phaseJitter) && numeric(phaseJitter!.cfd) < numeric(phaseJitter!.experiment))) {
     add("missing-unsteadiness", "Missing unsteadiness in the CFD setup", [
-      evidence(isMismatch(variability) ? `CFD cycle variability differs by ${Math.abs(numeric(variability!.difference)).toFixed(1)} percentage points.` : "Cycle-range variability is within the current method limit.", isMismatch(variability) ? "supports" : "weakens"),
+      evidence(isMismatch(variability) ? `CFD cycle variability differs by ${Math.abs(numeric(variability!.difference)).toFixed(1)} percentage points.` : "The cycle-variability difference is within Caevera's prototype product limit.", isMismatch(variability) ? "supports" : "weakens"),
       evidence(isMismatch(frequencyDrift) ? `Frequency-drift difference is ${Math.abs(numeric(frequencyDrift!.difference)).toFixed(1)} percentage points.` : "Frequency drift is similar.", isMismatch(frequencyDrift) ? "supports" : "weakens"),
       evidence(isMismatch(phaseJitter) ? `Phase-jitter difference is ${Math.abs(numeric(phaseJitter!.difference)).toFixed(1)}°.` : "Phase jitter is similar.", isMismatch(phaseJitter) ? "supports" : "weakens"),
     ], [metadata.turbulenceModel, metadata.combustionModel, metadata.inletBoundaryCondition, metadata.dimensionality]);
@@ -398,7 +398,7 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
   }
 
   if (!candidates.length) {
-    add("validation-coverage", "Validation-envelope coverage", [evidence("No current comparison is resolved beyond uncertainty or fails an exact mode check.", "supports", "context")], [`${metadata.inletPressureBar} bar`, `${metadata.inletTemperatureK} K`, `φ ${metadata.equivalenceRatio}`]);
+    add("validation-coverage", "Validation-envelope coverage", [evidence("Every compared value in this case is either within the entered uncertainty or matches its exact mode category. This does not establish agreement for other outputs or operating points.", "supports", "context")], [`${metadata.inletPressureBar} bar`, `${metadata.inletTemperatureK} K`, `φ ${metadata.equivalenceRatio}`]);
   }
   const rank = (candidate: DiagnosticHypothesis) => {
     const states = candidate.evidence;
@@ -444,7 +444,7 @@ function targetMetricNames(ids: string[]) {
 }
 
 function listPhrase(items: string[]) {
-  if (items.length < 2) return items[0] ?? "the targeted outputs";
+  if (items.length < 2) return items[0] ?? "the targeted CFD values";
   return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
 
@@ -473,7 +473,7 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
   const targets = targetMetricNames(plannedRule?.targets ?? []);
   const targetText = listPhrase(targets);
   const reason = directSupporting.map((item) => item.observation).join(" ")
-    || `The loaded evidence ranks ${hypothesis.title.toLowerCase()} as the next unresolved test.`;
+    || `Among the unresolved explanations for this case, ${hypothesis.title.toLowerCase()} has the strongest available support.`;
   const common = {
     evidence: hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`),
     evidenceStrength: supporting.some((item) => item.strength === "strong") ? "High" as const : supporting.length ? "Moderate" as const : "Exploratory" as const,
@@ -497,47 +497,49 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
     return {
       ...common,
       question: numericalLimit != null
-        ? `Have ${targetText} stopped changing between adjacent ${variableLabel} levels?`
-        : `Does changing ${variableLabel} improve ${targetText}?`,
-      title: continuingSequence ? `Continue the documented ${variableLabel} convergence sequence` : `Run one controlled ${variableLabel} comparison`,
-      change: `Start from ${currentSettingSummary(plannedVariable, metadata)}. Change only ${variableLabel} by one documented adjacent level.`,
+        ? `Do ${targetText} change by more than ${numericalLimit}% when only ${variableLabel} moves one adjacent level?`
+        : `Does changing only ${variableLabel} reduce the CFD-to-experiment error in ${targetText}?`,
+      title: numericalLimit != null
+        ? continuingSequence ? `Continue ${variableLabel} convergence with the next adjacent level` : `Test ${variableLabel} convergence between two adjacent levels`
+        : `Test one ${variableLabel} change`,
+      change: `Use the accepted case with ${currentSettingSummary(plannedVariable, metadata)} as the starting point. Change only ${variableLabel} by one documented adjacent level.`,
       reason,
-      holdFixed: ["Geometry and operating point", "experiment data and probe mapping", "comparison window and uncertainty definitions", `every CFD setting outside ${variableLabel}`],
+      holdFixed: ["Geometry and operating point", "experiment samples and probe mapping", "comparison window and uncertainty values", `all CFD settings except ${variableLabel}`],
       expectedOutcome: numericalLimit != null
-        ? `Evaluate the adjacent-level change in ${targetText}. Experimental agreement is reported separately.`
-        : `Evaluate the change in ${targetText}. Unrelated outputs must remain within uncertainty.`,
+        ? `Compare ${targetText} between the starting CFD result and the new CFD result. Caevera calculates convergence from these two analyzed cases, not from a CSV field.`
+        : `Compare the CFD-to-experiment error before and after the change for ${targetText}. Caevera calculates the classification from the two analyzed cases.`,
       confirmationCriterion: numericalLimit != null
-        ? `Targeted CFD outputs change by at most ${numericalLimit}% from the adjacent starting level.`
-        : `Mean targeted error falls by at least ${CONFIRMATION_ERROR_REDUCTION_PCT}% from the starting case and no new resolved mismatch appears.`,
+        ? `The targeted CFD values change by no more than ${numericalLimit}% between the two adjacent levels.`
+        : `The mean CFD-to-experiment error in the targeted values falls by at least ${CONFIRMATION_ERROR_REDUCTION_PCT}%, with no new resolved mismatch.`,
       rejectionCriterion: numericalLimit != null
-        ? `Targeted CFD outputs change by more than ${numericalLimit}%; keep the new numerical setting and run the next adjacent level.`
-        : `The targeted response stays below ${plannedRule.minimumResponsePct}%, mean targeted error worsens by at least ${REJECTION_ERROR_WORSENING_PCT}%, or a new resolved mismatch appears.`,
-      alternativeHypothesis: "Use the next unresolved ranked hypothesis after this result is classified.",
+        ? `The targeted CFD values change by more than ${numericalLimit}%, so the numerical setting still affects the result.`
+        : `The targeted CFD response is below ${plannedRule.minimumResponsePct}%, the mean targeted error increases by at least ${REJECTION_ERROR_WORSENING_PCT}%, or a new resolved mismatch appears.`,
+      alternativeHypothesis: "After Caevera classifies this result, test the next unresolved explanation in the ranking.",
     };
   }
 
   const evidenceGate = stage === "Evidence gate";
   return {
     ...common,
-    question: evidenceGate ? "Can the comparison pass the listed evidence checks?" : "Does agreement hold at the next documented operating point?",
-    title: evidenceGate ? "Correct the listed comparison evidence" : "Add one adjacent documented operating point",
+    question: evidenceGate ? "After the listed problem is corrected, can this experiment-CFD pairing support a diagnosis?" : "Does the current agreement continue at the nearest documented operating point?",
+    title: evidenceGate ? "Correct the blocked comparison" : "Analyze the nearest documented operating point",
     change: evidenceGate
-      ? "Correct only the failed comparison or data-quality inputs listed above. Do not change CFD settings."
-      : "Add the nearest already documented operating point without changing hardware, numerical method, or probe mapping.",
+      ? "Correct only the failed case-matching, mapping, or signal-quality item shown above. Do not change the CFD model."
+      : "Add the nearest already documented operating point. Keep the hardware, numerical method, and probe mapping unchanged.",
     reason,
     holdFixed: evidenceGate
-      ? ["Physical operating point", "CFD model", "unaffected pressure records", "analysis definitions that already passed"]
+      ? ["Physical operating point", "CFD model", "pressure records that already passed", "analysis settings that already passed"]
       : ["Geometry and hardware", "numerical method", "model formulations", "probe mapping"],
     expectedOutcome: evidenceGate
-      ? "Every listed evidence check passes before a CFD cause is tested."
-      : "The added case either extends the demonstrated agreement region or exposes a specific resolved mismatch.",
+      ? "Reanalyze the corrected pairing. Caevera must pass every listed check before it recommends a CFD model change."
+      : "Compare the new operating point with its matching experiment. Caevera will either add it to the demonstrated agreement region or identify a resolved mismatch.",
     confirmationCriterion: evidenceGate
-      ? "Every listed evidence check passes and the required outputs become available."
-      : "The new case passes pairing, quality, uncertainty, and identifiability checks.",
+      ? "Every listed check passes and the previously blocked outputs can be calculated."
+      : "The new case passes the case-matching, signal-quality, uncertainty, and mode-identifiability checks.",
     rejectionCriterion: evidenceGate
-      ? "The corrected evidence passes, but the resolved experiment-CFD discrepancy remains."
-      : "A resolved discrepancy appears; that measured output becomes the next sensitivity target.",
-    alternativeHypothesis: "Rerank the remaining hypotheses after this result is classified.",
+      ? "The corrected pairing is valid, but the experiment-CFD discrepancy remains larger than the combined uncertainty."
+      : "A discrepancy larger than the combined uncertainty appears; that measured value becomes the next sensitivity target.",
+    alternativeHypothesis: "Recalculate the ranking after this result is classified.",
   };
 }
 
@@ -554,7 +556,7 @@ function latestControlledResult(caseHistory: CaseHistoryEvidence[], currentCause
   if (!latest) return {
     status: "Awaiting result",
     caseName: null,
-    detail: "No controlled rerun result has been linked to this baseline yet.",
+    detail: "This case family does not yet include an analyzed one-change rerun for this explanation.",
   };
   return {
     status: latest.sequenceStatus === "converged" ? "Converged" : latest.state === "supports" ? "Confirmed" : latest.state === "weakens" ? "Rejected" : "Inconclusive",
@@ -580,18 +582,18 @@ function repeatRun(core: CoreNextRun, latest: CaseHistoryEvidence): CoreNextRun 
   const variable = latest.changedVariable === "time-step" ? "time-step" : latest.changedVariable ?? "selected";
   return {
     ...core,
-    title: `Repeat the ${variable} test with a wider controlled bracket`,
-    change: `From ${latest.caseName}, change only the ${variable} setting by one larger documented adjacent level, or reduce the uncertainty that made the first result inconclusive.`,
-    reason: `${latest.detail} A stronger one-variable contrast is required before another hypothesis is tested.`,
-    expectedOutcome: "The targeted outputs respond enough to meet a confirmation or rejection rule while all unrelated outputs remain stable.",
+    title: `Repeat the ${variable} test with a clearer one-variable difference`,
+    change: `Start from ${latest.caseName}. Change only ${variable} by one larger documented adjacent level, or reduce the uncertainty that prevented classification.`,
+    reason: `${latest.detail} Caevera needs a clearer one-variable comparison before it can move to another explanation.`,
+    expectedOutcome: "Compare the same targeted values again. The new result must meet a support rule or a rejection rule while unrelated values remain within uncertainty.",
   };
 }
 
 function confirmedNextStep(stage: ControlledNextRun["stage"], evaluationMode: ControlledNextRun["decisionPolicy"]["evaluationMode"]) {
-  if (evaluationMode === "numerical-convergence") return "Keep the new setting. Continue adjacent levels until the convergence rule passes, then advance to the next unresolved hypothesis.";
-  if (evaluationMode === "model-sensitivity") return "Carry the supported setting forward and evaluate the next unresolved ranked hypothesis.";
-  if (stage === "Evidence gate") return "Reanalyze the corrected evidence, then rank the CFD sensitivities again.";
-  return "Add the case to the demonstrated validation envelope and evaluate the next documented operating point.";
+  if (evaluationMode === "numerical-convergence") return "Keep the newer numerical setting. Continue adjacent levels until the CFD values change by no more than the convergence limit, then test the next unresolved explanation.";
+  if (evaluationMode === "model-sensitivity") return "Keep the supported setting and test the next unresolved explanation.";
+  if (stage === "Evidence gate") return "Reanalyze the corrected pairing, then recalculate the CFD test ranking.";
+  return "Add this operating point to the demonstrated agreement region, then analyze the next documented operating point.";
 }
 
 function comparableHistory(
@@ -691,7 +693,7 @@ function buildAdaptiveRunPlan(
   const primary = gate ?? actionable ?? {
     id: "validation-coverage" as const,
     title: "Validation-envelope coverage",
-    evidence: [{ state: "supports" as const, strength: "context" as const, observation: "Every currently ranked sensitivity is complete or rejected; no unresolved actionable cause remains in the loaded pressure evidence.", basis: "case" as const, sourceIds: [] }],
+    evidence: [{ state: "supports" as const, strength: "context" as const, observation: "Every ranked one-change test in this case family is complete or rejected. The analyzed pressure data does not contain another unresolved explanation to test.", basis: "case" as const, sourceIds: [] }],
     modelInputs: [`${currentMetadata.inletPressureBar} bar`, `${currentMetadata.inletTemperatureK} K`, `φ ${currentMetadata.equivalenceRatio}`],
     sourceIds: SOURCE_IDS_BY_CAUSE["validation-coverage"],
     researchClaims: RESEARCH_CLAIMS_BY_CAUSE["validation-coverage"],
@@ -712,36 +714,36 @@ function buildAdaptiveRunPlan(
     basis: "policy",
     sourceIds: [],
     observation: core.decisionPolicy.convergenceResponsePct != null && latest?.sequenceStatus === "effect-confirmed"
-      ? `${latest.caseName} showed a response, but no adjacent level at or below the ${core.decisionPolicy.convergenceResponsePct.toFixed(1)}% convergence limit has been loaded.`
+      ? `${latest.caseName} changed the targeted CFD values, but this family does not yet contain the next adjacent level needed to test the ${core.decisionPolicy.convergenceResponsePct.toFixed(1)}% convergence rule.`
       : core.decisionPolicy.changedVariable
-        ? `No decisive controlled ${core.decisionPolicy.changedVariable} result for this next step has been loaded.`
+        ? `This case family does not yet contain a qualifying one-change ${core.decisionPolicy.changedVariable} rerun for this decision.`
         : evidenceGate
-          ? "The corrected evidence has not been loaded yet."
-          : "The next operating-point result has not been loaded yet.",
+          ? "The required correction has not yet been analyzed."
+          : "No result from the proposed operating point has been analyzed yet.",
   };
   const whyThisRunFirst = evidenceGate
-    ? `${primary.title} blocks model changes until the listed evidence check passes.`
+    ? `${primary.title} prevents a reliable diagnosis until the listed check passes.`
     : latest?.sequenceStatus === "inconclusive"
       ? `${latest.caseName} was inconclusive, so the same one-variable test must be resolved before another cause is changed.`
       : latest?.sequenceStatus === "effect-confirmed" && core.decisionPolicy.convergenceResponsePct != null
-        ? `${latest.caseName} reduced mean targeted error by ${Math.abs(latest.errorReductionPct ?? 0).toFixed(1)}%, but numerical independence still requires an adjacent-level response at or below ${core.decisionPolicy.convergenceResponsePct.toFixed(1)}%.`
-        : `${supporting} supporting observation${supporting === 1 ? "" : "s"}${strong ? `, including ${strong} strong` : ""}${controlled ? ` and ${controlled} controlled-rerun result${controlled === 1 ? "" : "s"}` : ""} rank this test first${alternative ? ` ahead of ${alternative.title}` : ""}.`;
+        ? `${latest.caseName} reduced the mean CFD-to-experiment error in the targeted values by ${Math.abs(latest.errorReductionPct ?? 0).toFixed(1)}%, but the numerical check is not complete until adjacent levels differ by no more than ${core.decisionPolicy.convergenceResponsePct.toFixed(1)}%.`
+        : `${supporting} supporting finding${supporting === 1 ? "" : "s"}${strong ? `, including ${strong} strong finding${strong === 1 ? "" : "s"}` : ""}${controlled ? ` and ${controlled} one-change rerun result${controlled === 1 ? "" : "s"}` : ""} place this test first${alternative ? `, ahead of ${alternative.title}` : ""}.`;
   return {
     ...core,
     stage: stageFor(primary.id),
     whyThisRunFirst,
     inconclusiveCriterion: core.decisionPolicy.evaluationMode === "numerical-convergence"
-      ? "The adjacent levels cannot be compared or the targeted CFD outputs are unavailable."
-      : `The result reaches neither ${CONFIRMATION_ERROR_REDUCTION_PCT}% mean error reduction nor a rejection rule.`,
+      ? "Caevera cannot calculate the adjacent-level change because the cases are not a valid one-change pair or a targeted CFD value is unavailable."
+      : `The result does not reach ${CONFIRMATION_ERROR_REDUCTION_PCT}% mean CFD-to-experiment error reduction and does not meet any rejection rule.`,
     ifConfirmed: confirmedNextStep(stageFor(primary.id), core.decisionPolicy.evaluationMode),
     ifRejected: core.decisionPolicy.evaluationMode === "numerical-convergence"
-      ? `Keep the new ${core.decisionPolicy.changedVariable ?? "numerical"} setting and run the next adjacent level; report experimental agreement separately.`
+      ? `Keep the newer ${core.decisionPolicy.changedVariable ?? "numerical"} setting and run the next adjacent level. Caevera reports experiment agreement as a separate result.`
       : evidenceGate
-      ? "Keep the comparison blocked and repair the unresolved evidence before changing CFD."
+      ? "Do not change the CFD model. Correct the remaining case-matching, mapping, or signal-quality problem first."
       : `${core.alternativeHypothesis}${alternative ? ` The next ranked hypothesis is ${alternative.title}.` : ""}`,
     ifInconclusive: core.decisionPolicy.evaluationMode === "numerical-convergence"
-      ? "Repair the adjacent-level comparison or restore the unavailable targeted outputs, then repeat the same one-variable numerical run."
-      : "Increase the controlled perturbation or reduce the relevant uncertainty, then repeat without changing additional model settings.",
+      ? "Correct the case relationship or missing calculation, then repeat the same adjacent-level numerical comparison."
+      : "Make the same single-variable change larger or reduce the relevant uncertainty, then repeat without changing any additional CFD setting.",
     latestControlledResult: latestControlledResult(caseHistory, primary.id),
     precedent,
     reasoningLedger: {
@@ -778,7 +780,7 @@ export function buildCaseAssessment(
     percentDifference: 100 * frequencyDifference / Math.max(testMode.waveFrequencyKHz, 1e-12),
     unit: "kHz",
     uncertainty: frequencyAssessment.combined,
-    uncertaintyLabel: "Timing + finite-record spectral uncertainty (RSS, k=1)",
+    uncertaintyLabel: "Timing and finite-record frequency uncertainty (root-sum-square, one standard uncertainty)",
     assessment: frequencyAssessment,
     tone: statusTone(frequencyAssessment.status),
   };
@@ -826,41 +828,41 @@ export function buildCaseAssessment(
   const harmonicDifference = cfdHarmonics - testHarmonics;
   const harmonicPercent = 100 * harmonicDifference / Math.max(Math.abs(testHarmonics), 1e-12);
   const harmonicWithin = Math.abs(harmonicPercent) <= 100 * REVIEW_THRESHOLDS.maximumHarmonicRatioError;
-  const harmonicAssessment = prototypeAssessment(harmonicWithin, "±30% method limit", "No spectral-estimator uncertainty is available yet; this uses an explicit prototype review limit.");
+  const harmonicAssessment = prototypeAssessment(harmonicWithin, "Within prototype limit", "Caevera has no case-specific uncertainty for this spectral ratio, so it applies its explicit ±30% prototype product limit.");
   const harmonics: MetricAssessment = {
     id: "harmonics", label: "Second-harmonic ratio", purpose: "Secondary waveform structure", experiment: testHarmonics, cfd: cfdHarmonics, difference: harmonicDifference,
-    percentDifference: harmonicPercent, unit: "", uncertainty: null, uncertaintyLabel: "Prototype ±30% method limit", assessment: harmonicAssessment, tone: statusTone(harmonicAssessment.status),
+    percentDifference: harmonicPercent, unit: "", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ±30%", assessment: harmonicAssessment, tone: statusTone(harmonicAssessment.status),
   };
 
   const testVariability = pressureMetric(comparisons, "cycleVariabilityPct", "test");
   const cfdVariability = pressureMetric(comparisons, "cycleVariabilityPct", "cfd");
   const variabilityDifference = cfdVariability - testVariability;
   const variabilityWithin = Math.abs(variabilityDifference) <= REVIEW_THRESHOLDS.maximumCycleVariabilityDifferencePct;
-  const variabilityAssessment = prototypeAssessment(variabilityWithin, "±10 percentage-point method limit", "Repeatability uncertainty is not supplied; this uses a prototype review limit.");
+  const variabilityAssessment = prototypeAssessment(variabilityWithin, "Within prototype limit", "No repeatability uncertainty was entered for this value, so Caevera applies its explicit ±10 percentage-point prototype product limit.");
   const variability: MetricAssessment = {
     id: "cycle-variability", label: "Cycle variability", purpose: "Cycle-to-cycle pressure-range variation", experiment: testVariability, cfd: cfdVariability, difference: variabilityDifference,
-    percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Prototype ±10 percentage-point method limit", assessment: variabilityAssessment, tone: statusTone(variabilityAssessment.status),
+    percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ±10 percentage points", assessment: variabilityAssessment, tone: statusTone(variabilityAssessment.status),
   };
 
   const phaseError = phasePatternErrorDeg(testMode, cfdMode);
-  const phaseAssessment = prototypeAssessment(phaseError <= 20, "≤20° RMS phase-pattern limit", "The shared time shift is removed; this compares relative phase around the probe array.");
+  const phaseAssessment = prototypeAssessment(phaseError <= 20, "Within prototype limit", "Caevera removes one shared time shift, compares the relative phase around the probe array, and applies its ≤20° RMS prototype product limit.");
   const phasePattern: MetricAssessment = modeIdentifiable ? {
     id: "phase-pattern", label: "Probe phase pattern", purpose: "Circumferential propagation agreement", experiment: "Reference", cfd: phaseError, difference: phaseError,
-    percentDifference: null, unit: "° RMS", uncertainty: null, uncertaintyLabel: "Prototype ≤20° RMS method limit", assessment: phaseAssessment, tone: statusTone(phaseAssessment.status),
+    percentDifference: null, unit: "° RMS", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ≤20° RMS", assessment: phaseAssessment, tone: statusTone(phaseAssessment.status),
   } : inconclusiveMetric("phase-pattern", "Probe phase pattern", "Circumferential propagation agreement");
 
   const driftDifference = cfdMode.frequencyDriftPct - testMode.frequencyDriftPct;
-  const driftAssessment = prototypeAssessment(Math.abs(driftDifference) <= 3, "±3 percentage-point drift limit", "Compares the fitted cycle-frequency trend over the loaded record.");
+  const driftAssessment = prototypeAssessment(Math.abs(driftDifference) <= 3, "Within prototype limit", "Caevera compares the fitted cycle-frequency trend over the analyzed time window and applies its ±3 percentage-point prototype product limit.");
   const frequencyDrift: MetricAssessment = {
     id: "frequency-drift", label: "Frequency drift", purpose: "Cycle-frequency trend across the record", experiment: testMode.frequencyDriftPct, cfd: cfdMode.frequencyDriftPct, difference: driftDifference,
-    percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Prototype ±3 percentage-point method limit", assessment: driftAssessment, tone: statusTone(driftAssessment.status),
+    percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ±3 percentage points", assessment: driftAssessment, tone: statusTone(driftAssessment.status),
   };
 
   const jitterDifference = cfdMode.phaseJitterDeg - testMode.phaseJitterDeg;
-  const jitterAssessment = prototypeAssessment(Math.abs(jitterDifference) <= 10, "±10° phase-jitter limit", "Sliding-window relative-phase variation; sensor timing uncertainty is not yet propagated into this estimator.");
+  const jitterAssessment = prototypeAssessment(Math.abs(jitterDifference) <= 10, "Within prototype limit", "Caevera compares sliding-window relative-phase variation and applies its ±10° prototype product limit. This estimator does not yet include sensor timing uncertainty.");
   const phaseJitter: MetricAssessment = modeIdentifiable ? {
     id: "phase-jitter", label: "Phase jitter", purpose: "Window-to-window propagation consistency", experiment: testMode.phaseJitterDeg, cfd: cfdMode.phaseJitterDeg, difference: jitterDifference,
-    percentDifference: null, unit: "°", uncertainty: null, uncertaintyLabel: "Prototype ±10° method limit", assessment: jitterAssessment, tone: statusTone(jitterAssessment.status),
+    percentDifference: null, unit: "°", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ±10°", assessment: jitterAssessment, tone: statusTone(jitterAssessment.status),
   } : inconclusiveMetric("phase-jitter", "Phase jitter", "Window-to-window propagation consistency");
 
   const metrics = [
@@ -900,7 +902,7 @@ export function buildCaseAssessment(
     synchronizationCheck,
     { label: "Probe layout", status: layoutRisk || metadata.probePositionsDeg.length < 4 ? "Review" : "Pass", detail: layoutRisk ? "Equally spaced probes can alias wave count and direction." : metadata.probePositionsDeg.length < 4 ? "Three nonuniform probes support a candidate mode; four or more are recommended for stronger separation." : `${metadata.probePositionsDeg.length} nonuniform probes reduce common spatial aliases.` },
     { label: "Common evidence window", status: dataQuality.status === "Ready" ? "Pass" : "Review", detail: dataQuality.status === "Ready" ? "All traces provide a continuous, usable comparison window." : "At least one trace has a sampling, duration, continuity, or clipping finding." },
-    { label: "Mode identifiability", status: modeStatus, detail: `Experiment: ${testMode.identifiability}, ${testMode.phaseResidualDeg.toFixed(1)}° residual; CFD: ${cfdMode.identifiability}, ${cfdMode.phaseResidualDeg.toFixed(1)}° residual.` },
+    { label: "Wave mode can be identified", status: modeStatus, detail: `Experiment: ${testMode.identifiability}, ${testMode.phaseResidualDeg.toFixed(1)}° phase-fit error. CFD: ${cfdMode.identifiability}, ${cfdMode.phaseResidualDeg.toFixed(1)}° phase-fit error. A smaller error means the selected wave mode fits the probe phases better.` },
   ];
   const validity = {
     checks,
@@ -909,9 +911,9 @@ export function buildCaseAssessment(
   const coverage: CoverageItem[] = [
     { module: "Wave dynamics", status: modeStatus === "Pass" ? "Assessed" : "Inconclusive", detail: "Frequency, speed, count, direction, phase pattern, drift, jitter, and mode transitions" },
     { module: "Pressure", status: "Assessed", detail: "Amplitude, peaks, mean, impulse, rise time, harmonics, residuals, and cycle variability" },
-    { module: "Uncertainty", status: metrics.some((metric) => metric.assessment.status === "inconclusive") ? "Inconclusive" : "Assessed", detail: "Experiment and CFD pressure/timing inputs propagated where supported" },
-    { module: "Thermal", status: "Not assessed", detail: "No temperature or heat-flux data loaded" },
-    { module: "Performance", status: "Not assessed", detail: "No thrust or total-pressure data loaded" },
+    { module: "Uncertainty", status: metrics.some((metric) => metric.assessment.status === "inconclusive") ? "Inconclusive" : "Assessed", detail: "Entered experiment and CFD pressure/timing uncertainties are included in every supported scalar comparison" },
+    { module: "Thermal", status: "Not assessed", detail: "This product version does not accept temperature or heat-flux data" },
+    { module: "Performance", status: "Not assessed", detail: "This product version does not accept thrust or total-pressure data" },
   ];
   const hypotheses = buildHypotheses(metadata, metrics, validity, dataQuality, caseHistory, precedentHistory);
   return { validity, dataQuality, metrics, coverage, hypotheses, nextRun: buildAdaptiveRunPlan(hypotheses, metadata, metrics, caseHistory, precedentHistory) };

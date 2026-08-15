@@ -21,7 +21,7 @@ test("scores only evidence gates satisfied by the selected case", () => {
   assert.equal(baseline.score, 2);
   assert.equal(confirmedRerun.score, 3);
   assert.equal(baseline.label, "Demo only");
-  assert.equal(confirmedRerun.gates.find((gate) => gate.id === "controlled-result")?.result, "Confirmed");
+  assert.equal(confirmedRerun.gates.find((gate) => gate.id === "controlled-result")?.result, "A one-change rerun met the support rule");
 });
 
 test("treats a rejected controlled rerun as decisive evidence, not a low-quality result", () => {
@@ -35,7 +35,7 @@ test("treats a rejected controlled rerun as decisive evidence, not a low-quality
 
   assert.equal(result.score, 5);
   assert.equal(result.label, "Strong");
-  assert.equal(result.gates.find((gate) => gate.id === "controlled-result")?.result, "Rejected");
+  assert.equal(result.gates.find((gate) => gate.id === "controlled-result")?.result, "A one-change rerun met a rejection rule");
 });
 
 test("does not convert an inconclusive rerun or public validation into case support", () => {

@@ -26,7 +26,7 @@ export const PUBLISHED_VALIDATION_SOURCES = {
     doi: "10.5281/zenodo.18886925",
     url: "https://doi.org/10.5281/zenodo.18886925",
     validationUse: "Two traceable 4,096-sample, eight-probe fixtures extracted from the published pressure records are mandatory regression tests for ambiguous counter-rotating modes.",
-    limitation: "The archive is experiment-only. These fixtures validate conservative mode ambiguity detection; they are not company precedent and cannot validate an experiment–CFD recommendation.",
+    limitation: "The archive contains experiment data only. These fixtures test whether Caevera reports ambiguous modes conservatively; they are not independent case-family evidence and cannot validate an experiment-CFD recommendation.",
   },
 } as const;
 

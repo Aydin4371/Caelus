@@ -27,7 +27,7 @@ type InputHelpDetails = Omit<CaseInputHelpGroup["items"][number], "key" | "label
 const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: Array<Pick<CaseInputHelpGroup["items"][number], "key" | "label" | "definition">> }> = [
   {
     title: "Case and geometry",
-    description: "Identifies the comparison and locates the synchronized pressure probes around the annulus.",
+    description: "Names the case, defines the annulus geometry, and tells Caevera where each synchronized pressure probe is located.",
     items: [
       { key: "name", label: "Case name", definition: "A short identifier for this experiment–CFD comparison, such as Baseline 8 bar." },
       { key: "annulusMeanDiameterMm", label: "Mean diameter (mm)", definition: "The annulus mean-line diameter used with the measured wave frequency to calculate circumferential wave speed." },
@@ -36,14 +36,14 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
       { key: "maximumWaveCount", label: "Maximum expected waves", definition: "The largest physically plausible simultaneous co-rotating wave count included in the phase-mode search. Use prior imaging, operating knowledge, or a conservative upper bound." },
       { key: "probeSynchronizationConfirmed", label: "Probe synchronization", definition: "Confirms that every pressure column within each file was acquired or exported on one common clock. This is required for direction, wave count, and phase calculations." },
       { key: "comparisonMatchConfirmed", label: "Comparison-match confirmation", definition: "Confirms that geometry, operating point, probe locations, and analysis window match before Caevera interprets any difference." },
-      { key: "baselineCaseId", label: "Baseline case · optional", definition: "Links a controlled CFD rerun to the original case whose experiment and operating point remain unchanged." },
-      { key: "changedVariable", label: "Single CFD change · optional", definition: "The one model or numerical variable group intentionally changed from the linked baseline." },
-      { key: "changeDescription", label: "Change description · optional", definition: "The exact before/after change, for example front-cell size 0.25 mm → 0.125 mm." },
+      { key: "baselineCaseId", label: "Case family baseline · optional", definition: "Starts a case family. Every related rerun must reuse this baseline's experiment and physical operating point." },
+      { key: "changedVariable", label: "Single CFD change · optional", definition: "Declares the only CFD setting group allowed to differ from the selected starting case. Caevera verifies the saved settings before using the rerun to update the plan." },
+      { key: "changeDescription", label: "Change description · optional", definition: "Records exactly what changed, including the old and new values, for example front-cell size 0.25 mm → 0.125 mm." },
     ],
   },
   {
     title: "Pressure files",
-    description: "Supplies the synchronized signals from which every visible graph and pressure metric is calculated.",
+    description: "Supplies the experiment and CFD pressure histories. Caevera calculates the graphs and metrics from these values; the CSV does not contain diagnoses or evidence labels.",
     items: [
       { key: "experimentCsv", label: "Experiment CSV", definition: "Measured pressure history with time_ms and contiguous p1_MPa through pN_MPa columns. Each row must represent the same instant for every probe." },
       { key: "cfdCsv", label: "CFD CSV", definition: "Virtual-probe pressure history at the same locations and operating point, using the same probe count and column naming as the experiment file." },
@@ -87,8 +87,8 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
       { key: "minimumCellSizeMm", label: "Minimum front cell (mm)", definition: "The smallest cell dimension in the detonation-front or reaction-zone region used by the diagnostic engine." },
       { key: "cellsPerInductionLength", label: "Cells / induction length", definition: "The estimated number of cells spanning one chemical induction length at the relevant state." },
       { key: "nearWallCellSizeMm", label: "Near-wall cell (mm)", definition: "The characteristic cell height or size next to the wall where thermal and viscous gradients are represented." },
-      { key: "meshConvergencePct", label: "Mesh-change result (%) · optional", definition: "The percentage change in the selected validation quantity between the current mesh and a finer or coarser mesh." },
-      { key: "timeStepConvergencePct", label: "Time-step-change result (%) · optional", definition: "The percentage change in the selected validation quantity after a controlled time-step refinement." },
+      { key: "meshConvergencePct", label: "Documented mesh-study change (%) · optional", definition: "A manually entered percentage from a separate documented mesh study. It is not read from or calculated from either pressure CSV." },
+      { key: "timeStepConvergencePct", label: "Documented time-step-study change (%) · optional", definition: "A manually entered percentage from a separate documented time-step study. It is not read from or calculated from either pressure CSV." },
     ],
   },
   {
@@ -161,7 +161,7 @@ const INPUT_HELP_DETAILS = {
     "requirement": "Required",
     "obtainFrom": "DAQ configuration and CFD sampling setup.",
     "usedFor": "Authorizes probe-to-probe phase, direction, count, speed, and jitter calculations.",
-    "missingEffect": "All multi-probe phase conclusions are Not identifiable."
+    "missingEffect": "Caevera does not report wave count, direction, speed, phase pattern, or phase jitter as identified results."
   },
   "comparisonMatchConfirmed": {
     "format": "Checkbox; confirm same geometry, operating point, probe locations, and evidence window.",
@@ -174,15 +174,15 @@ const INPUT_HELP_DETAILS = {
     "format": "Select one existing Caevera case.",
     "requirement": "Optional",
     "obtainFrom": "Caevera case list.",
-    "usedFor": "Links a controlled rerun to its original experiment and operating point.",
-    "missingEffect": "The case remains standalone and cannot contribute case-history evidence."
+    "usedFor": "Groups one baseline with reruns that reuse its experiment and physical operating point.",
+    "missingEffect": "The case is analyzed by itself. It cannot update a related case family's plan."
   },
   "changedVariable": {
     "format": "Choose exactly one CFD variable group.",
     "requirement": "Conditional",
     "obtainFrom": "Simulation change log.",
-    "usedFor": "Tests whether the linked rerun isolates one possible cause.",
-    "missingEffect": "The related case is treated as comparison only."
+    "usedFor": "Checks whether exactly one CFD setting group changed from the selected starting case.",
+    "missingEffect": "Caevera treats the case as a comparison only and does not use it to update the plan."
   },
   "changeDescription": {
     "format": "Exact before → after wording, including values and units where known.",
@@ -360,18 +360,18 @@ const INPUT_HELP_DETAILS = {
     "missingEffect": "Wall-related numerical resolution cannot be assessed."
   },
   "meshConvergencePct": {
-    "format": "Percent change in a named validation output between two mesh levels.",
+    "format": "Percent change in a named CFD output between two documented mesh levels; enter the magnitude as a non-negative value.",
     "requirement": "Optional",
     "obtainFrom": "Documented mesh sensitivity study.",
-    "usedFor": "Weakens or supports spatial resolution as the current cause.",
-    "missingEffect": "Mesh convergence remains unknown."
+    "usedFor": "Provides prior mesh-sensitivity context before a related rerun is added.",
+    "missingEffect": "Caevera does not assume mesh convergence. A related one-change mesh rerun can provide the missing result."
   },
   "timeStepConvergencePct": {
-    "format": "Percent change in a named validation output between two flow time steps.",
+    "format": "Percent change in a named CFD output between two documented flow time steps; enter the magnitude as a non-negative value.",
     "requirement": "Optional",
     "obtainFrom": "Documented time-step study.",
-    "usedFor": "Weakens or supports temporal/chemistry resolution as the current cause.",
-    "missingEffect": "Time-step convergence remains unknown."
+    "usedFor": "Provides prior time-step-sensitivity context before a related rerun is added.",
+    "missingEffect": "Caevera does not assume time-step convergence. A related one-change time-step rerun can provide the missing result."
   },
   "chemistryModel": {
     "format": "Mechanism name and preferably file/version.",

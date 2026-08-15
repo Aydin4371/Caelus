@@ -2,7 +2,7 @@
 
 These primary sources justify Caevera's analysis choices. They do not define
 universal acceptance thresholds and they do not prove a diagnostic cause in a
-loaded case.
+analyzed case.
 
 1. M. D. Bohon, R. Bluemner, C. O. Paschereit, and E. J. Gutmark,
    “Measuring Rotating Detonation Combustion Using Cross-Correlation,” *Flow,
@@ -39,4 +39,3 @@ loaded case.
    https://doi.org/10.2514/1.A36447
    - Used for: time-local frequency analysis capable of exposing sequential
      deflagration, multi-wave, and single-wave intervals.
-
