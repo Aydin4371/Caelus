@@ -69,13 +69,7 @@ export type DataQualityResult = {
   findings: string[];
 };
 
-export type Recommendation = {
-  title: string;
-  detail: string;
-  evidence: string;
-};
-
-export const ANALYSIS_VERSION = "1.4.4";
+export const ANALYSIS_VERSION = "1.5.0";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
@@ -733,39 +727,6 @@ export function parseProbeCsv(text: string, name: string): Signal[] {
   });
 }
 
-export function recommendationFor(result: Comparison): Recommendation {
-  if (result.correlation < REVIEW_THRESHOLDS.minimumCorrelation) {
-    return {
-      title: "Verify acquisition timing",
-      detail:
-        "The signals remain weakly correlated after alignment. Check timestamps, sensor location, and whether the same operating window was exported.",
-      evidence: `Aligned waveform correlation ${result.correlation.toFixed(3)} is below ${REVIEW_THRESHOLDS.minimumCorrelation.toFixed(2)}.`,
-    };
-  }
-  if (result.frequencyError > REVIEW_THRESHOLDS.maximumFrequencyError) {
-    return {
-      title: "Vary inlet boundary conditions",
-      detail:
-        "Wave frequency disagrees by more than 5%. Run a small inlet temperature and mass-flow sweep before changing the physical model.",
-      evidence: `Dominant-frequency error is ${(result.frequencyError * 100).toFixed(1)}%.`,
-    };
-  }
-  if (result.amplitudeError > REVIEW_THRESHOLDS.maximumAmplitudeError) {
-    return {
-      title: "Test pressure-amplitude drivers",
-      detail:
-        "Frequency agrees, but pressure amplitude does not. Prioritize chemistry, wall-loss, and sensor-response sensitivity runs.",
-      evidence: `Pressure-amplitude error is ${(result.amplitudeError * 100).toFixed(1)}%.`,
-    };
-  }
-  return {
-    title: "Add a nearby operating point",
-    detail:
-      "The pressure signals agree within the prototype thresholds. Test the nearest unvalidated condition to expand the demonstrated envelope.",
-    evidence: "Frequency, amplitude, and waveform metrics pass the prototype review thresholds.",
-  };
-}
-
 export function serializeReport(result: Comparison, sources: { test: string; cfd: string }) {
   return JSON.stringify(
     {
@@ -792,7 +753,6 @@ export function serializeReport(result: Comparison, sources: { test: string; cfd
         },
       },
       dataQuality: { experiment: result.testQuality, cfd: result.cfdQuality },
-      recommendation: recommendationFor(result),
       limitations: [
         "Uncertainty statements use root-sum-square one-standard-uncertainty estimates, not certification tolerances.",
         "This report compares one pressure-signal pair and does not establish an operating envelope.",

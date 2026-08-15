@@ -398,6 +398,15 @@ button { color: inherit; }
 .decision-precedent p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .decision-precedent p strong { color: var(--text); }
 .decision-precedent > small { margin-top: 3px; display: block; color: var(--quiet); font-size: 10px; line-height: 1.35; }
+.research-basis { margin: 12px 14px 0; padding: 10px 0; border-top: 1px solid var(--line); }
+.research-basis summary { color: var(--test); cursor: pointer; font-size: 12px; font-weight: 700; }
+.research-claims { margin-top: 8px; display: grid; gap: 7px; }
+.research-claims article { padding: 10px 12px; border: 1px solid var(--line); border-radius: 5px; background: rgba(255,255,255,.62); }
+.research-claims p, .research-unmapped { margin: 0; color: var(--text); font-size: 11px; line-height: 1.45; }
+.research-claims div { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.research-claims a { color: var(--test); font-size: 10px; font-weight: 700; text-underline-offset: 2px; }
+.research-claims small { margin-top: 5px; display: block; color: var(--quiet); font-size: 10px; line-height: 1.4; }
+.research-unmapped { margin-top: 8px; color: var(--muted); }
 .decision-evidence { margin: 12px 14px 0; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .decision-evidence summary { color: var(--test); cursor: pointer; font-size: 12px; font-weight: 700; }
 .decision-evidence .selected-data-source, .decision-evidence .planning-data-source { margin: 8px 0 0; padding: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }

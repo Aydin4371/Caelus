@@ -1,10 +1,13 @@
 import type { CaseMetadata, SensitivityVariable } from "./caevera-types.ts";
-import { SOURCE_IDS_BY_CAUSE, type DiagnosticCauseId } from "./diagnostic-knowledge.ts";
+import { RESEARCH_CLAIMS_BY_CAUSE, SOURCE_IDS_BY_CAUSE, type DiagnosticCauseId, type DiagnosticResearchClaim } from "./diagnostic-knowledge.ts";
 import {
   CONFIRMATION_ERROR_REDUCTION_PCT,
+  CONTROLLED_VARIABLE_LABELS,
   CONTROLLED_RERUN_RULES,
   NUMERICAL_CONVERGENCE_RESPONSE_PCT,
+  RECOMMENDATION_POLICY_VERSION,
   REJECTION_ERROR_WORSENING_PCT,
+  TARGET_METRIC_LABELS,
   type ControlledSensitivityVariable,
 } from "./recommendation-rules.ts";
 import {
@@ -87,6 +90,7 @@ export type DiagnosticHypothesis = {
   evidence: DiagnosticEvidence[];
   modelInputs: string[];
   sourceIds: string[];
+  researchClaims: DiagnosticResearchClaim[];
 };
 
 export type ControlledNextRun = {
@@ -121,6 +125,8 @@ export type ControlledNextRun = {
     unknowns: DiagnosticEvidence[];
   };
   decisionPolicy: {
+    basis: "prototype-policy" | "case-specific-gate";
+    version: string;
     evaluationMode: "numerical-convergence" | "model-sensitivity" | "case-specific";
     changedVariable: ControlledSensitivityVariable | null;
     targetedMetricIds: string[];
@@ -333,7 +339,7 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
       existing.modelInputs = [...new Set([...existing.modelInputs, ...modelInputs])];
       return;
     }
-    candidates.push({ id, title, evidence: [...observations, ...history], modelInputs, sourceIds: SOURCE_IDS_BY_CAUSE[id] });
+    candidates.push({ id, title, evidence: [...observations, ...history], modelInputs, sourceIds: SOURCE_IDS_BY_CAUSE[id], researchClaims: RESEARCH_CLAIMS_BY_CAUSE[id] });
   };
 
   if (validity.status === "Blocked") add("case-validity", "Case matching or data mapping", validity.checks.filter((check) => check.status === "Blocked").map((check) => evidence(check.detail, "supports", "strong")), ["Geometry", "operating point", "probe coordinates", "comparison window"]);
@@ -423,20 +429,28 @@ type CoreNextRun = Omit<ControlledNextRun,
   "stage" | "whyThisRunFirst" | "inconclusiveCriterion" | "ifConfirmed" | "ifRejected" | "ifInconclusive" | "latestControlledResult" | "precedent" | "reasoningLedger"
 >;
 
-function questionFor(causeId: DiagnosticCauseId) {
-  if (causeId === "case-validity") return "Are the experiment and CFD cases matched correctly?";
-  if (causeId === "data-quality") return "Is the pressure record reliable enough to diagnose the mismatch?";
-  if (causeId === "spatial-resolution") return "Is the mesh changing the CFD result?";
-  if (causeId === "chemistry-timescale") return "Is reaction timing or time integration changing the result?";
-  if (causeId === "inlet-boundary") return "Is the inlet model causing the mismatch?";
-  if (causeId === "wall-loss") return "Is the wall-loss model causing the mismatch?";
-  if (causeId === "initialization-mode") return "Is the starting method selecting the wrong wave mode?";
-  if (causeId === "missing-unsteadiness") return "Is the CFD missing measured inlet fluctuations?";
-  return "Does the current agreement hold at the next operating point?";
+function currentSettingSummary(variable: ControlledSensitivityVariable, metadata: CaseMetadata) {
+  if (variable === "mesh") return `${metadata.minimumCellSizeMm.toFixed(3)} mm minimum cell`;
+  if (variable === "time-step") return `${metadata.timeStepUs.toFixed(3)} µs flow step`;
+  if (variable === "chemistry") return `${metadata.chemistryModel} with ${metadata.chemistryIntegrator}`;
+  if (variable === "inlet") return metadata.inletBoundaryCondition;
+  if (variable === "wall") return metadata.wallBoundaryCondition;
+  if (variable === "initialization") return metadata.initializationMethod;
+  return "the synchronized measured inlet history";
+}
+
+function targetMetricNames(ids: string[]) {
+  return ids.map((id) => TARGET_METRIC_LABELS[id] ?? id.replaceAll("-", " "));
+}
+
+function listPhrase(items: string[]) {
+  if (items.length < 2) return items[0] ?? "the targeted outputs";
+  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
 
 function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, latest?: CaseHistoryEvidence): CoreNextRun {
   const supporting = hypothesis.evidence.filter((item) => item.state === "supports");
+  const directSupporting = supporting.filter((item) => item.basis === "case" || item.basis === "case-history");
   const flowTimeStepReady = Number.isFinite(metadata.timeStepConvergencePct) && metadata.timeStepConvergencePct <= NUMERICAL_CONVERGENCE_RESPONSE_PCT
     || latest?.changedVariable === "time-step" && latest.sequenceStatus === "converged";
   const variableByCause: Partial<Record<DiagnosticCauseId, ControlledSensitivityVariable>> = {
@@ -449,149 +463,81 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
   };
   const plannedVariable = variableByCause[hypothesis.id] ?? null;
   const plannedRule = plannedVariable ? CONTROLLED_RERUN_RULES[plannedVariable] : null;
+  const stage = stageFor(hypothesis.id);
+  const numericalLimit = plannedRule?.convergenceResponsePct ?? null;
+  const evaluationMode = numericalLimit != null
+    ? "numerical-convergence" as const
+    : plannedRule
+      ? "model-sensitivity" as const
+      : "case-specific" as const;
+  const targets = targetMetricNames(plannedRule?.targets ?? []);
+  const targetText = listPhrase(targets);
+  const reason = directSupporting.map((item) => item.observation).join(" ")
+    || `The loaded evidence ranks ${hypothesis.title.toLowerCase()} as the next unresolved test.`;
   const common = {
-    question: questionFor(hypothesis.id),
     evidence: hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`),
     evidenceStrength: supporting.some((item) => item.strength === "strong") ? "High" as const : supporting.length ? "Moderate" as const : "Exploratory" as const,
     decisionPolicy: {
-      evaluationMode: plannedRule?.convergenceResponsePct != null
-        ? "numerical-convergence" as const
-        : plannedRule
-          ? "model-sensitivity" as const
-          : "case-specific" as const,
+      basis: plannedRule ? "prototype-policy" as const : "case-specific-gate" as const,
+      version: RECOMMENDATION_POLICY_VERSION,
+      evaluationMode,
       changedVariable: plannedVariable,
       targetedMetricIds: plannedRule?.targets ?? [],
       confirmationErrorReductionPct: plannedRule ? CONFIRMATION_ERROR_REDUCTION_PCT : null,
       minimumResponsePct: plannedRule?.minimumResponsePct ?? null,
-      convergenceResponsePct: plannedRule?.convergenceResponsePct ?? null,
+      convergenceResponsePct: numericalLimit,
       rejectionErrorWorseningPct: plannedRule ? REJECTION_ERROR_WORSENING_PCT : null,
       requiresNoNewMismatch: Boolean(plannedRule),
     },
   };
-  const numericalLimit = plannedRule?.convergenceResponsePct;
-  const confirmationCriterion = numericalLimit != null
-    ? `Targeted CFD outputs change by at most ${numericalLimit}% from the adjacent starting level.`
-    : `Mean targeted error falls by at least ${CONFIRMATION_ERROR_REDUCTION_PCT}% from the starting case and no new resolved mismatch appears.`;
-  const rejectionCriterion = numericalLimit != null
-    ? `Targeted CFD outputs change by more than ${numericalLimit}%; keep the new numerical setting and run the next adjacent level.`
-    : `The targeted response stays below ${plannedRule?.minimumResponsePct ?? 2}%, mean targeted error worsens by at least ${REJECTION_ERROR_WORSENING_PCT}%, or a new resolved mismatch appears.`;
 
-  if (hypothesis.id === "case-validity") return {
-    ...common,
-    title: "Correct the experiment–CFD pairing",
-    change: "Re-export one common time window after verifying the exact geometry, operating point, probe coordinates, trigger reference, and probe pairing.",
-    reason: supporting.map((item) => item.observation).join(" ") || "The current pairing is not confirmed.",
-    holdFixed: ["CFD solution", "signal processing settings", "physical operating point"],
-    expectedOutcome: "The pairing checks pass before any CFD model variable is changed.",
-    confirmationCriterion: "Every mapping and case-match check passes and the common window contains at least five usable cycles.",
-    rejectionCriterion: "If the corrected pairing still produces the same resolved discrepancy, case mapping is weakened as the explanation.",
-    alternativeHypothesis: "Use the highest-ranked CFD sensitivity only after the pairing is valid.",
-  };
-  if (hypothesis.id === "data-quality") return {
-    ...common,
-    title: "Repair the limiting pressure record",
-    change: "Re-export or reacquire only the affected record with continuous timestamps, no clipping, and enough bandwidth and duration to clear the listed quality gate.",
-    reason: supporting.map((item) => item.observation).join(" "),
-    holdFixed: ["Operating point", "CFD model", "probe coordinates", "analysis window definition"],
-    expectedOutcome: "The named unavailable outputs become identifiable without changing the physical case.",
-    confirmationCriterion: "No gaps or clipping, at least five cycles, at least 20 samples per cycle for phase work, and spectral SNR at or above 10 dB.",
-    rejectionCriterion: "The replacement record passes every quality gate but the resolved experiment–CFD discrepancy remains.",
-    alternativeHypothesis: "After the evidence is usable, proceed to the highest-ranked physical or numerical sensitivity.",
-  };
-  if (hypothesis.id === "spatial-resolution") {
-    const supportedByRerun = hypothesis.evidence.some((item) => item.basis === "case-history" && item.state === "supports" && item.strength === "strong");
+  if (plannedVariable && plannedRule) {
+    const variableLabel = CONTROLLED_VARIABLE_LABELS[plannedVariable];
+    const continuingSequence = numericalLimit != null && latest?.sequenceStatus === "effect-confirmed";
     return {
       ...common,
-      title: supportedByRerun ? "Complete the documented mesh-convergence sequence" : "Add one front-region spatial-refinement case",
-      change: supportedByRerun
-        ? `Advance one level beyond the current ${metadata.minimumCellSizeMm.toFixed(3)} mm front-region minimum using the same documented refinement sequence.`
-        : `Create one documented finer front-region mesh from the current ${metadata.minimumCellSizeMm.toFixed(3)} mm minimum; do not change the flux, limiter, chemistry, or time-step strategy.`,
-      reason: supportedByRerun
-        ? "A verified one-variable related case already moved the targeted pressure error toward experiment."
-        : "The mismatch pattern makes front resolution a discriminating sensitivity, but the current case history does not yet show a controlled mesh response.",
-      holdFixed: ["Chemical mechanism and chemistry integration", "time step and CFL", "boundaries and wall treatment", "initialization"],
-      expectedOutcome: `Peak pressure and rise time move together. An adjacent-level response at or below ${NUMERICAL_CONVERGENCE_RESPONSE_PCT}% completes mesh convergence.`,
-      confirmationCriterion,
-      rejectionCriterion,
-      alternativeHypothesis: "If the response is unresolved, test chemistry time integration or wall-loss treatment according to the remaining evidence.",
+      question: numericalLimit != null
+        ? `Have ${targetText} stopped changing between adjacent ${variableLabel} levels?`
+        : `Does changing ${variableLabel} improve ${targetText}?`,
+      title: continuingSequence ? `Continue the documented ${variableLabel} convergence sequence` : `Run one controlled ${variableLabel} comparison`,
+      change: `Start from ${currentSettingSummary(plannedVariable, metadata)}. Change only ${variableLabel} by one documented adjacent level.`,
+      reason,
+      holdFixed: ["Geometry and operating point", "experiment data and probe mapping", "comparison window and uncertainty definitions", `every CFD setting outside ${variableLabel}`],
+      expectedOutcome: numericalLimit != null
+        ? `Evaluate the adjacent-level change in ${targetText}. Experimental agreement is reported separately.`
+        : `Evaluate the change in ${targetText}. Unrelated outputs must remain within uncertainty.`,
+      confirmationCriterion: numericalLimit != null
+        ? `Targeted CFD outputs change by at most ${numericalLimit}% from the adjacent starting level.`
+        : `Mean targeted error falls by at least ${CONFIRMATION_ERROR_REDUCTION_PCT}% from the starting case and no new resolved mismatch appears.`,
+      rejectionCriterion: numericalLimit != null
+        ? `Targeted CFD outputs change by more than ${numericalLimit}%; keep the new numerical setting and run the next adjacent level.`
+        : `The targeted response stays below ${plannedRule.minimumResponsePct}%, mean targeted error worsens by at least ${REJECTION_ERROR_WORSENING_PCT}%, or a new resolved mismatch appears.`,
+      alternativeHypothesis: "Use the next unresolved ranked hypothesis after this result is classified.",
     };
   }
-  if (hypothesis.id === "initialization-mode") return {
-    ...common,
-    title: "Run one initialization-only mode test",
-    change: `Repeat the current ${metadata.initializationMethod} case with one second physically documented ignition pattern; keep the ${metadata.dimensionality || "current"} domain and all steady inputs unchanged.`,
-    reason: "A wave-count, direction, phase-pattern, or transition mismatch can represent a different selected attractor.",
-    holdFixed: ["Mesh", "time step", "chemistry", "boundary conditions", "wall treatment"],
-    expectedOutcome: "The alternate start either reaches the experimental identified mode or reproduces the original CFD mode.",
-    confirmationCriterion: "The alternate initialization reaches the experimentally identified count and direction for the final usable analysis windows.",
-    rejectionCriterion: "Both initializations reach the same nonexperimental identified mode.",
-    alternativeHypothesis: "If mode selection is insensitive to ignition, investigate domain dimensionality and inlet/plenum representation.",
-  };
-  if (hypothesis.id === "chemistry-timescale") return {
-    ...common,
-    ...(flowTimeStepReady ? {
-      title: "Tighten only chemistry time integration",
-      change: `Keep the converged ${metadata.timeStepUs.toFixed(3)} µs flow step fixed and advance the ${metadata.chemistryIntegrator} internal tolerance or substep by one documented refinement level.`,
-      reason: "Flow time-step sensitivity is complete, so this isolates chemistry integration without changing the mechanism.",
-      holdFixed: ["Mesh", "flow time step and CFL", "chemical mechanism", "boundaries", "wall treatment", "initialization"],
-      expectedOutcome: "Wave frequency moves toward experiment without changing an already identified wave mode.",
-      confirmationCriterion,
-      rejectionCriterion,
-      alternativeHypothesis: "If chemistry integration is insensitive, test the current inlet representation next.",
-    } : {
-      title: latest?.changedVariable === "time-step" && latest.state === "supports" ? "Complete the documented time-step sequence" : "Add one flow-time-step refinement",
-      change: `Reduce only the current ${metadata.timeStepUs.toFixed(3)} µs flow step by one documented refinement level; keep the temporal scheme and chemistry integrator unchanged.`,
-      reason: "Flow time-step independence must be established before a chemistry-timescale mismatch can be assigned to chemistry integration or the mechanism.",
-      holdFixed: ["Mesh", "temporal scheme", "chemistry integrator and mechanism", "boundaries", "wall treatment", "initialization"],
-      expectedOutcome: `Frequency and rise time respond together. An adjacent-level response at or below ${NUMERICAL_CONVERGENCE_RESPONSE_PCT}% completes time-step convergence.`,
-      confirmationCriterion,
-      rejectionCriterion,
-      alternativeHypothesis: "After time-step convergence, isolate chemistry integration before changing the chemical mechanism.",
-    }),
-  };
-  if (hypothesis.id === "inlet-boundary") return {
-    ...common,
-    title: "Test the recorded inlet representation",
-    change: `Replace only “${metadata.inletBoundaryCondition}” with the closest hardware-matched injection/backflow treatment available in the same solver.`,
-    reason: "The cited RDE evidence makes inlet injection and detonation-driven backflow a relevant sensitivity, but the pressure data alone do not identify a unique inlet mechanism.",
-    holdFixed: ["Mesh", "time step", "chemistry", "outlet", "wall treatment", "initialization"],
-    expectedOutcome: "The targeted mean-pressure, frequency, or amplitude discrepancy responds while unrelated outputs remain within uncertainty.",
-    confirmationCriterion,
-    rejectionCriterion,
-    alternativeHypothesis: "If inlet representation is insensitive, examine wall loss or front resolution according to the remaining evidence.",
-  };
-  if (hypothesis.id === "wall-loss") return {
-    ...common,
-    title: "Bracket the recorded wall treatment",
-    change: `Run one physically documented adjacent condition to “${metadata.wallBoundaryCondition}”; change no other model setting.`,
-    reason: "Amplitude and impulse disagreement can respond to total wall loss even when frequency and mode agree.",
-    holdFixed: ["Mesh", "time step", "chemistry", "inlet and outlet", "initialization", "numerical flux"],
-    expectedOutcome: "Amplitude and impulse move together while the identified frequency and mode remain unchanged within uncertainty.",
-    confirmationCriterion,
-    rejectionCriterion,
-    alternativeHypothesis: "If the pressure response is unresolved, test chemistry integration or front resolution next.",
-  };
-  if (hypothesis.id === "missing-unsteadiness") return {
-    ...common,
-    title: "Use one measured inlet-history sensitivity",
-    change: "If a synchronized facility inlet history exists, impose that measured fluctuation while holding its mean state fixed. If it does not exist, acquire it before creating this run.",
-    reason: "CFD cycle variability cannot be attributed to inlet forcing from pressure probes alone, and an invented fluctuation would not be evidence.",
-    holdFixed: ["Mean inlet state", "mesh", "time step", "chemistry", "walls", "initialization"],
-    expectedOutcome: "Cycle variability approaches experiment without shifting the mean identified mode.",
-    confirmationCriterion,
-    rejectionCriterion,
-    alternativeHypothesis: "If measured forcing is weak, examine turbulence/combustion coupling and three-dimensional effects.",
-  };
+
+  const evidenceGate = stage === "Evidence gate";
   return {
     ...common,
-    title: "Add the nearest documented operating point",
-    change: "Select the nearest already planned equivalence-ratio or mass-flow condition and keep hardware, numerical method, and probe mapping fixed.",
-    reason: "The current pressure/wave case does not expose a resolved mismatch, so the next useful evidence expands validation coverage.",
-    holdFixed: ["Geometry", "mesh and time-step strategies", "chemistry", "boundary formulations", "probe locations"],
-    expectedOutcome: "The demonstrated pressure/wave agreement region expands by one controlled operating point.",
-    confirmationCriterion: "The new case passes pairing, quality, uncertainty, and identifiability checks.",
-    rejectionCriterion: "A resolved discrepancy appears; that specific metric becomes the next sensitivity target.",
-    alternativeHypothesis: "Repeat the current experiment first if operating-point repeatability is not quantified.",
+    question: evidenceGate ? "Can the comparison pass the listed evidence checks?" : "Does agreement hold at the next documented operating point?",
+    title: evidenceGate ? "Correct the listed comparison evidence" : "Add one adjacent documented operating point",
+    change: evidenceGate
+      ? "Correct only the failed comparison or data-quality inputs listed above. Do not change CFD settings."
+      : "Add the nearest already documented operating point without changing hardware, numerical method, or probe mapping.",
+    reason,
+    holdFixed: evidenceGate
+      ? ["Physical operating point", "CFD model", "unaffected pressure records", "analysis definitions that already passed"]
+      : ["Geometry and hardware", "numerical method", "model formulations", "probe mapping"],
+    expectedOutcome: evidenceGate
+      ? "Every listed evidence check passes before a CFD cause is tested."
+      : "The added case either extends the demonstrated agreement region or exposes a specific resolved mismatch.",
+    confirmationCriterion: evidenceGate
+      ? "Every listed evidence check passes and the required outputs become available."
+      : "The new case passes pairing, quality, uncertainty, and identifiability checks.",
+    rejectionCriterion: evidenceGate
+      ? "The corrected evidence passes, but the resolved experiment-CFD discrepancy remains."
+      : "A resolved discrepancy appears; that measured output becomes the next sensitivity target.",
+    alternativeHypothesis: "Rerank the remaining hypotheses after this result is classified.",
   };
 }
 
@@ -641,15 +587,11 @@ function repeatRun(core: CoreNextRun, latest: CaseHistoryEvidence): CoreNextRun 
   };
 }
 
-function confirmationBranch(causeId: DiagnosticCauseId) {
-  if (causeId === "case-validity" || causeId === "data-quality") return "Reanalyze the corrected evidence, then select the highest-ranked CFD sensitivity run.";
-  if (causeId === "spatial-resolution") return "Complete the next mesh level. If the targeted outputs change by less than 2%, treat them as numerically converged and move to the remaining physics mismatch.";
-  if (causeId === "chemistry-timescale") return "Complete time-step convergence. If frequency remains unresolved after convergence, isolate the chemistry mechanism in the following run.";
-  if (causeId === "inlet-boundary") return "Retain the better-supported inlet treatment and test the next unresolved pressure or wave hypothesis.";
-  if (causeId === "wall-loss") return "Retain the supported wall treatment and test whether the remaining mismatch is sensitive to chemistry or front resolution.";
-  if (causeId === "initialization-mode") return "Repeat the supported initialization once for robustness, then check the mode at the nearest operating condition.";
-  if (causeId === "missing-unsteadiness") return "Retain the measured fluctuation model and test whether the improved variability persists across a second comparison window.";
-  return "Add the next nearest operating condition to expand the demonstrated validation envelope.";
+function confirmedNextStep(stage: ControlledNextRun["stage"], evaluationMode: ControlledNextRun["decisionPolicy"]["evaluationMode"]) {
+  if (evaluationMode === "numerical-convergence") return "Keep the new setting. Continue adjacent levels until the convergence rule passes, then advance to the next unresolved hypothesis.";
+  if (evaluationMode === "model-sensitivity") return "Carry the supported setting forward and evaluate the next unresolved ranked hypothesis.";
+  if (stage === "Evidence gate") return "Reanalyze the corrected evidence, then rank the CFD sensitivities again.";
+  return "Add the case to the demonstrated validation envelope and evaluate the next documented operating point.";
 }
 
 function comparableHistory(
@@ -752,6 +694,7 @@ function buildAdaptiveRunPlan(
     evidence: [{ state: "supports" as const, strength: "context" as const, observation: "Every currently ranked sensitivity is complete or rejected; no unresolved actionable cause remains in the loaded pressure evidence.", basis: "case" as const, sourceIds: [] }],
     modelInputs: [`${currentMetadata.inletPressureBar} bar`, `${currentMetadata.inletTemperatureK} K`, `φ ${currentMetadata.equivalenceRatio}`],
     sourceIds: SOURCE_IDS_BY_CAUSE["validation-coverage"],
+    researchClaims: RESEARCH_CLAIMS_BY_CAUSE["validation-coverage"],
   };
   const alternative = hypotheses.find((hypothesis) => hypothesis.id !== primary.id && inferredDisposition(latestForCause(caseHistory, hypothesis.id)) !== "advance");
   const latest = latestForCause(caseHistory, primary.id);
@@ -790,7 +733,7 @@ function buildAdaptiveRunPlan(
     inconclusiveCriterion: core.decisionPolicy.evaluationMode === "numerical-convergence"
       ? "The adjacent levels cannot be compared or the targeted CFD outputs are unavailable."
       : `The result reaches neither ${CONFIRMATION_ERROR_REDUCTION_PCT}% mean error reduction nor a rejection rule.`,
-    ifConfirmed: confirmationBranch(primary.id),
+    ifConfirmed: confirmedNextStep(stageFor(primary.id), core.decisionPolicy.evaluationMode),
     ifRejected: core.decisionPolicy.evaluationMode === "numerical-convergence"
       ? `Keep the new ${core.decisionPolicy.changedVariable ?? "numerical"} setting and run the next adjacent level; report experimental agreement separately.`
       : evidenceGate

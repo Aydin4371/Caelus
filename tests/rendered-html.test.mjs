@@ -65,6 +65,8 @@ test("separates the case conclusion from the next-run recommendation", async () 
   const { readFile } = await import("node:fs/promises");
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const diagnostics = await readFile(new URL("../lib/diagnostics.ts", import.meta.url), "utf8");
+  const analysis = await readFile(new URL("../lib/rde-analysis.ts", import.meta.url), "utf8");
   assert.match(css, /\.engineering-decision-card[^}]*border[^}]*border-radius: 14px/s);
   assert.match(css, /\.decision-block[^}]*border[^}]*border-radius: 9px/s);
   assert.match(page, /Engineering decision/);
@@ -82,6 +84,12 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /Keep fixed/);
   assert.match(page, /Success looks like/);
   assert.match(page, /What prior cases tell you/);
+  assert.match(page, /No independent prior rerun/);
+  assert.match(page, /selectIndependentPrecedents/);
+  assert.match(page, /Research basis/);
+  assert.match(page, /researchClaims/);
+  assert.match(page, /These limits are not taken from the cited papers/);
+  assert.match(page, /No directly applicable paper is attached/);
   assert.match(page, /Decision quality/);
   assert.match(page, /Generated data; not real-engine evidence/);
   assert.match(page, /Why \{decisionQuality\.score\}\/\{decisionQuality\.maximumScore\}\?/);
@@ -138,6 +146,8 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.doesNotMatch(page, /className="decision-card"/);
   assert.doesNotMatch(page, /<span>Recommended next CFD run:<\/span>/);
   assert.doesNotMatch(page, /Make one controlled change, or one technically linked set of changes/);
+  assert.doesNotMatch(diagnostics, /Test the recorded inlet representation|Bracket the recorded wall treatment|Run one initialization-only mode test|Tighten only chemistry time integration/);
+  assert.doesNotMatch(analysis, /recommendationFor/);
 });
 
 test("uses clear graph labels and a shared legend for every case", async () => {

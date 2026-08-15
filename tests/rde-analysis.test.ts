@@ -1,17 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildCaseDelta, buildCaseHistoryEvidence, selectPlanningEvidence, summarizeCase } from "../lib/case-history.ts";
+import { buildCaseDelta, buildCaseHistoryEvidence, selectIndependentPrecedents, selectPlanningEvidence, summarizeCase, type CaseHistoryEvidence } from "../lib/case-history.ts";
 import type { AnalysisCase, CaseMetadata } from "../lib/caevera-types.ts";
 import { buildCaseAssessment } from "../lib/diagnostics.ts";
-import { DIAGNOSTIC_SOURCES, SOURCE_IDS_BY_CAUSE } from "../lib/diagnostic-knowledge.ts";
+import { DIAGNOSTIC_SOURCES, RESEARCH_CLAIMS_BY_CAUSE, SOURCE_IDS_BY_CAUSE } from "../lib/diagnostic-knowledge.ts";
 import {
   assessSignalQuality,
   compareSignals,
   makeDemoProbeSignals,
   parseProbeCsv,
   parseSignalCsv,
-  recommendationFor,
   serializeReport,
   type Signal,
 } from "../lib/rde-analysis.ts";
@@ -122,7 +121,6 @@ test("recovers a known sub-cycle lag and amplitude mismatch", () => {
   close(Math.abs(result.phaseLagUs), 10, 0.01, "absolute phase lag");
   close(result.amplitudeError, 0.2, 0.005, "amplitude error");
   assert.ok(result.correlation > 0.999);
-  assert.equal(recommendationFor(result).title, "Test pressure-amplitude drivers");
 });
 
 test("data-quality assessment detects a missing sample interval", () => {
@@ -250,6 +248,7 @@ test("case assessment connects validity, uncertainty, model inputs, and next run
   assert.ok(!("score" in result.hypotheses[0]), "diagnostic ranking must not expose an arbitrary score");
   assert.ok(result.hypotheses[0].evidence.every((item) => ["supports", "weakens", "unknown", "cannot-assess"].includes(item.state)));
   assert.ok(result.hypotheses[0].sourceIds.length > 0);
+  assert.ok(result.hypotheses[0].researchClaims.length > 0);
   assert.ok(result.nextRun.holdFixed.length >= 4);
   assert.match(result.nextRun.confirmationCriterion, /%|cycles|uncertainty/i);
   assert.ok(["Evidence gate", "Numerical verification", "Physics sensitivity", "Validation expansion"].includes(result.nextRun.stage));
@@ -266,6 +265,8 @@ test("case assessment connects validity, uncertainty, model inputs, and next run
   assert.ok(result.nextRun.reasoningLedger.unknowns.some((item) => item.basis === "policy") || result.hypotheses[0].evidence.some((item) => item.state === "unknown" || item.state === "cannot-assess"));
   assert.equal(result.nextRun.question.endsWith("?"), true);
   assert.ok(result.nextRun.decisionPolicy.targetedMetricIds.length > 0);
+  assert.equal(result.nextRun.decisionPolicy.basis, "prototype-policy");
+  assert.match(result.nextRun.decisionPolicy.version, /^2026\./);
   assert.equal(result.nextRun.latestControlledResult.status, "Awaiting result");
   assert.ok(result.coverage.some((item) => item.module === "Thermal" && item.status === "Not assessed"));
 });
@@ -322,7 +323,7 @@ test("controlled mesh rerun becomes strong case-history evidence", () => {
   const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
   const result = buildCaseAssessment(DEMO_METADATA, comparisons, analyzeRdeProbeSet(demo.test, demo.positionsDeg, 82), analyzeRdeProbeSet(demo.cfd, demo.positionsDeg, 82), history);
   assert.equal(result.hypotheses[0].id, "spatial-resolution");
-  assert.match(result.nextRun.title, /mesh-convergence/i);
+  assert.match(result.nextRun.title, /mesh.*convergence/i);
   assert.match(result.nextRun.change, /0\.125 mm/, "the next run must start from the accepted fine mesh, not stale baseline metadata");
   assert.equal(result.nextRun.latestControlledResult.status, "Confirmed");
   assert.equal(result.nextRun.latestControlledResult.caseName, "Fine mesh");
@@ -408,7 +409,7 @@ test("a rejected chained rerun resumes from the latest accepted case without reu
 
   const fineSummary = summarizeCase(fine);
   const plan = buildCaseAssessment(fine.metadata, compareProbeSets(fine.testSignals, fine.cfdSignals).comparisons, fineSummary.experiment, fineSummary.simulation, history);
-  assert.match(plan.nextRun.title, /mesh-convergence/i);
+  assert.match(plan.nextRun.title, /mesh.*convergence/i);
   assert.match(plan.nextRun.change, /0\.125 mm/);
   assert.ok(plan.nextRun.reasoningLedger.unknowns.some((item) => /convergence limit/i.test(item.observation)));
 });
@@ -643,9 +644,32 @@ test("diagnostic source records are complete and mapped", () => {
     for (const id of mappedIds) assert.ok(sourceIds.has(id), `unknown mapped source ${id}`);
   }
   for (const id of sourceIds) assert.ok(mappedSourceIds.has(id), `diagnostic source ${id} is retained but not used by any rule`);
+  for (const [causeId, claims] of Object.entries(RESEARCH_CLAIMS_BY_CAUSE)) {
+    for (const claim of claims) {
+      assert.ok(claim.statement.length > 30, `${causeId} needs a specific research claim`);
+      assert.ok(claim.boundary.length > 30, `${causeId} needs an applicability boundary`);
+      assert.ok(claim.sourceIds.length > 0, `${causeId} research claim needs an exact source`);
+      for (const id of claim.sourceIds) assert.ok(SOURCE_IDS_BY_CAUSE[causeId as keyof typeof SOURCE_IDS_BY_CAUSE].includes(id), `${causeId} claim uses an unmapped source ${id}`);
+    }
+    assert.deepEqual(
+      [...new Set(claims.flatMap((claim) => claim.sourceIds))].sort(),
+      [...SOURCE_IDS_BY_CAUSE[causeId as keyof typeof SOURCE_IDS_BY_CAUSE]].sort(),
+      `${causeId} cause-level sources and claim-level sources must match`,
+    );
+  }
   assert.ok(SOURCE_IDS_BY_CAUSE["spatial-resolution"].length >= 2);
   assert.deepEqual(SOURCE_IDS_BY_CAUSE["initialization-mode"], ["yao-wang-2016"]);
   assert.deepEqual(SOURCE_IDS_BY_CAUSE["missing-unsteadiness"], []);
+});
+
+test("comparable precedent excludes the active case family", () => {
+  const evidence = [
+    { baselineCaseId: "current-family", caseId: "current-rerun", caseSource: "demo" },
+    { baselineCaseId: "other-family", caseId: "other-rerun", caseSource: "demo" },
+    { baselineCaseId: "uploaded-family", caseId: "uploaded-rerun", caseSource: "uploaded" },
+  ] as CaseHistoryEvidence[];
+  assert.deepEqual(selectIndependentPrecedents(evidence, "current-family", "demo").map((item) => item.caseId), ["other-rerun"]);
+  assert.deepEqual(selectIndependentPrecedents(evidence, "uploaded-family", "uploaded").map((item) => item.caseId), []);
 });
 
 test("pressure and wave method sources retain reviewed citation metadata", () => {

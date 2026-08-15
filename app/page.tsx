@@ -3,7 +3,7 @@
 import { ChangeEvent, useMemo, useState } from "react";
 import { PwaInstallButton } from "@/components/pwa-install-button";
 import { PressureFileMapper } from "@/components/pressure-file-mapper";
-import { CONTROLLED_RERUN_FIELDS, buildCaseDelta, buildCaseHistoryEvidence, caseFieldLabel, selectPlanningEvidence, summarizeCase, type CaseHistoryEvidence } from "@/lib/case-history";
+import { CONTROLLED_RERUN_FIELDS, buildCaseDelta, buildCaseHistoryEvidence, caseFieldLabel, selectIndependentPrecedents, selectPlanningEvidence, summarizeCase, type CaseHistoryEvidence } from "@/lib/case-history";
 import {
   EMPTY_METADATA,
   cloneMetadata,
@@ -15,7 +15,7 @@ import {
 } from "@/lib/caevera-types";
 import { buildCaseAssessment, type ControlledNextRun, type DiagnosticEvidence, type MetricAssessment } from "@/lib/diagnostics";
 import { buildDecisionQuality, type DecisionQuality } from "@/lib/decision-quality";
-import { KNOWLEDGE_BASE_VERSION, sourcesFor } from "@/lib/diagnostic-knowledge";
+import { KNOWLEDGE_BASE_VERSION, sourcesFor, type DiagnosticResearchClaim, type DiagnosticSource } from "@/lib/diagnostic-knowledge";
 import { CASE_INPUT_HELP } from "@/lib/case-input-help";
 import { WAVE_METHOD_SOURCES } from "@/lib/wave-method-sources";
 import type { MappedProbeImport } from "@/lib/data-import";
@@ -120,6 +120,20 @@ function EvidenceLedgerColumn({
     </li>)}</ul> : <div className="reasoning-empty">{emptyMessage}</div>}
     {items.length > 2 && <small className="reasoning-more">+{items.length - 2} more in report</small>}
   </article>;
+}
+
+function ResearchBasis({ claims, sources }: { claims: DiagnosticResearchClaim[]; sources: DiagnosticSource[] }) {
+  return <details className="research-basis">
+    <summary>Research basis · {sources.length ? `${sources.length} mapped source${sources.length === 1 ? "" : "s"}` : "no direct paper"}</summary>
+    {claims.length ? <div className="research-claims">{claims.map((claim) => {
+      const claimSources = sourcesFor(claim.sourceIds);
+      return <article key={claim.statement}>
+        <p>{claim.statement}</p>
+        <div>{claimSources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>
+        <small>Limit: {claim.boundary}</small>
+      </article>;
+    })}</div> : <p className="research-unmapped">No directly applicable paper is attached to this branch. It remains an explicitly labeled prototype policy.</p>}
+  </details>;
 }
 
 type AnalysisInputSummary = {
@@ -335,7 +349,8 @@ function EngineeringDecisionPanel({
   selectedCaseName,
   selectedAnalysisInput,
   planningCaseName,
-  publishedSourceCount,
+  publishedSources,
+  researchClaims,
   publishedValidation,
   onEdit,
   onDownloadReport,
@@ -349,7 +364,8 @@ function EngineeringDecisionPanel({
   selectedCaseName: string;
   selectedAnalysisInput: AnalysisInputSummary;
   planningCaseName: string;
-  publishedSourceCount: number;
+  publishedSources: DiagnosticSource[];
+  researchClaims: DiagnosticResearchClaim[];
   publishedValidation: typeof PUBLISHED_VALIDATION_SUMMARY;
   onEdit: () => void;
   onDownloadReport: () => void;
@@ -418,7 +434,7 @@ function EngineeringDecisionPanel({
         </div>
       </section>
       <section className="decision-outcomes" aria-label="How the result changes the plan">
-        <div><span>How this run will be judged</span></div>
+        <div><span>How this run will be judged</span>{policy.basis === "prototype-policy" && <small>Prototype policy {policy.version}. These limits are not taken from the cited papers.</small>}</div>
         {isNumericalPolicy ? <>
           <div className="outcome-rules">
             <article className="branch-converged"><strong>Converged</strong><span>Targeted CFD outputs change by ≤{policy.convergenceResponsePct!.toFixed(1)}% from the starting level.</span><small>Keep the new setting; continue the plan.</small></article>
@@ -442,15 +458,16 @@ function EngineeringDecisionPanel({
           <p><strong>{precedent.confirmedCount} of {precedent.matchedCount} similar {precedent.level === "Demonstration" ? "synthetic" : "company"} reruns showed the same response.</strong></p>
           {isDemo && <small>Synthetic only. Do not treat this as engine evidence.</small>}
         </> : <>
-          <p><strong>No comparable company rerun.</strong> Current-case evidence only.</p>
+          <p><strong>No independent prior rerun.</strong> Current-family evidence only.</p>
         </>}
       </div>
+      <ResearchBasis claims={researchClaims} sources={publishedSources} />
       <details className="decision-evidence">
         <summary>Why {decisionQuality.score}/{decisionQuality.maximumScore}?</summary>
         <p className="selected-data-source"><strong>{selectedCaseName}</strong> · {selectedAnalysisInput.experimentSamples.toLocaleString()} experiment + {selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values · {selectedAnalysisInput.probeCount} probes</p>
         {planUsesDifferentCase && <p className="planning-data-source"><strong>Plan reference:</strong> {planningCaseName}</p>}
         <ul>{decisionQuality.gates.map((gate) => <li key={gate.id} className={gate.satisfied ? "" : "evidence-missing"}><i>{gate.satisfied ? "✓" : "–"}</i><strong>{gate.label}</strong><small>{gate.result}</small></li>)}</ul>
-        <p>{publishedSourceCount} engineering sources · {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} analyzer checks · method support only</p>
+        <p>{publishedSources.length} mapped engineering source{publishedSources.length === 1 ? "" : "s"} · {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} analyzer checks · method support only</p>
       </details>
       {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
     </section>
@@ -492,12 +509,12 @@ export default function Home() {
     ?? activeCase;
   const planAssessment = useMemo(() => {
     if (!planningCase) return null;
-    const relevantPrecedents = precedentEvidence.filter((item) => planningCase.source === "demo" ? item.caseSource === "demo" : item.caseSource !== "demo");
+    const relevantPrecedents = selectIndependentPrecedents(precedentEvidence, recommendationBaselineId, planningCase.source);
     const planningComparison = compareProbeSets(planningCase.testSignals, planningCase.cfdSignals);
     const planningTestMode = analyzeRdeProbeSet(planningCase.testSignals, planningCase.metadata.probePositionsDeg, planningCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: planningCase.metadata.maximumWaveCount, synchronizationConfirmed: planningCase.metadata.probeSynchronizationConfirmed, sensorBandwidthKHz: planningCase.metadata.experimentSensorBandwidthKHz, filterCutoffKHz: planningCase.metadata.experimentFilterCutoffKHz });
     const planningCfdMode = analyzeRdeProbeSet(planningCase.cfdSignals, planningCase.metadata.probePositionsDeg, planningCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: planningCase.metadata.maximumWaveCount, synchronizationConfirmed: planningCase.metadata.probeSynchronizationConfirmed });
     return buildCaseAssessment(planningCase.metadata, planningComparison.comparisons, planningTestMode, planningCfdMode, caseHistoryEvidence, relevantPrecedents);
-  }, [planningCase, caseHistoryEvidence, precedentEvidence]);
+  }, [planningCase, recommendationBaselineId, caseHistoryEvidence, precedentEvidence]);
   const activeAnalysisInput = summarizeAnalysisInput(activeCase);
   const activeCaseEvidence = activeCase?.relationship ? caseHistoryEvidence.find((item) => item.caseId === activeCase.id) ?? null : null;
   const decisionQuality = activeCase && assessment && planAssessment ? buildDecisionQuality({
@@ -932,7 +949,7 @@ export default function Home() {
         </section> : <>
           <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration" : "Uploaded case"}</span></div><h1>{activeCase.metadata.name}</h1><p>{activeCase.relationship ? `Controlled ${changeLabel(activeCase.relationship.changedVariable).toLowerCase()} rerun starting from ${activeReferenceName ?? baselineCaseName ?? "the family baseline"}` : `Baseline for ${caseHistoryEvidence.length} controlled rerun${caseHistoryEvidence.length === 1 ? "" : "s"}`} · deterministic local analysis</p></div>
 
-          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} publishedSourceCount={likelySources.length} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
+          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} publishedSources={likelySources} researchClaims={likelyHypothesis?.researchClaims ?? []} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={cases.length > 1 ? () => setWorkspaceView("compare") : null} />
 
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">

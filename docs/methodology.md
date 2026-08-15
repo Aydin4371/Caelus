@@ -277,9 +277,10 @@ Primary literature provides traceable applicability context and identifies
 physically defensible sensitivity directions. It never proves that a paper's
 reported mechanism caused the discrepancy in the loaded case. That claim
 requires a controlled rerun whose result supports or weakens the hypothesis.
-Sources are mapped only to the mechanisms they directly studied. A diagnostic
-branch with no directly applicable reviewed source remains an uncited prototype
-heuristic; Caevera does not borrow a citation from an adjacent topic.
+Each displayed research claim stores its own source IDs and applicability
+boundary. Sources are mapped only to claims they directly support. A diagnostic
+branch with no directly applicable reviewed source is visibly labeled as a
+prototype policy; Caevera does not borrow a citation from an adjacent topic.
 
 For a verified one-variable rerun, Caevera evaluates the metrics predicted to
 respond to that variable:
@@ -311,10 +312,19 @@ are inconclusive. These are explicit prototype decision limits, not calibrated
 probabilities and not proof that the associated model choice caused the original
 discrepancy.
 
+The displayed next-run title, question, change, fixed inputs, target outputs,
+and outcome criteria are assembled from structured fields: the selected
+variable, current case setting, target metric IDs, calculated observations,
+case-history state, and versioned policy values. Caevera does not select a
+stored paragraph for a named cause. Static interface labels remain fixed, but
+the decision content is generated from the loaded case state.
+
 ## 10. Comparable-case intelligence
 
 Caevera aggregates completed controlled reruns across the loaded workspace when
 they share the selected cause and overlap the active mismatch signature. The
+active case family is excluded from this pool because its reruns are already
+used as direct case-history evidence and are not independent precedent. The
 next-run card reports:
 
 - the number of comparable controlled reruns;

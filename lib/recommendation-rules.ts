@@ -13,6 +13,33 @@ export type ControlledRerunRule = {
 export const CONFIRMATION_ERROR_REDUCTION_PCT = 25;
 export const REJECTION_ERROR_WORSENING_PCT = 5;
 export const NUMERICAL_CONVERGENCE_RESPONSE_PCT = 2;
+export const RECOMMENDATION_POLICY_VERSION = "2026.08.3";
+
+export const CONTROLLED_VARIABLE_LABELS: Record<ControlledSensitivityVariable, string> = {
+  mesh: "mesh / spatial method",
+  "time-step": "flow time step / temporal method",
+  chemistry: "chemistry model / integration",
+  inlet: "inlet treatment",
+  wall: "wall treatment",
+  initialization: "initialization method",
+  unsteadiness: "measured inlet unsteadiness",
+};
+
+export const TARGET_METRIC_LABELS: Record<string, string> = {
+  "peak-pressure": "peak pressure",
+  "rise-time": "pressure rise time",
+  harmonics: "second-harmonic content",
+  frequency: "wave frequency",
+  amplitude: "pressure amplitude",
+  impulse: "wave-passage impulse",
+  "mean-pressure": "mean pressure",
+  "wave-count": "wave count",
+  direction: "wave direction",
+  "mode-transitions": "mode transitions",
+  "cycle-variability": "cycle variability",
+  "frequency-drift": "frequency drift",
+  "phase-jitter": "phase jitter",
+};
 
 export const CONTROLLED_RERUN_RULES: Record<ControlledSensitivityVariable, ControlledRerunRule> = {
   mesh: { causeId: "spatial-resolution", targets: ["peak-pressure", "rise-time", "harmonics"], minimumResponsePct: 5, convergenceResponsePct: NUMERICAL_CONVERGENCE_RESPONSE_PCT },
