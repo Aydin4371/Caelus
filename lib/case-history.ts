@@ -54,7 +54,7 @@ export type CaseHistoryEvidence = {
   planDisposition: PlanDisposition;
 };
 
-const GROUP_FIELDS: Record<SensitivityVariable, (keyof CaseMetadata)[]> = {
+export const CONTROLLED_RERUN_FIELDS: Record<SensitivityVariable, (keyof CaseMetadata)[]> = {
   mesh: ["meshCells", "minimumCellSizeMm", "cellsPerInductionLength", "nearWallCellSizeMm", "spatialScheme", "spatialOrder", "numericalFlux", "limiterFilter"],
   "time-step": ["timeStepUs", "cfl", "temporalScheme", "temporalOrder"],
   chemistry: ["chemistryModel", "chemistrySpecies", "chemistryReactions", "chemistryIntegrator", "combustionModel"],
@@ -62,7 +62,7 @@ const GROUP_FIELDS: Record<SensitivityVariable, (keyof CaseMetadata)[]> = {
   wall: ["wallBoundaryCondition"],
   initialization: ["initializationMethod"],
   unsteadiness: ["inletBoundaryCondition"],
-  other: ["solver", "solverVersion", "dimensionality", "turbulenceModel", "outletBoundaryCondition", "cfdPressureUncertaintyPct", "cfdTimingUncertaintyUs"],
+  other: ["solver", "solverVersion", "dimensionality", "turbulenceModel", "outletBoundaryCondition"],
 };
 
 const PHYSICAL_CASE_FIELDS: (keyof CaseMetadata)[] = [
@@ -151,12 +151,16 @@ function signalsEqual(left: AnalysisCase["testSignals"], right: AnalysisCase["te
 }
 
 function changedCfdSettings(baseline: CaseMetadata, candidate: CaseMetadata) {
-  const fields = [...new Set(Object.values(GROUP_FIELDS).flat())];
+  const fields = [...new Set(Object.values(CONTROLLED_RERUN_FIELDS).flat())];
   return fields.filter((field) => !valueEqual(baseline[field], candidate[field]));
 }
 
 function fieldNames(fields: (keyof CaseMetadata)[]) {
-  return fields.map((field) => FIELD_LABELS[field] ?? String(field)).join(", ");
+  return fields.map(caseFieldLabel).join(", ");
+}
+
+export function caseFieldLabel(field: keyof CaseMetadata) {
+  return FIELD_LABELS[field] ?? String(field);
 }
 
 function physicalCaseDifferences(baseline: AnalysisCase, candidate: AnalysisCase) {
@@ -247,8 +251,8 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
     const experimentMatches = signalsEqual(referenceCase.testSignals, candidate.testSignals);
     const physicalCaseMatches = physicalDifferences.length === 0 && experimentMatches;
     const referenceInFamily = referenceCase.id === baseline.id || referenceCase.relationship?.baselineCaseId === baseline.id;
-    const expectedChangedSettings = rule ? changedSettings.filter((field) => GROUP_FIELDS[variable].includes(field)) : [];
-    const extraChangedSettings = rule ? changedSettings.filter((field) => !GROUP_FIELDS[variable].includes(field)) : changedSettings;
+    const expectedChangedSettings = rule ? changedSettings.filter((field) => CONTROLLED_RERUN_FIELDS[variable].includes(field)) : [];
+    const extraChangedSettings = rule ? changedSettings.filter((field) => !CONTROLLED_RERUN_FIELDS[variable].includes(field)) : changedSettings;
     const relationshipIssues: string[] = [];
     if (!rule || variable === "other") relationshipIssues.push("Choose one declared CFD change instead of Other / comparison only.");
     if (!referenceInFamily) relationshipIssues.push("The selected starting case is outside this case family.");
