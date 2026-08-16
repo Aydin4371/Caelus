@@ -230,10 +230,14 @@ function sharedSpectralPeaks(signals: Signal[], primaryFrequencyKHz: number) {
     selected.push({ frequencyKHz: peakFrequency, relativeAmplitude: peak.value / maximum, harmonicOfPrimary });
     if (selected.length >= 8) break;
   }
+  // A strong shared component between half and 2.5 times the primary cannot be
+  // explained as the same single rotating mode once integer harmonics have
+  // already been excluded. Keep the band finite so unrelated high-frequency
+  // sensor noise does not automatically make the mode "complex".
   const significantNonHarmonic = selected.find((peak) =>
     !peak.harmonicOfPrimary
     && peak.frequencyKHz >= 0.5 * primaryFrequencyKHz
-    && peak.frequencyKHz <= 1.5 * primaryFrequencyKHz
+    && peak.frequencyKHz <= 2.5 * primaryFrequencyKHz
     && Math.abs(peak.frequencyKHz - primaryFrequencyKHz) > Math.max(2.5 * binWidth, 0.015 * primaryFrequencyKHz)
     && peak.relativeAmplitude >= 0.25);
   return { peaks: selected, significantNonHarmonic };

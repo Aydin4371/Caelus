@@ -463,10 +463,11 @@ cannot become detached from the saved raw evidence.
 ## 16. Published validation boundary
 
 Exact published frequency, wave-count, annulus-diameter, and wave-speed values
-are used as deterministic calculation benchmarks. Two checksum-locked compact
-pressure fixtures from the registered Zenodo archive are also analyzed in the
-mandatory suite. They verify that similar-speed counter-rotation is not falsely
-collapsed into one mode and that a separated secondary traveling component is
-detected. CE2029 remains registered but unembedded. None of these public cases
-is described as full experiment–CFD validation because matching numeric arrays
-from both sides do not exist.
+are used as deterministic calculation benchmarks. Three checksum-locked
+compact pressure fixtures from the registered Zenodo archive are also analyzed
+in the mandatory suite. They verify that similar-speed counter-rotation is not
+falsely collapsed into one mode, that separated secondary traveling components
+are detected, and that CE2029's repeated circumferential probe angles do not
+produce an invented single-mode result. None of these public cases is described
+as full experiment–CFD validation because matching numeric arrays from both
+sides do not exist.
