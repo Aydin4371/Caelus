@@ -20,20 +20,20 @@ type PublishedFixture = {
   pressureByProbe: number[][];
 };
 
-function loadFixture(id: "bd0041" | "bd0038") {
+function loadFixture(id: "bd0041" | "bd0038" | "ce2029") {
   return JSON.parse(readFileSync(new URL(`./fixtures/zenodo-${id}.json`, import.meta.url), "utf8")) as PublishedFixture;
 }
 
-function fixtureHash(id: "bd0041" | "bd0038") {
+function fixtureHash(id: "bd0041" | "bd0038" | "ce2029") {
   const contents = readFileSync(new URL(`./fixtures/zenodo-${id}.json`, import.meta.url));
   return createHash("sha256").update(contents).digest("hex");
 }
 
-function signalsFor(fixture: PublishedFixture): Signal[] {
-  return fixture.pressureByProbe.map((pressure, index) => ({
-    name: `${fixture.caseId} · P${index + 1}`,
+function signalsFor(fixture: PublishedFixture, probeIndices = fixture.pressureByProbe.map((_, index) => index)): Signal[] {
+  return probeIndices.map((sourceIndex) => ({
+    name: `${fixture.caseId} · P${sourceIndex + 1}`,
     time: fixture.timeMs,
-    pressure,
+    pressure: fixture.pressureByProbe[sourceIndex],
   }));
 }
 
@@ -71,11 +71,43 @@ test("published BD0038 pressure record exposes the second counter-rotating compo
   assert.ok(second.relativeAmplitude > 0.3);
 });
 
-test("the unembedded CE2029 record is never presented as automated validation", () => {
+test("published CE2029 record exposes a second component without inventing unique probe angles", () => {
+  const fixture = loadFixture("ce2029");
   const registry = RAW_DATASET_VALIDATION_CASES.find((item) => item.id === "CE2029");
-  assert.equal(registry?.validationStatus, "registered-not-embedded");
-  assert.equal(registry?.fixturePath, null);
-  assert.equal(registry?.fixtureSha256, null);
+  assert.equal(registry?.validationStatus, "mandatory-fixture");
+  assert.equal(fixtureHash("ce2029"), registry?.fixtureSha256);
+  assert.equal(fixture.sourceDoi, "10.5281/zenodo.18886925");
+  assert.equal(fixture.modeLabel, "DS2");
+  assert.equal(registry?.sourceStartIndex, 70921);
+  assert.equal(registry?.sourceStride, 2);
+  assert.equal(registry?.sourceSampleRateHz, 500000);
+
+  const uniqueProbeIndices = fixture.probePositionsDeg.reduce<number[]>((indices, angle, index) => {
+    if (!indices.some((selected) => fixture.probePositionsDeg[selected] === angle)) indices.push(index);
+    return indices;
+  }, []);
+  assert.deepEqual(uniqueProbeIndices, registry?.circumferentialProbeIndices);
+  assert.equal(uniqueProbeIndices.length, 4, "the source contains seven channels but only four unique circumferential angles");
+  assert.throws(
+    () => analyzeRdeProbeSet(signalsFor(fixture), fixture.probePositionsDeg, 76, { maximumWaveCount: 6, synchronizationConfirmed: true }),
+    /angles must be unique/i,
+    "the analyzer must not silently treat repeated source angles as distinct azimuths",
+  );
+
+  const result = analyzeRdeProbeSet(
+    signalsFor(fixture, uniqueProbeIndices),
+    uniqueProbeIndices.map((index) => fixture.probePositionsDeg[index]),
+    76,
+    { maximumWaveCount: 6, synchronizationConfirmed: true },
+  );
+  assert.ok(Math.abs(result.waveFrequencyKHz - 4.881) < 0.09, `dominant published frequency drifted: ${result.waveFrequencyKHz}`);
+  const second = result.spectralPeaks.find((peak) => !peak.harmonicOfPrimary && Math.abs(peak.frequencyKHz - 7.690) < 0.1);
+  assert.ok(second, "the strong second published component should be retained");
+  assert.ok(second.relativeAmplitude > 0.7);
+  assert.equal(result.complexModeDetected, true);
+  assert.equal(result.identifiability, "Not identifiable");
+  assert.ok(!Number.isFinite(result.waveSpeedMps), "speed must not be reported for the unresolved multi-component mode");
+  assert.ok(result.warnings.some((warning) => /second non-harmonic pressure component/i.test(warning)));
 });
 
 test("published Xue et al. frequency and annulus values reproduce tabulated wave speeds", () => {

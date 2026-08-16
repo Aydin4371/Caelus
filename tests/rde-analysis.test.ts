@@ -815,5 +815,5 @@ test("published RDE wave-speed values are reproduced without treating them as pa
   assert.equal(PUBLISHED_VALIDATION_SOURCES["xue-et-al-2023"].doi, "10.3389/fenrg.2023.1136156");
   assert.match(PUBLISHED_VALIDATION_SOURCES["xue-et-al-2023"].limitation, /does not release a paired/i);
   assert.deepEqual(RAW_DATASET_VALIDATION_CASES.map((item) => item.id), ["BD0041", "BD0038", "CE2029"]);
-  assert.deepEqual(RAW_DATASET_VALIDATION_CASES.map((item) => item.validationStatus), ["mandatory-fixture", "mandatory-fixture", "registered-not-embedded"]);
+  assert.deepEqual(RAW_DATASET_VALIDATION_CASES.map((item) => item.validationStatus), ["mandatory-fixture", "mandatory-fixture", "mandatory-fixture"]);
 });
