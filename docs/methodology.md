@@ -2,7 +2,7 @@
 
 ## Scope
 
-Version 1.4 analyzes matched RDE operating points using at least three
+Version 1.6 analyzes matched RDE operating points using at least three
 synchronized experimental pressure traces and matching CFD virtual probes. It
 asks:
 
@@ -12,6 +12,20 @@ asks:
 
 It does not validate the complete engine or prove that a ranked hypothesis
 caused a discrepancy.
+
+The Operating envelope tab is currently an observed-data workspace, not a
+surrogate model. One baseline case produces one physical marker. Related mesh,
+time-step, chemistry, boundary, or initialization reruns remain evidence for
+that marker and do not create new operating conditions. Marker position comes
+from the entered equivalence ratio, inlet pressure, or mass flow. Marker color,
+wave count, frequency, propagation speed, and stability come from the analyzed
+experimental pressure probes.
+
+Caevera does not interpolate between markers in version 1.6. It also does not
+infer injector backflow from annulus pressure traces. Backflow requires an
+explicit injector or plenum reverse-flow channel and a separately validated
+calculation. The interface reports these limitations instead of substituting a
+synthetic prediction.
 
 ## Required assumptions
 

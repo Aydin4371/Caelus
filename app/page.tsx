@@ -3,6 +3,7 @@
 import { ChangeEvent, useMemo, useState } from "react";
 import { PwaInstallButton } from "@/components/pwa-install-button";
 import { PressureFileMapper } from "@/components/pressure-file-mapper";
+import { OperatingEnvelope } from "@/components/operating-envelope";
 import { CONTROLLED_RERUN_FIELDS, buildCaseDelta, buildCaseHistoryEvidence, caseFieldLabel, selectIndependentPrecedents, selectPlanningEvidence, summarizeCase, type CaseHistoryEvidence } from "@/lib/case-history";
 import {
   EMPTY_METADATA,
@@ -512,6 +513,7 @@ export default function Home() {
   const [activeView, setActiveView] = useState<"signals" | "spectrum" | "residual" | "phase" | "cycles">("signals");
   const [activeProbe, setActiveProbe] = useState(0);
   const [workspaceView, setWorkspaceView] = useState<"case" | "compare">("case");
+  const [productView, setProductView] = useState<"comparison" | "envelope">("comparison");
 
   const activeCase = cases.find((item) => item.id === activeCaseId) ?? null;
   const probeSetComparison = useMemo(() => activeCase ? compareProbeSets(activeCase.testSignals, activeCase.cfdSignals) : null, [activeCase]);
@@ -941,6 +943,7 @@ export default function Home() {
     setActiveProbe(0);
     setActiveView("signals");
     setWorkspaceView("case");
+    setProductView("comparison");
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
     requestAnimationFrame(() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
@@ -949,12 +952,13 @@ export default function Home() {
     <header className="product-header">
       <a className="brand" href="#top" aria-label="Return to empty home workspace" onClick={(event) => { event.preventDefault(); returnToEmptyWorkspace(); }}><span className="brand-mark">C</span><span><strong>CAEVERA</strong><small>BY CAELUS</small></span></a>
       <p>RDE simulation-to-test intelligence</p>
+      <nav className="product-tabs" aria-label="Caevera workspaces"><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Compare &amp; diagnose</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Operating envelope</button></nav>
       <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><PwaInstallButton /><label className="button secondary workspace-file-button">Open workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Add case</button></div>
     </header>
     {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
 
     <section className="content" id="top">
-      {!activeCase || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
+      {productView === "envelope" ? <OperatingEnvelope cases={cases} onAddCase={openNewCase} onLoadDemo={loadExampleCaseHistory} onOpenCase={(caseId) => { setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
         <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>Welcome to Caevera</h1>
         <p>Compare experimental pressure-probe data with CFD. Caevera identifies differences larger than the stated uncertainty, recommends one CFD change, and uses the rerun result to choose what happens next.</p>
         <span className="empty-status">No case has been added yet</span>

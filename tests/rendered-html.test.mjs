@@ -33,6 +33,8 @@ test("renders development preview metadata", async () => {
   assert.match(html, developmentPreviewMeta);
   assert.match(html, /CAEVERA/);
   assert.match(html, /Welcome to Caevera/);
+  assert.match(html, /Compare &amp; diagnose/);
+  assert.match(html, /Operating envelope/);
   assert.match(html, /recommends one CFD change/);
   assert.match(html, /No case has been added yet/);
   assert.match(html, /rel="manifest"/);
@@ -47,6 +49,22 @@ test("renders development preview metadata", async () => {
   assert.doesNotMatch(html, /Signal evidence/);
   assert.doesNotMatch(html, /aligned samples/);
   assert.doesNotMatch(html, /\u2014/);
+});
+
+test("keeps the observed operating map separate from case comparison", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const envelope = await readFile(new URL("../components/operating-envelope.tsx", import.meta.url), "utf8");
+  const logic = await readFile(new URL("../lib/operating-envelope.ts", import.meta.url), "utf8");
+  assert.match(page, /productView/);
+  assert.match(page, /<OperatingEnvelope cases=\{cases\}/);
+  assert.match(envelope, /Observed operating map/);
+  assert.match(envelope, /blank space is untested, not predicted/);
+  assert.match(envelope, /No surrogate prediction yet/);
+  assert.match(envelope, /Open full comparison/);
+  assert.match(logic, /cases\.filter\(\(item\) => !item\.relationship\)/);
+  assert.match(logic, /backflowStatus: "Not assessed"/);
+  assert.doesNotMatch(envelope, /predicted stable|predicted unstable|probability/i);
 });
 
 test("ships an installable Caevera app manifest and service worker", async () => {
