@@ -29,6 +29,19 @@ The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
 
+## v1.6.0 observed operating-map workspace
+
+- Adds a separate Operating envelope tab while preserving the full Compare and
+  diagnose workflow.
+- Uses baseline cases as physical operating points and keeps their related CFD
+  reruns attached to the same point.
+- Calculates each marker's experimental stability, mode, frequency, wave
+  speed, signal status, and numerical-convergence status from the saved case.
+- Lets the user map equivalence ratio, inlet pressure, and mass flow without
+  treating untested space as predicted behavior.
+- Explicitly withholds interpolation and injector-backflow conclusions until a
+  versioned model and the required injector or plenum channels exist.
+
 ## v1.5.1 plain-language decision states
 
 - Every evidence column now says exactly what its findings mean. A zero count
