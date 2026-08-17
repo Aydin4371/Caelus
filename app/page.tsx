@@ -406,10 +406,12 @@ function EngineeringDecisionPanel({
         ? "This is the latest accepted setting in the case family."
         : "This accepted setting is carried forward.";
   return <section className={`engineering-decision-card decision-${summary.tone}${isDemo ? " decision-demo" : ""}`} aria-label="Engineering decision">
-    <div className="decision-quality" aria-label={`Evidence readiness ${decisionQuality.score} out of ${decisionQuality.maximumScore}`}>
-      <div className="decision-quality-score"><span>Evidence readiness</span><strong>{decisionQuality.score}<small>/{decisionQuality.maximumScore}</small></strong></div>
-      <div className="decision-quality-copy"><strong>{decisionQuality.label}</strong><small>{decisionQuality.explanation}</small></div>
-      <div className="decision-quality-scale" aria-hidden="true">{Array.from({ length: decisionQuality.maximumScore }, (_, index) => <i key={index} className={index < decisionQuality.score ? "filled" : ""} />)}</div>
+    <div className="decision-quality" aria-label={`Recommendation evidence: ${decisionQuality.label}`}>
+      <div className="decision-quality-verdict"><span>Recommendation evidence</span><strong>{decisionQuality.label}</strong></div>
+      <div className="decision-quality-copy"><small>{decisionQuality.sourceLabel}</small><p>{decisionQuality.explanation}</p></div>
+      <div className="decision-quality-factors" aria-label="Evidence conditions">
+        {decisionQuality.gates.map((gate) => <span key={gate.id} className={`factor-${gate.status}`}><i aria-hidden="true">{gate.status === "passed" ? "✓" : gate.status === "blocked" ? "×" : gate.status === "review" ? "!" : "○"}</i><small>{gate.label}</small><strong>{gate.statusLabel}</strong></span>)}
+      </div>
     </div>
     <section className="decision-block decision-conclusion-block" aria-labelledby="decision-conclusion-heading">
       <div className="decision-block-heading"><b>1</b><h2 id="decision-conclusion-heading">{conclusionHeading}</h2></div>
@@ -481,11 +483,12 @@ function EngineeringDecisionPanel({
       </div>
       <ResearchBasis claims={researchClaims} sources={publishedSources} />
       <details className="decision-evidence">
-        <summary>Why is evidence readiness {decisionQuality.score}/{decisionQuality.maximumScore}?</summary>
+        <summary>What is this recommendation status based on?</summary>
+        <p className="evidence-calculation-note">Caevera calculates this status from the loaded case and verified case-family history. Published papers and public benchmarks do not raise it.</p>
         <p className="selected-data-source"><strong>{selectedCaseName}</strong> · {selectedAnalysisInput.experimentSamples.toLocaleString()} experiment + {selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values · {selectedAnalysisInput.probeCount} probes</p>
         {planUsesDifferentCase && <p className="planning-data-source"><strong>Plan reference:</strong> {planningCaseName}</p>}
-        <ul>{decisionQuality.gates.map((gate) => <li key={gate.id} className={gate.satisfied ? "" : "evidence-missing"}><i>{gate.satisfied ? "✓" : "–"}</i><strong>{gate.label}</strong><small>{gate.result}</small></li>)}</ul>
-        <p>{publishedSources.length} published reference{publishedSources.length === 1 ? "" : "s"} {publishedSources.length === 1 ? "supports" : "support"} the method · {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} public validation cases test the analyzer · neither proves the cause in this case</p>
+        <ul>{decisionQuality.gates.map((gate) => <li key={gate.id} className={`evidence-${gate.status}`}><i>{gate.status === "passed" ? "✓" : gate.status === "blocked" ? "×" : gate.status === "review" ? "!" : "○"}</i><strong>{gate.label}</strong><b>{gate.statusLabel}</b><small>{gate.result}</small></li>)}</ul>
+        <p><strong>Method support only:</strong> {publishedSources.length} published reference{publishedSources.length === 1 ? "" : "s"} support the method, and {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} public validation cases test the analyzer. Neither confirms the explanation in this case.</p>
       </details>
       {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
     </section>
@@ -535,11 +538,12 @@ export default function Home() {
   }, [planningCase, recommendationBaselineId, caseHistoryEvidence, precedentEvidence]);
   const activeAnalysisInput = summarizeAnalysisInput(activeCase);
   const activeCaseEvidence = activeCase?.relationship ? caseHistoryEvidence.find((item) => item.caseId === activeCase.id) ?? null : null;
+  const recommendationResultEvidence = activeCaseEvidence ?? latestAcceptedEvidence;
   const decisionQuality = activeCase && assessment && planAssessment ? buildDecisionQuality({
     source: activeCase.source,
     validityStatus: assessment.validity.status,
     dataQualityStatus: assessment.dataQuality.status,
-    controlledResultStatus: activeCaseEvidence?.sequenceStatus ?? null,
+    controlledResultStatus: recommendationResultEvidence?.sequenceStatus ?? null,
     uploadedPrecedentCount: planAssessment.nextRun.precedent.uploadedCount,
   }) : null;
   const baselineCaseName = activeCase?.relationship ? cases.find((item) => item.id === activeCase.relationship?.baselineCaseId)?.metadata.name : null;
