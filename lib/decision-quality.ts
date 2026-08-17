@@ -7,87 +7,145 @@ export type DecisionQualityInput = {
 };
 
 export type DecisionQualityGate = {
-  id: "real-data" | "validity" | "data-quality" | "controlled-result" | "company-precedent";
+  id: "data-quality" | "validity" | "controlled-result" | "company-precedent";
   label: string;
-  satisfied: boolean;
+  status: "passed" | "review" | "blocked" | "not-yet";
+  statusLabel: string;
   result: string;
 };
 
 export type DecisionQuality = {
-  score: number;
-  maximumScore: 5;
-  label: "Demo only" | "Strong" | "Supported" | "Developing" | "Limited" | "Not decision-ready";
+  label: "Demo only" | "Ready for engineering review" | "Supported by this case" | "Candidate test only" | "Needs another controlled run" | "Comparison only" | "Not ready";
   explanation: string;
+  sourceLabel: "Uploaded experiment and CFD" | "Generated demonstration signals";
   gates: DecisionQualityGate[];
 };
 
-function controlledResultLabel(status: DecisionQualityInput["controlledResultStatus"]) {
-  if (status === "effect-confirmed") return "A one-change rerun met the support rule";
-  if (status === "converged") return "Adjacent numerical levels met the convergence rule";
-  if (status === "rejected") return "A one-change rerun met a rejection rule";
-  if (status === "inconclusive") return "A one-change rerun was analyzed but could not be classified";
-  if (status === "comparison-only") return "The selected rerun changed more than one relevant input";
-  return "No one-change result has been analyzed for the selected case";
+function controlledResultGate(status: DecisionQualityInput["controlledResultStatus"]): DecisionQualityGate {
+  if (status === "effect-confirmed") return {
+    id: "controlled-result",
+    label: "Controlled rerun",
+    status: "passed",
+    statusLabel: "Classified",
+    result: "One verified one-change rerun met the support rule.",
+  };
+  if (status === "converged") return {
+    id: "controlled-result",
+    label: "Controlled rerun",
+    status: "passed",
+    statusLabel: "Classified",
+    result: "Two verified adjacent numerical levels met the convergence rule.",
+  };
+  if (status === "rejected") return {
+    id: "controlled-result",
+    label: "Controlled rerun",
+    status: "passed",
+    statusLabel: "Classified",
+    result: "One verified one-change rerun met a rejection rule.",
+  };
+  if (status === "inconclusive") return {
+    id: "controlled-result",
+    label: "Controlled rerun",
+    status: "review",
+    statusLabel: "Inconclusive",
+    result: "A verified one-change rerun was analyzed, but it met neither decision rule.",
+  };
+  if (status === "comparison-only") return {
+    id: "controlled-result",
+    label: "Controlled rerun",
+    status: "blocked",
+    statusLabel: "Not controlled",
+    result: "The selected rerun changed more than one relevant input, so it cannot isolate one explanation.",
+  };
+  return {
+    id: "controlled-result",
+    label: "Controlled rerun",
+    status: "not-yet",
+    statusLabel: "Not tested",
+    result: "No verified one-change rerun has classified this explanation yet.",
+  };
 }
 
 export function buildDecisionQuality(input: DecisionQualityInput): DecisionQuality {
-  const decisiveControlledResult = ["effect-confirmed", "converged", "rejected"].includes(input.controlledResultStatus ?? "");
+  const controlledResult = controlledResultGate(input.controlledResultStatus);
   const gates: DecisionQualityGate[] = [
     {
-      id: "real-data",
-      label: "Physical experiment paired with CFD",
-      satisfied: input.source === "uploaded",
-      result: input.source === "uploaded" ? "Uses user-provided experiment and CFD data" : "Uses generated demonstration signals only",
+      id: "data-quality",
+      label: "Signal data",
+      status: input.dataQualityStatus === "Ready" ? "passed" : "review",
+      statusLabel: input.dataQualityStatus === "Ready" ? "Passed" : "Review",
+      result: input.dataQualityStatus === "Ready"
+        ? "Sampling, duration, continuity, clipping, and spectral checks passed."
+        : "At least one calculated signal-quality check needs review.",
     },
     {
       id: "validity",
-      label: "Case-matching checks passed",
-      satisfied: input.validityStatus === "Valid",
-      result: input.validityStatus === "Valid" ? "Geometry, operating point, probes, and time window are confirmed" : input.validityStatus === "Blocked" ? "A required case-matching check is not confirmed" : "At least one validity check still needs review",
+      label: "Experiment-CFD pairing",
+      status: input.validityStatus === "Valid" ? "passed" : input.validityStatus === "Blocked" ? "blocked" : "review",
+      statusLabel: input.validityStatus === "Valid" ? "Passed" : input.validityStatus === "Blocked" ? "Blocked" : "Review",
+      result: input.validityStatus === "Valid"
+        ? "Geometry, operating point, probes, and comparison window are confirmed."
+        : input.validityStatus === "Blocked"
+          ? "A required case-matching check failed or was not confirmed."
+          : "At least one case-matching check still needs review.",
     },
-    {
-      id: "data-quality",
-      label: "Signal-quality checks passed",
-      satisfied: input.dataQualityStatus === "Ready",
-      result: input.dataQualityStatus === "Ready" ? "Sampling, duration, continuity, clipping, and spectral checks passed" : "At least one signal-quality check needs review",
-    },
-    {
-      id: "controlled-result",
-      label: "One-change rerun has a classified result",
-      satisfied: decisiveControlledResult,
-      result: controlledResultLabel(input.controlledResultStatus),
-    },
+    controlledResult,
     {
       id: "company-precedent",
-      label: "Independent result from another case family",
-      satisfied: input.uploadedPrecedentCount > 0,
+      label: "Independent confirmation",
+      status: input.uploadedPrecedentCount > 0 ? "passed" : "not-yet",
+      statusLabel: input.uploadedPrecedentCount > 0 ? "Available" : "Not available",
       result: input.uploadedPrecedentCount > 0
-        ? `${input.uploadedPrecedentCount} comparable user-provided one-change rerun${input.uploadedPrecedentCount === 1 ? "" : "s"} from another family`
-        : "No comparable rerun from another case family has been analyzed",
+        ? `${input.uploadedPrecedentCount} comparable user-provided one-change rerun${input.uploadedPrecedentCount === 1 ? "" : "s"} from another case family met the same decision rule.`
+        : "No comparable user-provided rerun from another case family has confirmed this decision.",
     },
   ];
-  const score = gates.filter((gate) => gate.satisfied).length;
-  const label: DecisionQuality["label"] = input.source === "demo"
-    ? "Demo only"
-    : score === 5
-      ? "Strong"
-      : score === 4
-        ? "Supported"
-        : score === 3
-          ? "Developing"
-          : score === 2
-            ? "Limited"
-            : "Not decision-ready";
 
-  const explanation = input.source === "demo"
-    ? "Generated signals verify the workflow only. They are not evidence from a physical engine."
-    : input.validityStatus === "Blocked"
-      ? "Do not change the CFD model from this result. First correct the failed case-matching check."
-      : input.dataQualityStatus === "Review"
-        ? "A signal-quality problem limits this decision. Correct the listed problem before relying on the recommendation."
-        : score >= 4
-          ? "The evidence is strong enough to use this next-run plan after engineering review."
-          : "The plan can guide the next controlled test. The missing evidence layers are listed below.";
+  const sourceLabel: DecisionQuality["sourceLabel"] = input.source === "uploaded"
+    ? "Uploaded experiment and CFD"
+    : "Generated demonstration signals";
 
-  return { score, maximumScore: 5, label, explanation, gates };
+  if (input.source === "demo") return {
+    label: "Demo only",
+    explanation: "Generated signals test the workflow. They do not support a decision about a physical engine.",
+    sourceLabel,
+    gates,
+  };
+  if (input.validityStatus !== "Valid" || input.dataQualityStatus === "Review") return {
+    label: "Not ready",
+    explanation: "A data-quality or case-pairing problem must be resolved before using this recommendation.",
+    sourceLabel,
+    gates,
+  };
+  if (input.controlledResultStatus === "comparison-only") return {
+    label: "Comparison only",
+    explanation: "This rerun changed multiple relevant inputs, so it cannot confirm or reject one explanation.",
+    sourceLabel,
+    gates,
+  };
+  if (input.controlledResultStatus === "inconclusive") return {
+    label: "Needs another controlled run",
+    explanation: "The controlled rerun was valid, but its response did not meet a support or rejection rule.",
+    sourceLabel,
+    gates,
+  };
+  if (["effect-confirmed", "converged", "rejected"].includes(input.controlledResultStatus ?? "")) {
+    return input.uploadedPrecedentCount > 0 ? {
+      label: "Ready for engineering review",
+      explanation: "This case produced a classified controlled result, and another case family independently met the same rule.",
+      sourceLabel,
+      gates,
+    } : {
+      label: "Supported by this case",
+      explanation: "This case produced a classified controlled result. Another case family has not independently repeated it.",
+      sourceLabel,
+      gates,
+    };
+  }
+  return {
+    label: "Candidate test only",
+    explanation: "The loaded data supports choosing this as the next controlled test. It does not yet confirm the explanation.",
+    sourceLabel,
+    gates,
+  };
 }
