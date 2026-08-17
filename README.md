@@ -113,9 +113,11 @@ discrepancy.
   summary from stored pressure arrays and entered case metadata. Workspaces
   contain inputs and relationships, not cached recommendations or preset
   conclusions.
-- Uses an evidence-strength label instead of an invented probability. Caevera
-  does not display a percentage confidence until a real calibration dataset can
-  support one.
+- Uses a categorical recommendation status instead of an invented probability
+  or additive readiness score. Signal quality, experiment-CFD pairing, a
+  classified controlled rerun, and independent confirmation remain visible as
+  separate conditions. Published references and public benchmarks never raise
+  a case's recommendation status.
 
 ## v1.4.1 branch, provenance, and outcome-policy update
 
