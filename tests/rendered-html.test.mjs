@@ -94,9 +94,15 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /researchClaims/);
   assert.match(page, /Caevera chose these decision limits; the cited papers did not/);
   assert.match(page, /No published paper is mapped to this specific recommendation/);
-  assert.match(page, /Evidence readiness/);
+  assert.match(page, /Recommendation evidence/);
   assert.match(page, /decisionQuality\.explanation/);
-  assert.match(page, /Why is evidence readiness \{decisionQuality\.score\}\/\{decisionQuality\.maximumScore\}\?/);
+  assert.match(page, /What is this recommendation status based on\?/);
+  assert.match(page, /Published papers and public benchmarks do not raise it/);
+  assert.match(decisionQuality, /Signal data/);
+  assert.match(decisionQuality, /Experiment-CFD pairing/);
+  assert.match(decisionQuality, /Controlled rerun/);
+  assert.match(decisionQuality, /Independent confirmation/);
+  assert.doesNotMatch(page, /decisionQuality\.score|decisionQuality\.maximumScore/);
   assert.match(page, /Starting point/);
   assert.match(page, /The selected change was rejected and is not carried forward/);
   assert.match(page, /This is the latest accepted setting in the case family/);
@@ -158,7 +164,7 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /A case family is one baseline plus reruns that reuse its experiment and physical operating point/i);
   assert.match(fileMapper, /The current mapped file will be kept unless you choose a replacement/);
   assert.match(caseHistory, /Caevera did not use this case to update the plan/);
-  assert.match(decisionQuality, /No comparable rerun from another case family has been analyzed/);
+  assert.match(decisionQuality, /No comparable user-provided rerun from another case family has confirmed this decision/);
   const claritySurface = `${page}\n${diagnostics}\n${decisionQuality}\n${caseHistory}\n${inputHelp}\n${fileMapper}`;
   assert.doesNotMatch(claritySurface, /None loaded|No cases loaded|No unresolved evidence item|Shared next run|Evidence for it|Evidence against it|Still unknown|How this run will be judged|Cannot judge|\bUnclear\b/);
 });
