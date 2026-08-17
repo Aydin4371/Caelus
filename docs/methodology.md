@@ -235,6 +235,14 @@ then required repeats and unfinished sensitivities, controlled-rerun support,
 net supporting evidence, strong evidence, comparable-case precedent, and
 finally unresolved evidence.
 
+The recommendation header also avoids an additive readiness score. It reports
+a categorical status calculated from four separate conditions: signal quality,
+experiment-CFD pairing, availability of a classified one-change rerun, and
+independent confirmation from another uploaded case family. The data source is
+reported separately so generated demonstrations cannot be mistaken for engine
+evidence. Published references and public benchmark cases support or test the
+method; they never raise the recommendation status for an analyzed case.
+
 Every uploaded item is a case. A related case identifies a case-family baseline,
 the exact starting case whose settings it inherited, and one changed CFD
 variable group. The relationship is used as diagnostic evidence only when
