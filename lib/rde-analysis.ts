@@ -69,7 +69,7 @@ export type DataQualityResult = {
   findings: string[];
 };
 
-export const ANALYSIS_VERSION = "1.6.0";
+export const ANALYSIS_VERSION = "1.7.0";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
