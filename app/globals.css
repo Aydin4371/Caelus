@@ -669,6 +669,7 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 .form-grid { display: grid; gap: 10px; }
 .form-grid.three { grid-template-columns: repeat(3, 1fr); }
 .form-grid.four { grid-template-columns: repeat(4, 1fr); }
+.form-grid.five { grid-template-columns: repeat(5, 1fr); }
 .form-grid.two { grid-template-columns: repeat(2, 1fr); }
 .form-grid label { min-width: 0; display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
 .form-grid input, .form-grid select { width: 100%; height: 42px; padding: 0 11px; border: 1px solid var(--line); border-radius: 5px; background: #ffffff; color: var(--text); font-size: 12px; }
@@ -933,4 +934,44 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 
 @media (display-mode: standalone) {
   .install-button { display: none; }
+}
+
+/* Kythros engine → operating point → run hierarchy */
+.comparison-hierarchy { margin-bottom: 28px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
+.hierarchy-path { padding: 10px 16px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--line); background: var(--surface-blue); color: var(--test); font: 700 9px var(--font-geist-mono), monospace; letter-spacing: .08em; text-transform: uppercase; }
+.hierarchy-path i { color: var(--quiet); font-style: normal; }
+.hierarchy-controls { padding: 15px 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.hierarchy-controls label { min-width: 0; display: grid; gap: 6px; }
+.hierarchy-controls label > span { color: var(--text); font-size: 11px; font-weight: 700; }
+.hierarchy-controls select { width: 100%; height: 42px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 6px; background: #fffefa; color: var(--text); font-size: 12px; }
+.hierarchy-controls small { min-height: 30px; overflow: hidden; color: var(--quiet); font-size: 10px; line-height: 1.45; }
+.hierarchy-actions { padding: 11px 16px; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); background: #fffdf8; }
+
+.envelope-slice-controls { padding: 10px 20px; display: flex; align-items: end; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--line); background: #fbfcf8; }
+.envelope-slice-controls > strong { align-self: center; margin-right: 4px; font-size: 11px; }
+.envelope-slice-controls label { display: grid; gap: 4px; color: var(--quiet); font-size: 9px; font-weight: 680; }
+.envelope-slice-controls select { min-width: 130px; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: var(--text); font-size: 11px; }
+.envelope-slice-controls small { align-self: center; margin-left: auto; color: var(--quiet); font-size: 10px; }
+.prediction-cell { stroke: none; }
+.prediction-stable { fill: var(--test); }
+.prediction-transitional { fill: var(--amber); }
+.prediction-unstable { fill: var(--red); }
+.envelope-legend .envelope-predicted::before { border-radius: 2px; background: linear-gradient(90deg, var(--test), transparent); }
+.measured-summary .measured-stable { box-shadow: inset 0 3px 0 var(--test); }
+.measured-summary .measured-transitional { box-shadow: inset 0 3px 0 var(--amber); }
+.measured-summary .measured-unstable { box-shadow: inset 0 3px 0 var(--red); }
+.measured-summary .model-ready { background: #eff9f7; box-shadow: inset 0 3px 0 var(--test); }
+
+@media (max-width: 1000px) {
+  .form-grid.five { grid-template-columns: repeat(2, 1fr); }
+  .hierarchy-controls { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .form-grid.five { grid-template-columns: 1fr; }
+  .hierarchy-path { flex-wrap: wrap; }
+  .hierarchy-actions { justify-content: stretch; }
+  .hierarchy-actions .button { flex: 1 1 140px; }
+  .envelope-slice-controls { align-items: stretch; flex-direction: column; }
+  .envelope-slice-controls small { margin-left: 0; }
 }

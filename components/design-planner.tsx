@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { AnalysisCase } from "@/lib/caevera-types";
 import {
   EMPTY_ENGINE_DESIGN,
   buildScreeningPlan,
@@ -11,13 +10,14 @@ import {
   selectCoverageNextPoint,
   validateEngineDesign,
   type EngineDesign,
+  type OperatingPoint,
   type PlannedOperatingPoint,
 } from "@/lib/design-workspace";
 
 type Props = {
   designs: EngineDesign[];
   activeDesignId: string | null;
-  cases: AnalysisCase[];
+  operatingPoints: OperatingPoint[];
   onSelectDesign: (id: string) => void;
   onSaveDesign: (design: EngineDesign) => void;
   onAddOperatingPoint: (designId: string, point?: PlannedOperatingPoint) => void;
@@ -55,7 +55,7 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
   }
 
   return <section className="design-editor" aria-label="Engine design inputs">
-    <div className="design-editor-heading"><div><span className="workspace-label">Engine definition</span><h1>{draft.id ? "Edit engine design" : "Create an engine design"}</h1><p>These values define which operating points may be compared on one map. Caevera calculates geometry and coverage from them, but does not predict combustion or performance.</p></div></div>
+    <div className="design-editor-heading"><div><span className="workspace-label">Engine definition</span><h1>{draft.id ? "Edit engine design" : "Create an engine design"}</h1><p>These values define which operating points may be compared on one map. Kythros calculates geometry and coverage from them, but does not predict combustion or performance.</p></div></div>
 
     <div className="design-form-section"><h2>Identity and propellants</h2><div className="design-form-grid four">
       <label><span>Design name</span><input value={draft.name} onChange={(event) => setText("name", event.target.value)} placeholder="Annular demonstrator A" /></label>
@@ -93,16 +93,16 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
   </section>;
 }
 
-export function DesignPlanner({ designs, activeDesignId, cases, onSelectDesign, onSaveDesign, onAddOperatingPoint, onOpenEnvelope }: Props) {
+export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSelectDesign, onSaveDesign, onAddOperatingPoint, onOpenEnvelope }: Props) {
   const activeDesign = designs.find((design) => design.id === activeDesignId) ?? designs[0] ?? null;
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState(false);
-  const plan = useMemo(() => activeDesign ? buildScreeningPlan(activeDesign, cases) : [], [activeDesign, cases]);
+  const plan = useMemo(() => activeDesign ? buildScreeningPlan(activeDesign, operatingPoints) : [], [activeDesign, operatingPoints]);
   const calculations = useMemo(() => activeDesign ? calculateDesign(activeDesign) : null, [activeDesign]);
   const nextPoint = useMemo(() => selectCoverageNextPoint(plan), [plan]);
-  const physicalCases = activeDesign ? cases.filter((item) => item.designId === activeDesign.id && !item.relationship && item.source === "uploaded") : [];
-  const demoCases = activeDesign ? cases.filter((item) => item.designId === activeDesign.id && !item.relationship && item.source === "demo") : [];
-  const matchedPlanCount = plan.filter((point) => point.matchedCaseId).length;
+  const physicalPoints = activeDesign ? operatingPoints.filter((item) => item.designId === activeDesign.id && item.source === "uploaded") : [];
+  const demoPoints = activeDesign ? operatingPoints.filter((item) => item.designId === activeDesign.id && item.source === "demo") : [];
+  const matchedPlanCount = plan.filter((point) => point.matchedOperatingPointId).length;
 
   if (creating || editing && activeDesign) return <DesignEditor
     initial={creating ? cloneEngineDesign(EMPTY_ENGINE_DESIGN) : activeDesign!}
@@ -113,22 +113,22 @@ export function DesignPlanner({ designs, activeDesignId, cases, onSelectDesign, 
   if (!activeDesign) return <section className="design-empty">
     <span className="workspace-label">Design and screening workspace</span>
     <h1>Define the engine before mapping it</h1>
-    <p>Record one gas-fed annular RDE geometry and its intended operating range. Caevera will calculate the geometry, create a traceable screening plan, and keep later observations attached to the correct design.</p>
+    <p>Record one gas-fed annular RDE geometry and its intended operating range. Kythros will calculate the geometry, create a traceable screening plan, and keep later observations attached to the correct design.</p>
     <button className="button primary" onClick={() => setCreating(true)}>Create first engine design</button>
     <div className="design-scope-note"><strong>Available now</strong><span>Design records, deterministic geometry calculations, operating-point planning, observed mode maps, CFD comparison, and evidence reports.</span></div>
   </section>;
 
   function saveManifest() {
     const payload = {
-      schema: "caevera-engine-screening-plan",
+      schema: "kythros-engine-screening-plan",
       version: 1,
       generatedAt: new Date().toISOString(),
       design: activeDesign,
       calculatedFromInputs: calculations,
       screeningPlan: plan,
       evidenceStatus: {
-        measuredOperatingPoints: physicalCases.length,
-        syntheticOperatingPoints: demoCases.length,
+        measuredOperatingPoints: physicalPoints.length,
+        syntheticOperatingPoints: demoPoints.length,
         plannedPointsMatched: matchedPlanCount,
         predictiveModel: "Not fitted",
         backflowModel: "Not available",
@@ -140,8 +140,8 @@ export function DesignPlanner({ designs, activeDesignId, cases, onSelectDesign, 
   }
 
   function saveCsv() {
-    const header = "point_id,role,equivalence_ratio,mass_flow_kg_s,inlet_pressure_bar,observed_case_id";
-    const rows = plan.map((point) => [point.id, point.role, point.equivalenceRatio, point.massFlowKgS, point.inletPressureBar, point.matchedCaseId ?? ""].map((value) => `"${String(value).replaceAll("\"", "\"\"")}"`).join(","));
+    const header = "point_id,role,equivalence_ratio,mass_flow_kg_s,inlet_pressure_bar,observed_operating_point_id";
+    const rows = plan.map((point) => [point.id, point.role, point.equivalenceRatio, point.massFlowKgS, point.inletPressureBar, point.matchedOperatingPointId ?? ""].map((value) => `"${String(value).replaceAll("\"", "\"\"")}"`).join(","));
     download([header, ...rows].join("\n"), designFileName(activeDesign, "csv"), "text/csv");
   }
 
@@ -150,7 +150,7 @@ export function DesignPlanner({ designs, activeDesignId, cases, onSelectDesign, 
 
     <section className="capability-strip" aria-label="Current model capability">
       <article><span>Design screening</span><strong>Available</strong><small>Direct calculations from entered geometry and operating limits</small></article>
-      <article><span>Measured operating points</span><strong>{physicalCases.length}</strong><small>{demoCases.length ? `${demoCases.length} synthetic point${demoCases.length === 1 ? "" : "s"} excluded` : "Only user-provided cases count"}</small></article>
+      <article><span>Measured operating points</span><strong>{physicalPoints.length}</strong><small>{demoPoints.length ? `${demoPoints.length} synthetic point${demoPoints.length === 1 ? "" : "s"} excluded` : "Only user-provided points count"}</small></article>
       <article><span>Screening plan coverage</span><strong>{matchedPlanCount} / {plan.length}</strong><small>Measured conditions that match this design&apos;s planned conditions</small></article>
       <article className="capability-unavailable"><span>Predictive RDE model</span><strong>Not fitted</strong><small>No interpolation, performance, backflow, or thermal prediction</small></article>
     </section>
@@ -170,10 +170,10 @@ export function DesignPlanner({ designs, activeDesignId, cases, onSelectDesign, 
       <section className="design-card next-point-card"><div className="card-heading"><div><span>Coverage-based next point</span><h2>{nextPoint ? nextPoint.role === "Baseline" ? "Establish the centre condition" : `Add the ${nextPoint.role.toLowerCase()}` : "Screening plan covered"}</h2></div></div>{nextPoint ? <><p>This point is selected from the entered design range because it is the planned condition farthest from the loaded measured observations. It is not an operability prediction.</p><div className="next-point-values"><span><b>φ {nextPoint.equivalenceRatio.toFixed(2)}</b>Equivalence ratio</span><span><b>{nextPoint.massFlowKgS.toFixed(3)} kg/s</b>Mass flow</span><span><b>{nextPoint.inletPressureBar.toFixed(2)} bar</b>Inlet pressure</span></div><button className="button primary" onClick={() => onAddOperatingPoint(activeDesign.id, nextPoint)}>Add this operating point</button></> : <><p>Every point in the current screening plan has a matched measured case. Open the operating map to inspect the observed modes.</p><button className="button primary" onClick={() => onOpenEnvelope(activeDesign.id)}>Open operating map</button></>}</section>
     </div>
 
-    <section className="screening-plan-card"><div className="card-heading"><div><span>Screening sequence</span><h2>Nine traceable operating points</h2><p>The centre condition is followed by one-variable brackets, coupled boundaries, and pressure brackets.</p></div><div><button className="button secondary" onClick={saveCsv}>Download CSV</button><button className="button secondary" onClick={saveManifest}>Download manifest</button></div></div><div className="screening-table-wrap"><table><thead><tr><th>Purpose</th><th>Equivalence ratio</th><th>Mass flow</th><th>Inlet pressure</th><th>Measured evidence</th><th></th></tr></thead><tbody>{plan.map((point) => <tr key={point.id}><th>{point.role}</th><td>φ {point.equivalenceRatio.toFixed(2)}</td><td>{point.massFlowKgS.toFixed(3)} kg/s</td><td>{point.inletPressureBar.toFixed(2)} bar</td><td><span className={`plan-status ${point.matchedCaseId ? "matched" : "planned"}`}>{point.matchedCaseId ? "Measured point loaded" : "Not yet tested"}</span></td><td>{!point.matchedCaseId && <button onClick={() => onAddOperatingPoint(activeDesign.id, point)}>Add point</button>}</td></tr>)}</tbody></table></div></section>
+    <section className="screening-plan-card"><div className="card-heading"><div><span>Screening sequence</span><h2>Nine traceable operating points</h2><p>The centre condition is followed by one-variable brackets, coupled boundaries, and pressure brackets.</p></div><div><button className="button secondary" onClick={saveCsv}>Download CSV</button><button className="button secondary" onClick={saveManifest}>Download manifest</button></div></div><div className="screening-table-wrap"><table><thead><tr><th>Purpose</th><th>Equivalence ratio</th><th>Mass flow</th><th>Inlet pressure</th><th>Measured evidence</th><th></th></tr></thead><tbody>{plan.map((point) => <tr key={point.id}><th>{point.role}</th><td>φ {point.equivalenceRatio.toFixed(2)}</td><td>{point.massFlowKgS.toFixed(3)} kg/s</td><td>{point.inletPressureBar.toFixed(2)} bar</td><td><span className={`plan-status ${point.matchedOperatingPointId ? "matched" : "planned"}`}>{point.matchedOperatingPointId ? "Measured point loaded" : "Not yet tested"}</span></td><td>{!point.matchedOperatingPointId && <button onClick={() => onAddOperatingPoint(activeDesign.id, point)}>Add point</button>}</td></tr>)}</tbody></table></div></section>
 
-    {designs.length > 1 && <section className="screening-plan-card design-portfolio"><div className="card-heading"><div><span>Design comparison</span><h2>Entered designs and evidence coverage</h2><p>This compares entered geometry and loaded evidence only. It does not rank performance.</p></div></div><div className="screening-table-wrap"><table><thead><tr><th>Design</th><th>Propellants</th><th>Annulus gap</th><th>Injector / annulus area</th><th>Measured points</th><th></th></tr></thead><tbody>{designs.map((design) => { const result = calculateDesign(design); const pointCount = cases.filter((item) => item.designId === design.id && !item.relationship && item.source === "uploaded").length; return <tr key={design.id}><th>{design.name}</th><td>{design.fuel} / {design.oxidizer}</td><td>{result.annulusGapMm.toFixed(2)} mm</td><td>{result.injectorAreaRatioPct.toFixed(2)}%</td><td>{pointCount}</td><td><button onClick={() => onSelectDesign(design.id)}>{design.id === activeDesign.id ? "Selected" : "Open"}</button></td></tr>; })}</tbody></table></div></section>}
+    {designs.length > 1 && <section className="screening-plan-card design-portfolio"><div className="card-heading"><div><span>Design comparison</span><h2>Entered designs and evidence coverage</h2><p>This compares entered geometry and loaded evidence only. It does not rank performance.</p></div></div><div className="screening-table-wrap"><table><thead><tr><th>Design</th><th>Propellants</th><th>Annulus gap</th><th>Injector / annulus area</th><th>Measured points</th><th></th></tr></thead><tbody>{designs.map((design) => { const result = calculateDesign(design); const pointCount = operatingPoints.filter((item) => item.designId === design.id && item.source === "uploaded").length; return <tr key={design.id}><th>{design.name}</th><td>{design.fuel} / {design.oxidizer}</td><td>{result.annulusGapMm.toFixed(2)} mm</td><td>{result.injectorAreaRatioPct.toFixed(2)}%</td><td>{pointCount}</td><td><button onClick={() => onSelectDesign(design.id)}>{design.id === activeDesign.id ? "Selected" : "Open"}</button></td></tr>; })}</tbody></table></div></section>}
 
-    <section className="product-boundary-card"><div><span>What Caevera can do now</span><strong>Define, calculate, plan, compare, classify, and report.</strong></div><div><span>What still requires a validated model</span><strong>Predict stability, backflow, pressure gain, thrust, heat flux, or untested operating regions.</strong></div></section>
+    <section className="product-boundary-card"><div><span>What Kythros can do now</span><strong>Define, calculate, plan, compare, classify, and report.</strong></div><div><span>What still requires a validated model</span><strong>Predict stability, backflow, pressure gain, thrust, heat flux, or untested operating regions.</strong></div></section>
   </section>;
 }

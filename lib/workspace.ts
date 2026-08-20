@@ -1,9 +1,10 @@
 import type { AnalysisCase } from "./caevera-types.ts";
-import { validateEngineDesign, type EngineDesign } from "./design-workspace.ts";
+import { validateEngineDesign, validateOperatingPoint, type EngineDesign, type OperatingPoint } from "./design-workspace.ts";
 import { ANALYSIS_VERSION } from "./rde-analysis.ts";
 
-export const WORKSPACE_SCHEMA = "caevera-pressure-wave-workspace";
-export const WORKSPACE_FORMAT_VERSION = 2;
+export const WORKSPACE_SCHEMA = "kythros-pressure-wave-workspace";
+export const LEGACY_WORKSPACE_SCHEMA = "caevera-pressure-wave-workspace";
+export const WORKSPACE_FORMAT_VERSION = 3;
 
 export type WorkspaceState = {
   cases: AnalysisCase[];
@@ -11,6 +12,8 @@ export type WorkspaceState = {
   baselineCaseId: string | null;
   designs: EngineDesign[];
   activeDesignId: string | null;
+  operatingPoints: OperatingPoint[];
+  activeOperatingPointId: string | null;
 };
 
 type WorkspaceEnvelope = {
@@ -110,6 +113,7 @@ function validateImportProvenance(value: unknown, probeCount: number, label: str
 function validateCase(value: unknown, index: number): asserts value is AnalysisCase {
   if (!isObject(value) || typeof value.id !== "string" || !isObject(value.metadata)) throw new Error(`Case ${index + 1} is malformed.`);
   if (!("solverRuntimeHours" in value.metadata)) value.metadata.solverRuntimeHours = Number.NaN;
+  if (!("backPressureBar" in value.metadata)) value.metadata.backPressureBar = Number.NaN;
   validateMetadata(value.metadata, `Case ${index + 1}`);
   if (!Array.isArray(value.testSignals) || !Array.isArray(value.cfdSignals) || value.testSignals.length < 3 || value.testSignals.length !== value.cfdSignals.length) {
     throw new Error(`Case ${index + 1} does not contain matched experiment and CFD probe arrays.`);
@@ -120,6 +124,7 @@ function validateCase(value: unknown, index: number): asserts value is AnalysisC
   value.cfdSignals.forEach((signal, probe) => validateSignal(signal, `Case ${index + 1} CFD P${probe + 1}`));
   if (value.source !== "uploaded" && value.source !== "demo") throw new Error(`Case ${index + 1} has an invalid source type.`);
   if (value.designId != null && typeof value.designId !== "string") throw new Error(`Case ${index + 1} has an invalid engine-design link.`);
+  if (value.operatingPointId != null && typeof value.operatingPointId !== "string") throw new Error(`Case ${index + 1} has an invalid operating-point link.`);
   if (value.relationship != null) {
     const allowedChanges = ["mesh", "time-step", "chemistry", "inlet", "wall", "initialization", "unsteadiness", "other"];
     if (!isObject(value.relationship)
@@ -155,11 +160,12 @@ export function deserializeWorkspace(text: string): WorkspaceState {
   } catch {
     throw new Error("This is not valid JSON.");
   }
-  if (!isObject(parsed) || parsed.schema !== WORKSPACE_SCHEMA) throw new Error("This is not a Caevera pressure-and-wave workspace.");
-  if (parsed.formatVersion !== 1 && parsed.formatVersion !== WORKSPACE_FORMAT_VERSION) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
+  if (!isObject(parsed) || parsed.schema !== WORKSPACE_SCHEMA && parsed.schema !== LEGACY_WORKSPACE_SCHEMA) throw new Error("This is not a Kythros pressure-and-wave workspace.");
+  if (parsed.formatVersion !== 1 && parsed.formatVersion !== 2 && parsed.formatVersion !== WORKSPACE_FORMAT_VERSION) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
   if (!isObject(parsed.state) || !Array.isArray(parsed.state.cases)) throw new Error("The workspace does not contain a case list.");
   parsed.state.cases.forEach(validateCase);
   const cases = parsed.state.cases as AnalysisCase[];
+  if (parsed.formatVersion === WORKSPACE_FORMAT_VERSION && cases.some((item) => !(item.metadata.backPressureBar > 0))) throw new Error("Every operating point in this workspace must include a positive back pressure.");
   const identifiers = new Set(cases.map((item) => item.id));
   if (identifiers.size !== cases.length) throw new Error("The workspace contains duplicate case identifiers.");
   for (const item of cases) {
@@ -187,16 +193,65 @@ export function deserializeWorkspace(text: string): WorkspaceState {
   for (const item of cases) {
     if (item.designId && !designIdentifiers.has(item.designId)) throw new Error(`Case ${item.metadata.name} links to an engine design that is not present.`);
   }
+  const operatingPoints = Array.isArray(parsed.state.operatingPoints) ? parsed.state.operatingPoints as OperatingPoint[] : [];
+  const operatingPointIdentifiers = new Set<string>();
+  operatingPoints.forEach((point, index) => {
+    if (!isObject(point)) throw new Error(`Operating point ${index + 1} is malformed.`);
+    const issues = validateOperatingPoint(point as OperatingPoint);
+    if (issues.length) throw new Error(`Operating point ${index + 1}: ${issues[0]}`);
+    if (operatingPointIdentifiers.has(point.id as string)) throw new Error("The workspace contains duplicate operating-point identifiers.");
+    if (!designIdentifiers.has(point.designId as string)) throw new Error(`Operating point ${index + 1} links to an engine design that is not present.`);
+    operatingPointIdentifiers.add(point.id as string);
+  });
+  const points = [...operatingPoints];
+  for (const baseline of cases.filter((item) => !item.relationship && item.designId)) {
+    let point = baseline.operatingPointId ? points.find((item) => item.id === baseline.operatingPointId) : null;
+    if (!point) {
+      const design = designs.find((item) => item.id === baseline.designId);
+      const backPressureBar = Number.isFinite(baseline.metadata.backPressureBar) && baseline.metadata.backPressureBar > 0
+        ? baseline.metadata.backPressureBar
+        : design?.backPressureBar ?? Number.NaN;
+      point = {
+        id: `op-${baseline.id}`,
+        designId: baseline.designId!,
+        name: baseline.metadata.name,
+        source: baseline.source,
+        inletPressureBar: baseline.metadata.inletPressureBar,
+        inletTemperatureK: baseline.metadata.inletTemperatureK,
+        equivalenceRatio: baseline.metadata.equivalenceRatio,
+        massFlowKgS: baseline.metadata.massFlowKgS,
+        backPressureBar,
+      };
+      const issues = validateOperatingPoint(point);
+      if (issues.length) throw new Error(`Legacy case ${baseline.metadata.name} cannot become an operating point: ${issues[0]}`);
+      points.push(point);
+      operatingPointIdentifiers.add(point.id);
+    }
+    baseline.operatingPointId = point.id;
+    baseline.metadata.backPressureBar = point.backPressureBar;
+    for (const run of cases.filter((item) => item.relationship?.baselineCaseId === baseline.id)) {
+      run.operatingPointId = point.id;
+      run.metadata.backPressureBar = point.backPressureBar;
+    }
+  }
+  for (const run of cases) {
+    if (run.operatingPointId && !operatingPointIdentifiers.has(run.operatingPointId)) throw new Error(`Run ${run.metadata.name} links to an operating point that is not present.`);
+  }
   const requestedDesign = typeof parsed.state.activeDesignId === "string" ? parsed.state.activeDesignId : null;
+  const requestedOperatingPoint = typeof parsed.state.activeOperatingPointId === "string" ? parsed.state.activeOperatingPointId : null;
   return {
     cases,
     activeCaseId: requestedActive && identifiers.has(requestedActive) ? requestedActive : cases[0]?.id ?? null,
     baselineCaseId: requestedBaseline && identifiers.has(requestedBaseline) ? requestedBaseline : cases[0]?.id ?? null,
     designs,
     activeDesignId: requestedDesign && designIdentifiers.has(requestedDesign) ? requestedDesign : designs[0]?.id ?? null,
+    operatingPoints: points,
+    activeOperatingPointId: requestedOperatingPoint && operatingPointIdentifiers.has(requestedOperatingPoint)
+      ? requestedOperatingPoint
+      : points.find((point) => point.id === cases.find((item) => item.id === requestedActive)?.operatingPointId)?.id ?? points[0]?.id ?? null,
   };
 }
 
 export function workspaceFileName() {
-  return `caevera-pressure-wave-workspace-${new Date().toISOString().slice(0, 10)}.json`;
+  return `kythros-pressure-wave-workspace-${new Date().toISOString().slice(0, 10)}.json`;
 }

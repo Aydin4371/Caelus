@@ -13,14 +13,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Caevera by Caelus",
+  title: "Kythros by Caelus",
   description: "Define gas-fed annular RDE designs, plan and map measured operating points, and compare experimental pressure data with CFD.",
-  applicationName: "Caevera",
+  applicationName: "Kythros",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Caevera",
+    title: "Kythros",
   },
   other: {
     "codex-preview": "development",

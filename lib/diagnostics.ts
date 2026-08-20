@@ -263,7 +263,7 @@ function inconclusiveMetric(id: string, label: string, purpose: string, experime
     combined: null,
     status: "inconclusive",
     label: "Not identifiable",
-    explanation: "Caevera cannot calculate this result reliably from the probe locations and signal quality in this case.",
+    explanation: "Kythros cannot calculate this result reliably from the probe locations and signal quality in this case.",
   };
   return {
     id,
@@ -368,7 +368,7 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
   if (isMismatch(mode) || isMismatch(phasePattern) || isMismatch(modeTransitions)) {
     add("initialization-mode", "Initialization or domain-mode sensitivity", [
       evidence(isMismatch(mode) ? "Experiment and CFD identify different rotating-wave counts." : "Wave count matches across the full record.", isMismatch(mode) ? "supports" : "unknown", "strong"),
-      evidence(isMismatch(phasePattern) ? `CFD circumferential phase pattern differs by ${numeric(phasePattern!.difference).toFixed(1)}° RMS.` : "The phase-pattern difference is within Caevera's prototype product limit.", isMismatch(phasePattern) ? "supports" : "weakens"),
+      evidence(isMismatch(phasePattern) ? `CFD circumferential phase pattern differs by ${numeric(phasePattern!.difference).toFixed(1)}° RMS.` : "The phase-pattern difference is within Kythros's prototype product limit.", isMismatch(phasePattern) ? "supports" : "weakens"),
       evidence(isMismatch(modeTransitions) ? "Experiment and CFD contain different numbers of window-to-window mode transitions." : "Mode-transition counts match.", isMismatch(modeTransitions) ? "supports" : "weakens"),
     ], [metadata.initializationMethod, metadata.dimensionality, `${metadata.meshCells.toLocaleString()} cells`, `${metadata.probePositionsDeg.length} pressure probes`]);
   }
@@ -377,7 +377,7 @@ function buildHypotheses(metadata: CaseMetadata, metrics: MetricAssessment[], va
   }
   if ((isMismatch(variability) && numeric(variability!.cfd) < numeric(variability!.experiment)) || isMismatch(frequencyDrift) || (isMismatch(phaseJitter) && numeric(phaseJitter!.cfd) < numeric(phaseJitter!.experiment))) {
     add("missing-unsteadiness", "Missing unsteadiness in the CFD setup", [
-      evidence(isMismatch(variability) ? `CFD cycle variability differs by ${Math.abs(numeric(variability!.difference)).toFixed(1)} percentage points.` : "The cycle-variability difference is within Caevera's prototype product limit.", isMismatch(variability) ? "supports" : "weakens"),
+      evidence(isMismatch(variability) ? `CFD cycle variability differs by ${Math.abs(numeric(variability!.difference)).toFixed(1)} percentage points.` : "The cycle-variability difference is within Kythros's prototype product limit.", isMismatch(variability) ? "supports" : "weakens"),
       evidence(isMismatch(frequencyDrift) ? `Frequency-drift difference is ${Math.abs(numeric(frequencyDrift!.difference)).toFixed(1)} percentage points.` : "Frequency drift is similar.", isMismatch(frequencyDrift) ? "supports" : "weakens"),
       evidence(isMismatch(phaseJitter) ? `Phase-jitter difference is ${Math.abs(numeric(phaseJitter!.difference)).toFixed(1)}°.` : "Phase jitter is similar.", isMismatch(phaseJitter) ? "supports" : "weakens"),
     ], [metadata.turbulenceModel, metadata.combustionModel, metadata.inletBoundaryCondition, metadata.dimensionality]);
@@ -506,15 +506,15 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
       reason,
       holdFixed: ["Geometry and operating point", "experiment samples and probe mapping", "comparison window and uncertainty values", `all CFD settings except ${variableLabel}`],
       expectedOutcome: numericalLimit != null
-        ? `Compare ${targetText} between the starting CFD result and the new CFD result. Caevera calculates convergence from these two analyzed cases, not from a CSV field.`
-        : `Compare the CFD-to-experiment error before and after the change for ${targetText}. Caevera calculates the classification from the two analyzed cases.`,
+        ? `Compare ${targetText} between the starting CFD result and the new CFD result. Kythros calculates convergence from these two analyzed cases, not from a CSV field.`
+        : `Compare the CFD-to-experiment error before and after the change for ${targetText}. Kythros calculates the classification from the two analyzed cases.`,
       confirmationCriterion: numericalLimit != null
         ? `The targeted CFD values change by no more than ${numericalLimit}% between the two adjacent levels.`
         : `The mean CFD-to-experiment error in the targeted values falls by at least ${CONFIRMATION_ERROR_REDUCTION_PCT}%, with no new resolved mismatch.`,
       rejectionCriterion: numericalLimit != null
         ? `The targeted CFD values change by more than ${numericalLimit}%, so the numerical setting still affects the result.`
         : `The targeted CFD response is below ${plannedRule.minimumResponsePct}%, the mean targeted error increases by at least ${REJECTION_ERROR_WORSENING_PCT}%, or a new resolved mismatch appears.`,
-      alternativeHypothesis: "After Caevera classifies this result, test the next unresolved explanation in the ranking.",
+      alternativeHypothesis: "After Kythros classifies this result, test the next unresolved explanation in the ranking.",
     };
   }
 
@@ -531,8 +531,8 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
       ? ["Physical operating point", "CFD model", "pressure records that already passed", "analysis settings that already passed"]
       : ["Geometry and hardware", "numerical method", "model formulations", "probe mapping"],
     expectedOutcome: evidenceGate
-      ? "Reanalyze the corrected pairing. Caevera must pass every listed check before it recommends a CFD model change."
-      : "Compare the new operating point with its matching experiment. Caevera will either add it to the demonstrated agreement region or identify a resolved mismatch.",
+      ? "Reanalyze the corrected pairing. Kythros must pass every listed check before it recommends a CFD model change."
+      : "Compare the new operating point with its matching experiment. Kythros will either add it to the demonstrated agreement region or identify a resolved mismatch.",
     confirmationCriterion: evidenceGate
       ? "Every listed check passes and the previously blocked outputs can be calculated."
       : "The new case passes the case-matching, signal-quality, uncertainty, and mode-identifiability checks.",
@@ -556,7 +556,7 @@ function latestControlledResult(caseHistory: CaseHistoryEvidence[], currentCause
   if (!latest) return {
     status: "Awaiting result",
     caseName: null,
-    detail: "This case family does not yet include an analyzed one-change rerun for this explanation.",
+    detail: "This operating point does not yet include an analyzed one-change rerun for this explanation.",
   };
   return {
     status: latest.sequenceStatus === "converged" ? "Converged" : latest.state === "supports" ? "Confirmed" : latest.state === "weakens" ? "Rejected" : "Inconclusive",
@@ -584,7 +584,7 @@ function repeatRun(core: CoreNextRun, latest: CaseHistoryEvidence): CoreNextRun 
     ...core,
     title: `Repeat the ${variable} test with a clearer one-variable difference`,
     change: `Start from ${latest.caseName}. Change only ${variable} by one larger documented adjacent level, or reduce the uncertainty that prevented classification.`,
-    reason: `${latest.detail} Caevera needs a clearer one-variable comparison before it can move to another explanation.`,
+    reason: `${latest.detail} Kythros needs a clearer one-variable comparison before it can move to another explanation.`,
     expectedOutcome: "Compare the same targeted values again. The new result must meet a support rule or a rejection rule while unrelated values remain within uncertainty.",
   };
 }
@@ -693,7 +693,7 @@ function buildAdaptiveRunPlan(
   const primary = gate ?? actionable ?? {
     id: "validation-coverage" as const,
     title: "Validation-envelope coverage",
-    evidence: [{ state: "supports" as const, strength: "context" as const, observation: "Every ranked one-change test in this case family is complete or rejected. The analyzed pressure data does not contain another unresolved explanation to test.", basis: "case" as const, sourceIds: [] }],
+    evidence: [{ state: "supports" as const, strength: "context" as const, observation: "Every ranked one-change test at this operating point is complete or rejected. The analyzed pressure data does not contain another unresolved explanation to test.", basis: "case" as const, sourceIds: [] }],
     modelInputs: [`${currentMetadata.inletPressureBar} bar`, `${currentMetadata.inletTemperatureK} K`, `φ ${currentMetadata.equivalenceRatio}`],
     sourceIds: SOURCE_IDS_BY_CAUSE["validation-coverage"],
     researchClaims: RESEARCH_CLAIMS_BY_CAUSE["validation-coverage"],
@@ -716,7 +716,7 @@ function buildAdaptiveRunPlan(
     observation: core.decisionPolicy.convergenceResponsePct != null && latest?.sequenceStatus === "effect-confirmed"
       ? `${latest.caseName} changed the targeted CFD values, but this family does not yet contain the next adjacent level needed to test the ${core.decisionPolicy.convergenceResponsePct.toFixed(1)}% convergence rule.`
       : core.decisionPolicy.changedVariable
-        ? `This case family does not yet contain a qualifying one-change ${core.decisionPolicy.changedVariable} rerun for this decision.`
+        ? `This operating point does not yet contain a qualifying one-change ${core.decisionPolicy.changedVariable} rerun for this decision.`
         : evidenceGate
           ? "The required correction has not yet been analyzed."
           : "No result from the proposed operating point has been analyzed yet.",
@@ -733,11 +733,11 @@ function buildAdaptiveRunPlan(
     stage: stageFor(primary.id),
     whyThisRunFirst,
     inconclusiveCriterion: core.decisionPolicy.evaluationMode === "numerical-convergence"
-      ? "Caevera cannot calculate the adjacent-level change because the cases are not a valid one-change pair or a targeted CFD value is unavailable."
+      ? "Kythros cannot calculate the adjacent-level change because the cases are not a valid one-change pair or a targeted CFD value is unavailable."
       : `The result does not reach ${CONFIRMATION_ERROR_REDUCTION_PCT}% mean CFD-to-experiment error reduction and does not meet any rejection rule.`,
     ifConfirmed: confirmedNextStep(stageFor(primary.id), core.decisionPolicy.evaluationMode),
     ifRejected: core.decisionPolicy.evaluationMode === "numerical-convergence"
-      ? `Keep the newer ${core.decisionPolicy.changedVariable ?? "numerical"} setting and run the next adjacent level. Caevera reports experiment agreement as a separate result.`
+      ? `Keep the newer ${core.decisionPolicy.changedVariable ?? "numerical"} setting and run the next adjacent level. Kythros reports experiment agreement as a separate result.`
       : evidenceGate
       ? "Do not change the CFD model. Correct the remaining case-matching, mapping, or signal-quality problem first."
       : `${core.alternativeHypothesis}${alternative ? ` The next ranked hypothesis is ${alternative.title}.` : ""}`,
@@ -828,41 +828,41 @@ export function buildCaseAssessment(
   const harmonicDifference = cfdHarmonics - testHarmonics;
   const harmonicPercent = 100 * harmonicDifference / Math.max(Math.abs(testHarmonics), 1e-12);
   const harmonicWithin = Math.abs(harmonicPercent) <= 100 * REVIEW_THRESHOLDS.maximumHarmonicRatioError;
-  const harmonicAssessment = prototypeAssessment(harmonicWithin, "Within prototype limit", "Caevera has no case-specific uncertainty for this spectral ratio, so it applies its explicit ±30% prototype product limit.");
+  const harmonicAssessment = prototypeAssessment(harmonicWithin, "Within prototype limit", "Kythros has no case-specific uncertainty for this spectral ratio, so it applies its explicit ±30% prototype product limit.");
   const harmonics: MetricAssessment = {
     id: "harmonics", label: "Second-harmonic ratio", purpose: "Secondary waveform structure", experiment: testHarmonics, cfd: cfdHarmonics, difference: harmonicDifference,
-    percentDifference: harmonicPercent, unit: "", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ±30%", assessment: harmonicAssessment, tone: statusTone(harmonicAssessment.status),
+    percentDifference: harmonicPercent, unit: "", uncertainty: null, uncertaintyLabel: "Kythros prototype product limit: ±30%", assessment: harmonicAssessment, tone: statusTone(harmonicAssessment.status),
   };
 
   const testVariability = pressureMetric(comparisons, "cycleVariabilityPct", "test");
   const cfdVariability = pressureMetric(comparisons, "cycleVariabilityPct", "cfd");
   const variabilityDifference = cfdVariability - testVariability;
   const variabilityWithin = Math.abs(variabilityDifference) <= REVIEW_THRESHOLDS.maximumCycleVariabilityDifferencePct;
-  const variabilityAssessment = prototypeAssessment(variabilityWithin, "Within prototype limit", "No repeatability uncertainty was entered for this value, so Caevera applies its explicit ±10 percentage-point prototype product limit.");
+  const variabilityAssessment = prototypeAssessment(variabilityWithin, "Within prototype limit", "No repeatability uncertainty was entered for this value, so Kythros applies its explicit ±10 percentage-point prototype product limit.");
   const variability: MetricAssessment = {
     id: "cycle-variability", label: "Cycle variability", purpose: "Cycle-to-cycle pressure-range variation", experiment: testVariability, cfd: cfdVariability, difference: variabilityDifference,
-    percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ±10 percentage points", assessment: variabilityAssessment, tone: statusTone(variabilityAssessment.status),
+    percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Kythros prototype product limit: ±10 percentage points", assessment: variabilityAssessment, tone: statusTone(variabilityAssessment.status),
   };
 
   const phaseError = phasePatternErrorDeg(testMode, cfdMode);
-  const phaseAssessment = prototypeAssessment(phaseError <= 20, "Within prototype limit", "Caevera removes one shared time shift, compares the relative phase around the probe array, and applies its ≤20° RMS prototype product limit.");
+  const phaseAssessment = prototypeAssessment(phaseError <= 20, "Within prototype limit", "Kythros removes one shared time shift, compares the relative phase around the probe array, and applies its ≤20° RMS prototype product limit.");
   const phasePattern: MetricAssessment = modeIdentifiable ? {
     id: "phase-pattern", label: "Probe phase pattern", purpose: "Circumferential propagation agreement", experiment: "Reference", cfd: phaseError, difference: phaseError,
-    percentDifference: null, unit: "° RMS", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ≤20° RMS", assessment: phaseAssessment, tone: statusTone(phaseAssessment.status),
+    percentDifference: null, unit: "° RMS", uncertainty: null, uncertaintyLabel: "Kythros prototype product limit: ≤20° RMS", assessment: phaseAssessment, tone: statusTone(phaseAssessment.status),
   } : inconclusiveMetric("phase-pattern", "Probe phase pattern", "Circumferential propagation agreement");
 
   const driftDifference = cfdMode.frequencyDriftPct - testMode.frequencyDriftPct;
-  const driftAssessment = prototypeAssessment(Math.abs(driftDifference) <= 3, "Within prototype limit", "Caevera compares the fitted cycle-frequency trend over the analyzed time window and applies its ±3 percentage-point prototype product limit.");
+  const driftAssessment = prototypeAssessment(Math.abs(driftDifference) <= 3, "Within prototype limit", "Kythros compares the fitted cycle-frequency trend over the analyzed time window and applies its ±3 percentage-point prototype product limit.");
   const frequencyDrift: MetricAssessment = {
     id: "frequency-drift", label: "Frequency drift", purpose: "Cycle-frequency trend across the record", experiment: testMode.frequencyDriftPct, cfd: cfdMode.frequencyDriftPct, difference: driftDifference,
-    percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ±3 percentage points", assessment: driftAssessment, tone: statusTone(driftAssessment.status),
+    percentDifference: null, unit: "%", uncertainty: null, uncertaintyLabel: "Kythros prototype product limit: ±3 percentage points", assessment: driftAssessment, tone: statusTone(driftAssessment.status),
   };
 
   const jitterDifference = cfdMode.phaseJitterDeg - testMode.phaseJitterDeg;
-  const jitterAssessment = prototypeAssessment(Math.abs(jitterDifference) <= 10, "Within prototype limit", "Caevera compares sliding-window relative-phase variation and applies its ±10° prototype product limit. This estimator does not yet include sensor timing uncertainty.");
+  const jitterAssessment = prototypeAssessment(Math.abs(jitterDifference) <= 10, "Within prototype limit", "Kythros compares sliding-window relative-phase variation and applies its ±10° prototype product limit. This estimator does not yet include sensor timing uncertainty.");
   const phaseJitter: MetricAssessment = modeIdentifiable ? {
     id: "phase-jitter", label: "Phase jitter", purpose: "Window-to-window propagation consistency", experiment: testMode.phaseJitterDeg, cfd: cfdMode.phaseJitterDeg, difference: jitterDifference,
-    percentDifference: null, unit: "°", uncertainty: null, uncertaintyLabel: "Caevera prototype product limit: ±10°", assessment: jitterAssessment, tone: statusTone(jitterAssessment.status),
+    percentDifference: null, unit: "°", uncertainty: null, uncertaintyLabel: "Kythros prototype product limit: ±10°", assessment: jitterAssessment, tone: statusTone(jitterAssessment.status),
   } : inconclusiveMetric("phase-jitter", "Phase jitter", "Window-to-window propagation consistency");
 
   const metrics = [

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AnalysisCase, CaseMetadata } from "../lib/caevera-types.ts";
+import type { OperatingPoint } from "../lib/design-workspace.ts";
+import { EMPTY_ENGINE_DESIGN } from "../lib/design-workspace.ts";
+import { ENVELOPE_MODEL_MINIMUM_POINTS, fitEnvelopeModel } from "../lib/envelope-model.ts";
 import { buildEnvelopeDataset } from "../lib/operating-envelope.ts";
 import { makeDemoProbeSignals } from "../lib/rde-analysis.ts";
 
@@ -16,6 +19,7 @@ function metadata(name: string): CaseMetadata {
     experimentSensorBandwidthKHz: 100,
     experimentFilterCutoffKHz: 80,
     inletPressureBar: 8,
+    backPressureBar: 1,
     inletTemperatureK: 300,
     equivalenceRatio: 1,
     massFlowKgS: 0.62,
@@ -57,26 +61,59 @@ function metadata(name: string): CaseMetadata {
 
 test("builds one observed envelope point per baseline, not per CFD rerun", () => {
   const demo = makeDemoProbeSignals();
-  const baseline: AnalysisCase = { id: "baseline", source: "demo", relationship: null, metadata: metadata("Baseline"), testSignals: demo.test, cfdSignals: demo.cfd };
+  const point: OperatingPoint = { id: "point", designId: "design", name: "Baseline", source: "demo", inletPressureBar: 8, inletTemperatureK: 300, equivalenceRatio: 1, massFlowKgS: 0.62, backPressureBar: 1 };
+  const baseline: AnalysisCase = { id: "baseline", designId: "design", operatingPointId: point.id, source: "demo", relationship: null, metadata: metadata("Baseline"), testSignals: demo.test, cfdSignals: demo.cfd };
   const rerun: AnalysisCase = {
     ...baseline,
     id: "mesh",
     relationship: { baselineCaseId: baseline.id, referenceCaseId: baseline.id, changedVariable: "mesh", description: "Refined mesh" },
     metadata: { ...metadata("Mesh rerun"), meshCells: 4_000_000, minimumCellSizeMm: 0.1 },
   };
-  const result = buildEnvelopeDataset([baseline, rerun]);
+  const result = buildEnvelopeDataset([point], [baseline, rerun]);
   assert.equal(result.points.length, 1);
   assert.equal(result.points[0].cfdRerunCount, 1);
   assert.equal(result.status, "Demonstration only");
-  assert.equal(result.points[0].backflowStatus, "Not assessed");
+  assert.equal(result.points[0].evidenceType, "Experiment + CFD");
 });
 
 test("does not convert an observed map into an unvalidated prediction", () => {
   const demo = makeDemoProbeSignals();
-  const baseline: AnalysisCase = { id: "physical", source: "uploaded", relationship: null, metadata: metadata("Physical point"), testSignals: demo.test, cfdSignals: demo.cfd };
-  const result = buildEnvelopeDataset([baseline]);
-  assert.equal(result.status, "Observed map only");
+  const point: OperatingPoint = { id: "physical-point", designId: "design", name: "Physical point", source: "uploaded", inletPressureBar: 8, inletTemperatureK: 300, equivalenceRatio: 1, massFlowKgS: 0.62, backPressureBar: 1 };
+  const baseline: AnalysisCase = { id: "physical", designId: "design", operatingPointId: point.id, source: "uploaded", relationship: null, metadata: metadata("Physical point"), testSignals: demo.test, cfdSignals: demo.cfd };
+  const result = buildEnvelopeDataset([point], [baseline]);
+  assert.equal(result.status, "Measured envelope");
   assert.match(result.nextRequirement, /mesh or time-step sequence/i);
   assert.equal(result.points[0].modelUse, "Needs numerical convergence");
 });
 
+test("gates the exploratory envelope model and leaves unsupported space blank", () => {
+  const demo = makeDemoProbeSignals();
+  const point: OperatingPoint = { id: "seed-point", designId: "design", name: "Seed", source: "uploaded", inletPressureBar: 8, inletTemperatureK: 300, equivalenceRatio: 1, massFlowKgS: 0.62, backPressureBar: 1 };
+  const baseline: AnalysisCase = { id: "seed-run", designId: "design", operatingPointId: point.id, source: "uploaded", relationship: null, metadata: metadata("Seed"), testSignals: demo.test, cfdSignals: demo.cfd };
+  const seed = buildEnvelopeDataset([point], [baseline]).points[0];
+  const design = { ...EMPTY_ENGINE_DESIGN, id: "design", name: "Model test", annulusInnerDiameterMm: 78, annulusOuterDiameterMm: 86, chamberLengthMm: 120, injectorCount: 120, injectorDiameterMm: 0.8, plenumVolumeCm3: 300, equivalenceRatioMin: 0.9, equivalenceRatioMax: 1.1, massFlowKgSMin: 0.5, massFlowKgSMax: 0.7, inletPressureBarMin: 6, inletPressureBarMax: 10, inletTemperatureK: 300, backPressureBar: 1 };
+  const blocked = fitEnvelopeModel([seed], design);
+  assert.equal(blocked.status, "Blocked");
+  assert.match(blocked.reason, new RegExp(`0 of ${ENVELOPE_MODEL_MINIMUM_POINTS}`));
+
+  const points = Array.from({ length: ENVELOPE_MODEL_MINIMUM_POINTS }, (_, index) => ({
+    ...seed,
+    operatingPointId: `point-${index}`,
+    caseId: `run-${index}`,
+    name: `Point ${index}`,
+    inletPressureBar: 6.5 + index * 3 / (ENVELOPE_MODEL_MINIMUM_POINTS - 1),
+    massFlowKgS: 0.59 + 0.005 * (index % 3),
+    classification: index < ENVELOPE_MODEL_MINIMUM_POINTS / 2 ? "Stable" as const : "Unstable" as const,
+    signalQuality: "Ready" as const,
+    identifiability: "Identified" as const,
+    numericalStatus: "Converged" as const,
+    evidenceQuality: "High" as const,
+    modelUse: "Eligible observation" as const,
+  }));
+  const ready = fitEnvelopeModel(points, design);
+  assert.equal(ready.status, "Exploratory model ready");
+  assert.ok((ready.leaveOneOutAccuracy ?? 0) >= 0.55);
+  const unsupported = ready.predict({ inletPressureBar: 30, massFlowKgS: 2, equivalenceRatio: 1, backPressureBar: 1 });
+  assert.equal(unsupported.supported, false);
+  assert.equal(unsupported.uncertainty, 1);
+});

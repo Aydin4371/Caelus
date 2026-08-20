@@ -1,6 +1,6 @@
 # Pressure and wave-method sources
 
-These primary sources justify Caevera's analysis choices. They do not define
+These primary sources justify Kythros's analysis choices. They do not define
 universal acceptance thresholds and they do not prove a diagnostic cause in a
 analyzed case.
 
@@ -17,7 +17,7 @@ analyzed case.
    https://doi.org/10.2514/6.2026-2036
    - Used for: limited-point mode identifiability, temporal/spatial spectral
      structure, and the warning against equidistant sensor placement.
-   - Caevera does not claim to reproduce the paper's 2D-DFT algorithm; it uses a
+   - Kythros does not claim to reproduce the paper's 2D-DFT algorithm; it uses a
      separate candidate phase fit.
 
 3. T. Pritschau, A. Karnam, and E. J. Gutmark, “Characterizing Acoustic Modes

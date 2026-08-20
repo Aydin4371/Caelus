@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Caevera by Caelus",
-  "short_name": "Caevera",
+  "name": "Kythros by Caelus",
+  "short_name": "Kythros",
   "description": "Define gas-fed annular RDE designs, plan and map measured operating points, and compare experiment with CFD.",
   "start_url": "/",
   "scope": "/",
@@ -12,13 +12,13 @@
   "categories": ["engineering", "productivity", "utilities"],
   "icons": [
     {
-      "src": "/caevera-icon-192.png",
+      "src": "/kythros-icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/caevera-icon-512.png",
+      "src": "/kythros-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

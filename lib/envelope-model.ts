@@ -1,0 +1,175 @@
+import type { EngineDesign } from "./design-workspace.ts";
+import type { EnvelopeAxisKey, EnvelopeClassification, EnvelopePoint } from "./operating-envelope.ts";
+
+export const ENVELOPE_MODEL_MINIMUM_POINTS = 12;
+const SUPPORT_RADIUS = 0.48;
+const KERNEL_BANDWIDTH = 0.24;
+
+export type EnvelopeFeatures = Pick<EnvelopePoint, "inletPressureBar" | "massFlowKgS" | "equivalenceRatio" | "backPressureBar">;
+
+export type EnvelopePrediction = {
+  supported: boolean;
+  classification: Exclude<EnvelopeClassification, "Unclassified"> | null;
+  stabilityProbabilities: Record<"Stable" | "Transitional" | "Unstable", number>;
+  waveModeProbabilities: Record<string, number>;
+  uncertainty: number;
+  nearestDistance: number;
+  neighborCount: number;
+};
+
+export type EnvelopeModel = {
+  status: "Blocked" | "Exploratory model ready";
+  reason: string;
+  observationCount: number;
+  classCount: number;
+  leaveOneOutAccuracy: number | null;
+  points: EnvelopePoint[];
+  predict: (features: EnvelopeFeatures) => EnvelopePrediction;
+};
+
+type Domain = Record<keyof EnvelopeFeatures, readonly [number, number]>;
+
+function observedRange(values: number[], fallback: number): readonly [number, number] {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) return [Math.max(0.01, fallback * 0.75), Math.max(0.02, fallback * 1.25)];
+  const low = Math.min(...finite);
+  const high = Math.max(...finite);
+  if (high > low) return [low, high];
+  const span = Math.max(Math.abs(low) * 0.25, 0.1);
+  return [Math.max(0.001, low - span), high + span];
+}
+
+export function envelopeModelDomain(design: EngineDesign, points: EnvelopePoint[]): Domain {
+  return {
+    inletPressureBar: [design.inletPressureBarMin, design.inletPressureBarMax],
+    massFlowKgS: [design.massFlowKgSMin, design.massFlowKgSMax],
+    equivalenceRatio: [design.equivalenceRatioMin, design.equivalenceRatioMax],
+    backPressureBar: observedRange(points.map((point) => point.backPressureBar), design.backPressureBar),
+  };
+}
+
+function normalizedDistance(left: EnvelopeFeatures, right: EnvelopeFeatures, domain: Domain) {
+  const keys = Object.keys(domain) as (keyof EnvelopeFeatures)[];
+  const squared = keys.map((key) => {
+    const limits = domain[key];
+    const span = Math.max(limits[1] - limits[0], 1e-12);
+    return ((left[key] - right[key]) / span) ** 2;
+  });
+  return Math.sqrt(squared.reduce((sum, value) => sum + value, 0) / squared.length);
+}
+
+function emptyPrediction(nearestDistance = Number.POSITIVE_INFINITY): EnvelopePrediction {
+  return {
+    supported: false,
+    classification: null,
+    stabilityProbabilities: { Stable: 0, Transitional: 0, Unstable: 0 },
+    waveModeProbabilities: {},
+    uncertainty: 1,
+    nearestDistance,
+    neighborCount: 0,
+  };
+}
+
+function predictor(points: EnvelopePoint[], domain: Domain) {
+  return (features: EnvelopeFeatures, excludedCaseId?: string): EnvelopePrediction => {
+    const ranked = points
+      .filter((point) => point.caseId !== excludedCaseId)
+      .map((point) => ({ point, distance: normalizedDistance(features, point, domain) }))
+      .sort((left, right) => left.distance - right.distance);
+    const nearestDistance = ranked[0]?.distance ?? Number.POSITIVE_INFINITY;
+    const neighbors = ranked.filter((item) => item.distance <= SUPPORT_RADIUS);
+    if (neighbors.length < 3) return emptyPrediction(nearestDistance);
+    const stabilityWeights = { Stable: 0.05, Transitional: 0.05, Unstable: 0.05 };
+    const waveWeights = new Map<string, number>();
+    let total = 0.15;
+    for (const item of neighbors) {
+      const weight = Math.exp(-0.5 * (item.distance / KERNEL_BANDWIDTH) ** 2) * (item.point.evidenceQuality === "High" ? 1 : item.point.evidenceQuality === "Moderate" ? 0.75 : 0.4);
+      if (item.point.classification !== "Unclassified") stabilityWeights[item.point.classification] += weight;
+      if (item.point.waveCount) waveWeights.set(String(item.point.waveCount), (waveWeights.get(String(item.point.waveCount)) ?? 0) + weight);
+      total += weight;
+    }
+    const probabilities = {
+      Stable: stabilityWeights.Stable / total,
+      Transitional: stabilityWeights.Transitional / total,
+      Unstable: stabilityWeights.Unstable / total,
+    };
+    const rankedClasses = (Object.entries(probabilities) as [Exclude<EnvelopeClassification, "Unclassified">, number][]).sort((left, right) => right[1] - left[1]);
+    const entropy = -rankedClasses.reduce((sum, [, probability]) => probability > 0 ? sum + probability * Math.log(probability) : sum, 0) / Math.log(3);
+    const distanceUncertainty = Math.min(1, nearestDistance / SUPPORT_RADIUS);
+    const waveTotal = [...waveWeights.values()].reduce((sum, value) => sum + value, 0);
+    return {
+      supported: true,
+      classification: rankedClasses[0][0],
+      stabilityProbabilities: probabilities,
+      waveModeProbabilities: Object.fromEntries([...waveWeights.entries()].map(([mode, weight]) => [mode, waveTotal ? weight / waveTotal : 0])),
+      uncertainty: Math.min(1, Math.max(entropy, distanceUncertainty * 0.8)),
+      nearestDistance,
+      neighborCount: neighbors.length,
+    };
+  };
+}
+
+export function fitEnvelopeModel(allPoints: EnvelopePoint[], design: EngineDesign): EnvelopeModel {
+  const points = allPoints.filter((point) => point.source === "uploaded" && point.classification !== "Unclassified" && point.signalQuality === "Ready" && point.numericalStatus === "Converged");
+  const classes = new Set(points.map((point) => point.classification));
+  const domain = envelopeModelDomain(design, points);
+  const predictRaw = predictor(points, domain);
+  const leaveOneOut = points.map((point) => predictRaw(point, point.caseId)).filter((prediction) => prediction.supported);
+  const correct = points.filter((point) => {
+    const prediction = predictRaw(point, point.caseId);
+    return prediction.supported && prediction.classification === point.classification;
+  }).length;
+  const accuracy = leaveOneOut.length ? correct / leaveOneOut.length : null;
+  let reason = "The exploratory model is available only after enough real, signal-ready, numerically converged operating points cover at least two observed stability classes.";
+  let status: EnvelopeModel["status"] = "Blocked";
+  if (points.length < ENVELOPE_MODEL_MINIMUM_POINTS) {
+    reason = `${points.length} of ${ENVELOPE_MODEL_MINIMUM_POINTS} required real, signal-ready, numerically converged operating points are available.`;
+  } else if (classes.size < 2) {
+    reason = "At least two measured stability classes are required before Kythros can estimate a boundary.";
+  } else if (accuracy === null || accuracy < 0.55) {
+    reason = "Leave-one-out classification has not reached the 55% exploratory-model gate.";
+  } else {
+    status = "Exploratory model ready";
+    reason = `The local kernel model passed its data and leave-one-out gates at ${(accuracy * 100).toFixed(0)}% accuracy. Predictions remain unavailable outside measured support.`;
+  }
+  return {
+    status,
+    reason,
+    observationCount: points.length,
+    classCount: classes.size,
+    leaveOneOutAccuracy: accuracy,
+    points,
+    predict: status === "Exploratory model ready" ? (features) => predictRaw(features) : () => emptyPrediction(),
+  };
+}
+
+export type BoundaryRecommendation = {
+  features: EnvelopeFeatures;
+  prediction: EnvelopePrediction;
+  score: number;
+} | null;
+
+export function recommendBoundaryPoint(
+  model: EnvelopeModel,
+  domain: Domain,
+  xAxis: EnvelopeAxisKey,
+  yAxis: EnvelopeAxisKey,
+  fixed: EnvelopeFeatures,
+): BoundaryRecommendation {
+  if (model.status !== "Exploratory model ready") return null;
+  const candidates: Exclude<BoundaryRecommendation, null>[] = [];
+  for (let xi = 0; xi < 15; xi += 1) {
+    for (let yi = 0; yi < 15; yi += 1) {
+      const features = { ...fixed };
+      features[xAxis] = domain[xAxis][0] + (xi / 14) * (domain[xAxis][1] - domain[xAxis][0]);
+      features[yAxis] = domain[yAxis][0] + (yi / 14) * (domain[yAxis][1] - domain[yAxis][0]);
+      const prediction = model.predict(features);
+      if (!prediction.supported || prediction.nearestDistance < 0.06) continue;
+      const probabilities = Object.values(prediction.stabilityProbabilities).sort((left, right) => right - left);
+      const boundaryAmbiguity = 1 - (probabilities[0] - probabilities[1]);
+      if (boundaryAmbiguity < 0.55) continue;
+      candidates.push({ features, prediction, score: 0.7 * boundaryAmbiguity + 0.3 * prediction.uncertainty });
+    }
+  }
+  return candidates.sort((left, right) => right.score - left.score)[0] ?? null;
+}

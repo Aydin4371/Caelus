@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AnalysisCase } from "../lib/caevera-types.ts";
-import { EMPTY_ENGINE_DESIGN, buildScreeningPlan, calculateDesign, selectCoverageNextPoint, validateEngineDesign } from "../lib/design-workspace.ts";
-import { makeDemoProbeSignals } from "../lib/rde-analysis.ts";
+import { EMPTY_ENGINE_DESIGN, buildScreeningPlan, calculateDesign, selectCoverageNextPoint, validateEngineDesign, type OperatingPoint } from "../lib/design-workspace.ts";
 import { deserializeWorkspace, serializeWorkspace } from "../lib/workspace.ts";
 
 const design = {
@@ -45,28 +43,24 @@ test("starts an unobserved screening plan at the entered range center", () => {
 });
 
 test("marks a directly observed operating point without inventing predictions", () => {
-  const demo = makeDemoProbeSignals();
-  const item = {
+  const item: OperatingPoint = {
     id: "observed",
     designId: design.id,
+    name: "Observed center",
     source: "uploaded",
-    relationship: null,
-    metadata: {
-      name: "Observed center",
-      equivalenceRatio: 1,
-      massFlowKgS: 0.6,
-      inletPressureBar: 8,
-    },
-    testSignals: demo.test,
-    cfdSignals: demo.cfd,
-  } as AnalysisCase;
+    equivalenceRatio: 1,
+    massFlowKgS: 0.6,
+    inletPressureBar: 8,
+    inletTemperatureK: 300,
+    backPressureBar: 1,
+  };
   const points = buildScreeningPlan(design, [item]);
-  assert.equal(points[0].matchedCaseId, item.id);
+  assert.equal(points[0].matchedOperatingPointId, item.id);
   assert.notEqual(selectCoverageNextPoint(points)?.id, "baseline");
 });
 
 test("saves engine designs without saving generated recommendations", () => {
-  const text = serializeWorkspace({ cases: [], activeCaseId: null, baselineCaseId: null, designs: [design], activeDesignId: design.id });
+  const text = serializeWorkspace({ cases: [], activeCaseId: null, baselineCaseId: null, designs: [design], activeDesignId: design.id, operatingPoints: [], activeOperatingPointId: null });
   assert.doesNotMatch(text, /coverage-based next point|predicted stable/i);
   const restored = deserializeWorkspace(text);
   assert.equal(restored.designs[0].name, design.name);

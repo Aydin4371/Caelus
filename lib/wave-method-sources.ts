@@ -29,7 +29,7 @@ export const WAVE_METHOD_SOURCES: WaveMethodSource[] = [
     doi: "10.2514/6.2026-2036",
     url: "https://doi.org/10.2514/6.2026-2036",
     supports: "Limited synchronized point measurements can identify average wave count and operating frequency when temporal/spatial Fourier structure and deliberate sensor placement are used.",
-    limitation: "The reported placement study uses its own 2D-DFT method and tested mode set; Caevera uses a separate sparse phase-candidate fit and therefore cites the paper for identifiability and placement constraints, not algorithm equivalence.",
+    limitation: "The reported placement study uses its own 2D-DFT method and tested mode set; Kythros uses a separate sparse phase-candidate fit and therefore cites the paper for identifiability and placement constraints, not algorithm equivalence.",
   },
   {
     id: "pritschau-et-al-2025",
@@ -59,6 +59,6 @@ export const WAVE_METHOD_SOURCES: WaveMethodSource[] = [
     doi: "10.2514/1.A36447",
     url: "https://doi.org/10.2514/1.A36447",
     supports: "Short-time frequency analysis can expose sequential deflagration, multi-wave, and single-wave operating intervals that a full-record spectrum would hide.",
-    limitation: "The flight system, liquid propellants, and transient operating history are specific; Caevera uses the result only to justify windowed mode tracking.",
+    limitation: "The flight system, liquid propellants, and transient operating history are specific; Kythros uses the result only to justify windowed mode tracking.",
   },
 ];
