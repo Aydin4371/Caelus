@@ -5,7 +5,7 @@ export const ENVELOPE_MODEL_MINIMUM_POINTS = 12;
 const SUPPORT_RADIUS = 0.48;
 const KERNEL_BANDWIDTH = 0.24;
 
-export type EnvelopeFeatures = Pick<EnvelopePoint, "inletPressureBar" | "massFlowKgS" | "equivalenceRatio" | "backPressureBar">;
+export type EnvelopeFeatures = Pick<EnvelopePoint, "inletPressureBar" | "massFlowKgS" | "equivalenceRatio" | "backPressureBar" | "inletTemperatureK">;
 
 export type EnvelopePrediction = {
   supported: boolean;
@@ -18,11 +18,12 @@ export type EnvelopePrediction = {
 };
 
 export type EnvelopeModel = {
-  status: "Blocked" | "Exploratory model ready";
+  status: "Not ready yet" | "Exploratory model ready";
   reason: string;
   observationCount: number;
   classCount: number;
   leaveOneOutAccuracy: number | null;
+  gates: Array<{ id: "observations" | "classes" | "validation"; label: string; value: string; passed: boolean; detail: string }>;
   points: EnvelopePoint[];
   predict: (features: EnvelopeFeatures) => EnvelopePrediction;
 };
@@ -39,12 +40,17 @@ function observedRange(values: number[], fallback: number): readonly [number, nu
   return [Math.max(0.001, low - span), high + span];
 }
 
+function preferredRange(low: number, high: number, values: number[], fallback: number): readonly [number, number] {
+  return Number.isFinite(low) && Number.isFinite(high) && high > low ? [low, high] : observedRange(values, fallback);
+}
+
 export function envelopeModelDomain(design: EngineDesign, points: EnvelopePoint[]): Domain {
   return {
-    inletPressureBar: [design.inletPressureBarMin, design.inletPressureBarMax],
-    massFlowKgS: [design.massFlowKgSMin, design.massFlowKgSMax],
-    equivalenceRatio: [design.equivalenceRatioMin, design.equivalenceRatioMax],
+    inletPressureBar: preferredRange(design.inletPressureBarMin, design.inletPressureBarMax, points.map((point) => point.inletPressureBar), 1),
+    massFlowKgS: preferredRange(design.massFlowKgSMin, design.massFlowKgSMax, points.map((point) => point.massFlowKgS), 1),
+    equivalenceRatio: preferredRange(design.equivalenceRatioMin, design.equivalenceRatioMax, points.map((point) => point.equivalenceRatio), 1),
     backPressureBar: observedRange(points.map((point) => point.backPressureBar), design.backPressureBar),
+    inletTemperatureK: observedRange(points.map((point) => point.inletTemperatureK), design.inletTemperatureK),
   };
 }
 
@@ -121,7 +127,7 @@ export function fitEnvelopeModel(allPoints: EnvelopePoint[], design: EngineDesig
   }).length;
   const accuracy = leaveOneOut.length ? correct / leaveOneOut.length : null;
   let reason = "The exploratory model is available only after enough real, signal-ready experimental operating points cover at least two observed stability classes.";
-  let status: EnvelopeModel["status"] = "Blocked";
+  let status: EnvelopeModel["status"] = "Not ready yet";
   if (points.length < ENVELOPE_MODEL_MINIMUM_POINTS) {
     reason = `${points.length} of ${ENVELOPE_MODEL_MINIMUM_POINTS} required real, signal-ready experimental operating points are available.`;
   } else if (classes.size < 2) {
@@ -138,6 +144,11 @@ export function fitEnvelopeModel(allPoints: EnvelopePoint[], design: EngineDesig
     observationCount: points.length,
     classCount: classes.size,
     leaveOneOutAccuracy: accuracy,
+    gates: [
+      { id: "observations", label: "Signal-ready measured points", value: `${points.length} / ${ENVELOPE_MODEL_MINIMUM_POINTS}`, passed: points.length >= ENVELOPE_MODEL_MINIMUM_POINTS, detail: "Only uploaded synchronized pressure data with an identified mode count here; published summaries and synthetic data do not." },
+      { id: "classes", label: "Observed stability classes", value: `${classes.size} / 2`, passed: classes.size >= 2, detail: "At least two classes are needed to estimate a boundary instead of only describing one regime." },
+      { id: "validation", label: "Leave-one-out accuracy", value: accuracy === null ? "Not tested" : `${(accuracy * 100).toFixed(0)}% / 55%`, passed: accuracy !== null && accuracy >= 0.55, detail: "Each observation must be predicted without using itself; the exploratory gate is 55%." },
+    ],
     points,
     predict: status === "Exploratory model ready" ? (features) => predictRaw(features) : () => emptyPrediction(),
   };

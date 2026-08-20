@@ -3,6 +3,7 @@ import test from "node:test";
 import { EMPTY_ENGINE_DESIGN, buildScreeningPlan, calculateDesign, selectCoverageNextPoint, validateEngineDesign, type OperatingPoint } from "../lib/design-workspace.ts";
 import { deserializeWorkspace, serializeWorkspace } from "../lib/workspace.ts";
 import { makeDemoProbeSignals } from "../lib/rde-analysis.ts";
+import { GE_2022_DESIGN, buildGe2022OperatingPoints } from "../lib/published-envelope-data.ts";
 
 const design = {
   ...EMPTY_ENGINE_DESIGN,
@@ -98,4 +99,15 @@ test("saves a measured operating point before any CFD run exists", () => {
   assert.equal(restored.cases.length, 0);
   assert.equal(restored.operatingPoints[0].experiment?.signals.length, demo.test.length);
   assert.equal(restored.activeOperatingPointId, point.id);
+});
+
+test("round-trips source-backed published summaries with unreported plenum pressure", () => {
+  const points = buildGe2022OperatingPoints();
+  assert.deepEqual(validateEngineDesign(GE_2022_DESIGN), []);
+  const text = serializeWorkspace({ cases: [], activeCaseId: null, baselineCaseId: null, designs: [GE_2022_DESIGN], activeDesignId: GE_2022_DESIGN.id, operatingPoints: points, activeOperatingPointId: points[0].id });
+  const restored = deserializeWorkspace(text);
+  assert.equal(restored.operatingPoints.length, 13);
+  assert.equal(restored.operatingPoints[0].source, "published");
+  assert.ok(Number.isNaN(restored.operatingPoints[0].inletPressureBar));
+  assert.match(restored.operatingPoints[0].publishedObservation?.sourceLocator ?? "", /Table 1/i);
 });

@@ -5,6 +5,7 @@ import type { OperatingPoint } from "../lib/design-workspace.ts";
 import { EMPTY_ENGINE_DESIGN } from "../lib/design-workspace.ts";
 import { ENVELOPE_MODEL_MINIMUM_POINTS, fitEnvelopeModel } from "../lib/envelope-model.ts";
 import { buildEnvelopeDataset } from "../lib/operating-envelope.ts";
+import { GE_2022_DESIGN, buildGe2022OperatingPoints } from "../lib/published-envelope-data.ts";
 import { makeDemoProbeSignals } from "../lib/rde-analysis.ts";
 
 function metadata(name: string): CaseMetadata {
@@ -125,8 +126,9 @@ test("gates the exploratory envelope model and leaves unsupported space blank", 
   const seed = buildEnvelopeDataset([point], [baseline]).points[0];
   const design = { ...EMPTY_ENGINE_DESIGN, id: "design", name: "Model test", annulusInnerDiameterMm: 78, annulusOuterDiameterMm: 86, chamberLengthMm: 120, injectorCount: 120, injectorDiameterMm: 0.8, plenumVolumeCm3: 300, equivalenceRatioMin: 0.9, equivalenceRatioMax: 1.1, massFlowKgSMin: 0.5, massFlowKgSMax: 0.7, inletPressureBarMin: 6, inletPressureBarMax: 10, inletTemperatureK: 300, backPressureBar: 1 };
   const blocked = fitEnvelopeModel([seed], design);
-  assert.equal(blocked.status, "Blocked");
+  assert.equal(blocked.status, "Not ready yet");
   assert.match(blocked.reason, new RegExp(`1 of ${ENVELOPE_MODEL_MINIMUM_POINTS}`));
+  assert.equal(blocked.gates[0].value, `1 / ${ENVELOPE_MODEL_MINIMUM_POINTS}`);
 
   const points = Array.from({ length: ENVELOPE_MODEL_MINIMUM_POINTS }, (_, index) => ({
     ...seed,
@@ -148,4 +150,25 @@ test("gates the exploratory envelope model and leaves unsupported space blank", 
   const unsupported = ready.predict({ inletPressureBar: 30, massFlowKgS: 2, equivalenceRatio: 1, backPressureBar: 1 });
   assert.equal(unsupported.supported, false);
   assert.equal(unsupported.uncertainty, 1);
+});
+
+test("loads published operating conditions without pretending summary rows are raw pressure data", () => {
+  const points = buildGe2022OperatingPoints();
+  const dataset = buildEnvelopeDataset(points, []);
+  assert.equal(points.length, 13);
+  assert.equal(dataset.physicalPointCount, 13);
+  assert.equal(dataset.publishedPointCount, 13);
+  assert.equal(dataset.signalReadyPointCount, 0);
+  assert.equal(dataset.stablePointCount, 4);
+  assert.equal(dataset.transitionalPointCount, 7);
+  assert.equal(dataset.unstablePointCount, 2);
+  assert.equal(dataset.points[0].evidenceType, "Published experiment summary");
+  assert.equal(dataset.points[0].signalQuality, "Not available");
+  assert.equal(dataset.points[0].modelUse, "Published summary only");
+  assert.ok(Number.isNaN(points[0].inletPressureBar));
+
+  const model = fitEnvelopeModel(dataset.points, GE_2022_DESIGN);
+  assert.equal(model.status, "Not ready yet");
+  assert.equal(model.observationCount, 0);
+  assert.equal(model.gates[0].value, `0 / ${ENVELOPE_MODEL_MINIMUM_POINTS}`);
 });
