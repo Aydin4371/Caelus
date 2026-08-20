@@ -4,8 +4,9 @@ import type { AnalysisCase, CaseMetadata } from "../lib/caevera-types.ts";
 import type { OperatingPoint } from "../lib/design-workspace.ts";
 import { EMPTY_ENGINE_DESIGN } from "../lib/design-workspace.ts";
 import { ENVELOPE_MODEL_MINIMUM_POINTS, fitEnvelopeModel } from "../lib/envelope-model.ts";
-import { buildEnvelopeDataset } from "../lib/operating-envelope.ts";
+import { buildEnvelopeDataset, pointMatchesEnvelopeSlice } from "../lib/operating-envelope.ts";
 import { GE_2022_DESIGN, buildGe2022OperatingPoints } from "../lib/published-envelope-data.ts";
+import { buildPhysicsComparison } from "../lib/physics-evidence.ts";
 import { makeDemoProbeSignals } from "../lib/rde-analysis.ts";
 
 function metadata(name: string): CaseMetadata {
@@ -166,9 +167,30 @@ test("loads published operating conditions without pretending summary rows are r
   assert.equal(dataset.points[0].signalQuality, "Not available");
   assert.equal(dataset.points[0].modelUse, "Published summary only");
   assert.ok(Number.isNaN(points[0].inletPressureBar));
+  assert.ok(Math.abs((dataset.points[3].waveSpeedMps ?? 0) - 1104.8) < 1);
+  const repeated = dataset.points.find((point) => point.name === "Published test #10");
+  assert.equal(repeated?.physicsLayers.find((layer) => layer.id === "repeatability")?.status, "supported");
+  assert.match(repeated?.physicsLayers.find((layer) => layer.id === "repeatability")?.summary ?? "", /3\.13146 s/);
+  assert.equal(dataset.points[3].physicsLayers.find((layer) => layer.id === "performance")?.status, "not-measured");
+  const fixed = { inletPressureBar: Number.NaN, massFlowKgS: points[3].massFlowKgS, equivalenceRatio: 1.19, backPressureBar: 1.01325, inletTemperatureK: 713 };
+  assert.equal(dataset.points.filter((point) => pointMatchesEnvelopeSlice(point, "equivalenceRatio", "inletTemperatureK", fixed)).length, 13);
 
   const model = fitEnvelopeModel(dataset.points, GE_2022_DESIGN);
   assert.equal(model.status, "Not ready yet");
   assert.equal(model.observationCount, 0);
   assert.equal(model.gates[0].value, `0 / ${ENVELOPE_MODEL_MINIMUM_POINTS}`);
+});
+
+test("compares optional engine-physics values only when both sides are documented", () => {
+  const values = metadata("Physics comparison");
+  values.experimentNetThrustN = 100;
+  values.cfdNetThrustN = 96;
+  values.experimentPressureGainPct = -2;
+  const rows = buildPhysicsComparison(values);
+  const thrust = rows.find((row) => row.key === "netThrustN");
+  const pressureGain = rows.find((row) => row.key === "pressureGainPct");
+  assert.equal(thrust?.difference, -4);
+  assert.equal(pressureGain?.experiment, -2);
+  assert.equal(pressureGain?.cfd, null);
+  assert.equal(pressureGain?.difference, null);
 });

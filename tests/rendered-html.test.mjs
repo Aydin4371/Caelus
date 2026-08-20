@@ -57,11 +57,14 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(page, /productView/);
   assert.match(page, /<DesignPlanner designs=\{designs\}/);
   assert.match(page, /<OperatingEnvelope designs=\{designs\}/);
-  assert.match(envelope, /Observed mode by operating point/);
+  assert.match(envelope, /Observed propagation mode by operating point/);
   assert.match(envelope, /Predictive layer/);
   assert.match(envelope, /raw-data and validation gates pass/);
   assert.match(envelope, /Observed, not predicted/);
   assert.match(envelope, /Held fixed for this 2D slice/);
+  assert.match(envelope, /Two intersecting published sweeps/);
+  assert.match(envelope, /Evidence layers at this point/);
+  assert.match(envelope, /performance, feed-system, thermal, and repeatability evidence/);
   assert.match(envelope, /Next-test recommendation/);
   assert.match(envelope, /Open comparison/);
   assert.match(design, /Nine traceable operating points/);
@@ -70,6 +73,10 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(logic, /allRuns\.filter\(\(run\) => run\.operatingPointId === operatingPoint\.id\)/);
   assert.match(logic, /evidenceType: baseline \? "Experiment \+ CFD" : "Experiment only"/);
   assert.match(page, /No CFD setup or result is required here/);
+  assert.match(page, /Optional engine-physics comparison/);
+  assert.match(page, /Kythros reports CFD minus experiment only when both values exist/);
+  assert.match(page, /experimentNetThrustN/);
+  assert.match(page, /cfdWallHeatFluxMWm2/);
   assert.match(page, /!measuredPointDraft && <div className="form-section"><h3>Solver \+ numerical schemes/);
   assert.match(logic, /stablePointCount/);
 });

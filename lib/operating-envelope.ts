@@ -3,6 +3,7 @@ import type { AnalysisCase } from "./caevera-types.ts";
 import type { OperatingPoint } from "./design-workspace.ts";
 import { assessSignalQuality } from "./rde-analysis.ts";
 import { analyzeRdeProbeSet } from "./wave-dynamics.ts";
+import { experimentPhysicsFromMetadata, physicsLayerCoverage, type PhysicsLayerStatus } from "./physics-evidence.ts";
 
 export type EnvelopeAxisKey = "equivalenceRatio" | "inletPressureBar" | "massFlowKgS" | "backPressureBar" | "inletTemperatureK";
 export type EnvelopeClassification = "Stable" | "Transitional" | "Unstable" | "Unclassified";
@@ -40,6 +41,7 @@ export type EnvelopePoint = {
   sourceUrl: string | null;
   sourceLocator: string | null;
   evidenceFactors: Array<{ label: string; result: string; status: "passed" | "review" | "not-available" }>;
+  physicsLayers: Array<{ id: "wave" | "performance" | "feed" | "thermal" | "repeatability"; label: string; status: PhysicsLayerStatus; summary: string }>;
 };
 
 export type EnvelopeDataset = {
@@ -106,6 +108,7 @@ export function buildEnvelopeDataset(operatingPoints: OperatingPoint[], allRuns:
       experimentFilterCutoffKHz: baseline.metadata.experimentFilterCutoffKHz,
       pressureUncertaintyPct: baseline.metadata.pressureUncertaintyPct,
       timingUncertaintyUs: baseline.metadata.timingUncertaintyUs,
+      physics: experimentPhysicsFromMetadata(baseline.metadata),
     } : null);
     if (!experiment && operatingPoint.publishedObservation) {
       const observation = operatingPoint.publishedObservation;
@@ -123,7 +126,7 @@ export function buildEnvelopeDataset(operatingPoints: OperatingPoint[], allRuns:
         identifiability: "Identified",
         waveCount: observation.waveCount,
         waveFrequencyKHz: observation.waveFrequencyKHz,
-        waveSpeedMps: null,
+        waveSpeedMps: observation.waveSpeedMps ?? null,
         meanPressureMpa: Number.NaN,
         frequencyVariationPct: Number.NaN,
         phaseJitterDeg: null,
@@ -144,6 +147,14 @@ export function buildEnvelopeDataset(operatingPoints: OperatingPoint[], allRuns:
           { label: "Propagation mode", result: `Authors reported: ${observation.reportedMode}`, status: "passed" },
           { label: "Raw synchronized signals", result: "Not released with the paper", status: "not-available" },
           { label: "Predictive-model eligibility", result: "Excluded until raw signals or an independently validated import are available", status: "review" },
+        ],
+        physicsLayers: [
+          { id: "wave", label: "Wave response", status: "supported", summary: `Authors reported: ${observation.reportedMode}` },
+          ...physicsLayerCoverage(observation.physics).map((layer) => ({
+            ...layer,
+            status: layer.id === "feed" && observation.evidenceNotes?.feed ? "partial" as const : layer.status,
+            summary: observation.evidenceNotes?.[layer.id] ?? layer.summary,
+          })),
         ],
       };
       return [point];
@@ -194,6 +205,10 @@ export function buildEnvelopeDataset(operatingPoints: OperatingPoint[], allRuns:
         { label: "Wave-mode identification", result: identifiability === "Identified" ? "One mode is identified from the probe phases" : `${identifiability}; the mode result needs review`, status: identifiability === "Identified" ? "passed" : "review" },
         { label: "Predictive-model eligibility", result: operatingPoint.source === "demo" ? "Synthetic data are always excluded" : signalQuality === "Ready" && identifiability === "Identified" ? "Eligible as one observation; model gates still apply" : "Excluded until the evidence limitations are resolved", status: operatingPoint.source !== "demo" && signalQuality === "Ready" && identifiability === "Identified" ? "passed" : "review" },
       ],
+      physicsLayers: [
+        { id: "wave", label: "Wave response", status: identifiability === "Identified" ? "supported" : "partial", summary: identifiability === "Identified" ? `${mode.waveCount}-wave mode identified from synchronized probes` : `${identifiability}; review the probe evidence` },
+        ...physicsLayerCoverage(experiment.physics),
+      ],
     };
     point.modelUse = modelUse(point);
     return [point];
@@ -225,4 +240,16 @@ export function buildEnvelopeDataset(operatingPoints: OperatingPoint[], allRuns:
 
 export function envelopeAxisValue(point: EnvelopePoint, axis: EnvelopeAxisKey) {
   return point[axis];
+}
+
+export function pointMatchesEnvelopeSlice(point: EnvelopePoint, xAxis: EnvelopeAxisKey, yAxis: EnvelopeAxisKey, fixed: Record<EnvelopeAxisKey, number>) {
+  if (!Number.isFinite(point[xAxis]) || !Number.isFinite(point[yAxis])) return false;
+  const keys: EnvelopeAxisKey[] = ["inletPressureBar", "massFlowKgS", "equivalenceRatio", "backPressureBar", "inletTemperatureK"];
+  return keys.every((key) => {
+    if (key === xAxis || key === yAxis || !Number.isFinite(point[key])) return true;
+    // Ge et al. change gasoline flow to set phi while holding air flow fixed.
+    // Total mass flow is coupled to phi, not an independently fixed dimension.
+    if (point.source === "published" && key === "massFlowKgS" && [xAxis, yAxis].includes("equivalenceRatio") && [xAxis, yAxis].includes("inletTemperatureK")) return true;
+    return Math.abs(point[key] - fixed[key]) <= Math.max(1e-9, Math.abs(fixed[key]) * 1e-6);
+  });
 }

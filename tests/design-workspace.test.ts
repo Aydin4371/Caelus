@@ -92,12 +92,15 @@ test("saves a measured operating point before any CFD run exists", () => {
       experimentFilterCutoffKHz: 80,
       pressureUncertaintyPct: 1.5,
       timingUncertaintyUs: 0.5,
+      physics: { netThrustN: 125, sustainedDurationS: 2.5 },
     },
   };
   const text = serializeWorkspace({ cases: [], activeCaseId: null, baselineCaseId: null, designs: [design], activeDesignId: design.id, operatingPoints: [point], activeOperatingPointId: point.id });
   const restored = deserializeWorkspace(text);
   assert.equal(restored.cases.length, 0);
   assert.equal(restored.operatingPoints[0].experiment?.signals.length, demo.test.length);
+  assert.equal(restored.operatingPoints[0].experiment?.physics?.netThrustN, 125);
+  assert.equal(restored.operatingPoints[0].experiment?.physics?.sustainedDurationS, 2.5);
   assert.equal(restored.activeOperatingPointId, point.id);
 });
 

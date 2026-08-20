@@ -34,16 +34,33 @@ import {
   type Signal,
 } from "@/lib/rde-analysis";
 import { analyzeRdeProbeSet, compareProbeSets, type RdeModeResult } from "@/lib/wave-dynamics";
+import { buildPhysicsComparison, cfdPhysicsFromMetadata, experimentPhysicsFromMetadata, PHYSICS_EVIDENCE_SOURCES, PHYSICS_MEASUREMENT_DEFINITIONS, PHYSICS_SOURCE_LIMITATION, physicsMetadataValues } from "@/lib/physics-evidence";
 
 const TEST_COLOR = "#2588a2";
 const CFD_COLOR = "#6679bd";
 const RESIDUAL_COLOR = "#c8873d";
-const RERUN_ALWAYS_EDITABLE_FIELDS: (keyof CaseMetadata)[] = ["name", "solverRuntimeHours", "cfdPressureUncertaintyPct", "cfdTimingUncertaintyUs"];
+const RERUN_ALWAYS_EDITABLE_FIELDS: (keyof CaseMetadata)[] = [
+  "name", "solverRuntimeHours", "cfdPressureUncertaintyPct", "cfdTimingUncertaintyUs",
+  "cfdNetThrustN", "cfdSpecificImpulseS", "cfdPressureGainPct", "cfdInjectorPressureRatio",
+  "cfdBackflowFractionPct", "cfdWallHeatFluxMWm2", "cfdPeakWallTemperatureK", "cfdSustainedDurationS",
+];
 const EXPERIMENT_OWNED_FIELDS: (keyof CaseMetadata)[] = [
   "annulusMeanDiameterMm", "annulusDiameterUncertaintyMm", "probePositionsDeg", "maximumWaveCount", "probeSynchronizationConfirmed",
   "experimentSensorBandwidthKHz", "experimentFilterCutoffKHz", "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS",
   "backPressureBar", "pressureUncertaintyPct", "timingUncertaintyUs",
+  "experimentNetThrustN", "experimentSpecificImpulseS", "experimentPressureGainPct", "experimentInjectorPressureRatio",
+  "experimentBackflowFractionPct", "experimentWallHeatFluxMWm2", "experimentPeakWallTemperatureK", "experimentSustainedDurationS",
 ];
+
+function formatPhysicsValue(value: number | null, unit: string) {
+  if (value === null) return "Not provided";
+  const digits = Math.abs(value) >= 100 ? 1 : Math.abs(value) >= 10 ? 2 : 3;
+  return `${value.toFixed(digits)}${unit ? ` ${unit}` : ""}`;
+}
+
+function clearCfdPhysics(metadata: CaseMetadata) {
+  for (const item of PHYSICS_MEASUREMENT_DEFINITIONS) metadata[item.cfdKey] = Number.NaN as never;
+}
 
 function average(values: number[]) {
   const finite = values.filter(Number.isFinite);
@@ -562,6 +579,8 @@ export default function Home() {
   const correlation = comparisons.length ? average(comparisons.map((item) => item.correlation)) : Number.NaN;
   const nrmse = comparisons.length ? average(comparisons.map((item) => item.nrmse)) : Number.NaN;
   const pressureBias = comparisons.length ? average(comparisons.map((item) => item.pressureBias)) : Number.NaN;
+  const physicsComparisons = activeCase ? buildPhysicsComparison(activeCase.metadata) : [];
+  const physicsProvidedCount = physicsComparisons.filter((row) => row.experiment !== null || row.cfd !== null).length;
   const waveformWithinLimit = correlation >= REVIEW_THRESHOLDS.minimumCorrelation;
   const caseSummaries = useMemo(() => operatingPointRuns.map(summarizeCase), [operatingPointRuns]);
   const baselineSummary = caseSummaries.find((summary) => summary.item.id === caseBaselineId) ?? caseSummaries[0] ?? null;
@@ -692,6 +711,7 @@ export default function Home() {
     setDraftRelationship({ baselineCaseId: baseline.id, referenceCaseId: baseline.id, changedVariable: "other", description: "" });
     const inherited = cloneMetadata(baseline.metadata);
     inherited.name = `${baseline.metadata.name} rerun`;
+    clearCfdPhysics(inherited);
     setDraft(inherited);
     setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
@@ -715,6 +735,7 @@ export default function Home() {
     nextDraft.backPressureBar = point.backPressureBar;
     nextDraft.pressureUncertaintyPct = point.experiment.pressureUncertaintyPct;
     nextDraft.timingUncertaintyUs = point.experiment.timingUncertaintyUs;
+    Object.assign(nextDraft, physicsMetadataValues(point.experiment.physics));
     setActiveDesignId(point.designId);
     setActiveOperatingPointId(point.id);
     setDraftDesignId(point.designId);
@@ -757,6 +778,7 @@ export default function Home() {
         inherited.name = !currentName || currentName === previousDefaultName
           ? `${reference.metadata.name} rerun`
           : current.name;
+        clearCfdPhysics(inherited);
         return inherited;
       });
       setDraftDesignId(reference.designId ?? null);
@@ -799,6 +821,7 @@ export default function Home() {
         inherited.solverRuntimeHours = current.solverRuntimeHours;
         inherited.cfdPressureUncertaintyPct = current.cfdPressureUncertaintyPct;
         inherited.cfdTimingUncertaintyUs = current.cfdTimingUncertaintyUs;
+        for (const item of PHYSICS_MEASUREMENT_DEFINITIONS) inherited[item.cfdKey] = current[item.cfdKey] as never;
         return inherited;
       });
     }
@@ -836,6 +859,11 @@ export default function Home() {
     ];
     const invalidUncertainty = uncertainties.find(([, value]) => !Number.isFinite(value) || value < 0);
     if (invalidUncertainty) return setError(`${invalidUncertainty[0]} must be zero or greater.`);
+    const invalidOptionalPhysics = PHYSICS_MEASUREMENT_DEFINITIONS.find((item) => {
+      const value = draft[item.experimentKey];
+      return typeof value === "number" && Number.isFinite(value) && !item.signed && value < 0;
+    });
+    if (invalidOptionalPhysics) return setError(`${invalidOptionalPhysics.label} must be zero or greater when supplied.`);
     if (!testPending) return setError("Upload and map the synchronized experimental pressure file.");
     if (testPending.signals.length !== draft.probePositionsDeg.length) return setError(`The experiment file contains ${testPending.signals.length} probes, but ${draft.probePositionsDeg.length} probe angles were entered.`);
     if (!draftOperatingPointId || !draftDesignId) return setError("Choose an engine design before adding an operating point.");
@@ -863,6 +891,7 @@ export default function Home() {
           experimentFilterCutoffKHz: draft.experimentFilterCutoffKHz,
           pressureUncertaintyPct: draft.pressureUncertaintyPct,
           timingUncertaintyUs: draft.timingUncertaintyUs,
+          physics: experimentPhysicsFromMetadata(draft),
         },
       };
       setOperatingPoints((current) => [...current, nextPoint]);
@@ -903,6 +932,11 @@ export default function Home() {
     const invalidUncertainty = uncertaintyInputs.find(([, value]) => !Number.isFinite(value) || value < 0);
     if (invalidUncertainty) return setError(`${invalidUncertainty[0]} must be zero or greater.`);
     if (Number.isFinite(draft.solverRuntimeHours) && draft.solverRuntimeHours <= 0) return setError("Runtime must be positive when supplied.");
+    const invalidOptionalPhysics = PHYSICS_MEASUREMENT_DEFINITIONS.find((item) => {
+      const values = [draft[item.experimentKey], draft[item.cfdKey]];
+      return values.some((value) => typeof value === "number" && Number.isFinite(value) && !item.signed && value < 0);
+    });
+    if (invalidOptionalPhysics) return setError(`${invalidOptionalPhysics.label} must be zero or greater when supplied.`);
     const textInputs: Array<[string, string]> = [
       ["Solver", draft.solver], ["Solver version", draft.solverVersion], ["Dimensionality", draft.dimensionality], ["Spatial scheme", draft.spatialScheme],
       ["Numerical flux", draft.numericalFlux], ["Limiter, filter, or dissipation", draft.limiterFilter], ["Temporal scheme", draft.temporalScheme],
@@ -963,6 +997,7 @@ export default function Home() {
             experimentFilterCutoffKHz: draft.experimentFilterCutoffKHz,
             pressureUncertaintyPct: draft.pressureUncertaintyPct,
             timingUncertaintyUs: draft.timingUncertaintyUs,
+            physics: experimentPhysicsFromMetadata(draft),
           },
         };
         setOperatingPoints((current) => current.some((item) => item.id === operatingPointId) ? current.map((item) => item.id === operatingPointId ? nextPoint : item) : [...current, nextPoint]);
@@ -1120,8 +1155,8 @@ export default function Home() {
       analysisVersion: ANALYSIS_VERSION,
       knowledgeBaseVersion: KNOWLEDGE_BASE_VERSION,
       generatedAt: new Date().toISOString(),
-      inputs: { engineDesign, operatingPoint, metadata: activeCase.metadata, relationship: activeCase.relationship ?? null, fileMappings: activeCase.imports ?? null, experimentalSources: activeCase.testSignals.map((signal) => signal.name), cfdSources: activeCase.cfdSignals.map((signal) => signal.name), units: { time: "ms", pressure: "MPa", frequency: "kHz", waveSpeed: "m/s" } },
-      outputs: { experimentMode: testMode, cfdMode, validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, activeCaseOutcome: activeCaseEvidence, decisionQuality, controlledNextRun: planAssessment?.nextRun ?? assessment.nextRun, caseHistoryEvidence, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias, sharedAlignmentLagUs: probeSetComparison?.sharedLagUs, individualLagUs: probeSetComparison?.individualLagUs, alignmentSpreadUs: probeSetComparison?.alignmentSpreadUs } },
+      inputs: { engineDesign, operatingPoint, metadata: activeCase.metadata, experimentPhysics: experimentPhysicsFromMetadata(activeCase.metadata), cfdPhysics: cfdPhysicsFromMetadata(activeCase.metadata), relationship: activeCase.relationship ?? null, fileMappings: activeCase.imports ?? null, experimentalSources: activeCase.testSignals.map((signal) => signal.name), cfdSources: activeCase.cfdSignals.map((signal) => signal.name), units: { time: "ms", pressure: "MPa", frequency: "kHz", waveSpeed: "m/s" } },
+      outputs: { experimentMode: testMode, cfdMode, physicsComparison: buildPhysicsComparison(activeCase.metadata), validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, activeCaseOutcome: activeCaseEvidence, decisionQuality, controlledNextRun: planAssessment?.nextRun ?? assessment.nextRun, caseHistoryEvidence, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias, sharedAlignmentLagUs: probeSetComparison?.sharedLagUs, individualLagUs: probeSetComparison?.individualLagUs, alignmentSpreadUs: probeSetComparison?.alignmentSpreadUs } },
       citedSources: sourcesFor([...new Set(assessment.hypotheses.flatMap((hypothesis) => hypothesis.sourceIds))]),
       methodSources: WAVE_METHOD_SOURCES,
       publishedValidationSources: PUBLISHED_VALIDATION_SOURCES,
@@ -1147,7 +1182,7 @@ export default function Home() {
       predictiveModelState: { operability: "Not fitted", backflow: "Not available", performance: "Not available", thermal: "Not available", explanation: "No predictive output is substituted for a missing validated model." },
       perProbe: comparisons,
       methods: ["shared bounded cross-correlation", "Hann-windowed FFT pressure spectrum", "cycle-by-cycle passage tracking", "sliding-window circumferential phase-mode fit", "uncertainty resolution by RSS", "structured diagnostic rules", "adaptive controlled-rerun outcome classification"],
-      limitations: ["The ranked explanations choose which one-change CFD test to run next; they do not prove causality.", "The support, rejection, and convergence limits are Kythros prototype product rules. They are not probabilities and are not taken from the cited papers.", "Kythros propagates pressure and timing uncertainty only into the scalar outputs that support that calculation.", "Wave-mode inference requires synchronized probes and assumes one dominant rotating mode. Kythros reports ambiguous or simultaneous modes as not identifiable.", "This product version does not assess thermal, performance, combustion, or flowfield agreement."],
+      limitations: ["The ranked explanations choose which one-change CFD test to run next; they do not prove causality.", "The support, rejection, and convergence limits are Kythros prototype product rules. They are not probabilities and are not taken from the cited papers.", "Kythros propagates pressure and timing uncertainty only into the scalar outputs that support that calculation.", "Wave-mode inference requires synchronized probes and assumes one dominant rotating mode. Kythros reports ambiguous or simultaneous modes as not identifiable.", "Optional performance, feed-system, thermal, and duration differences are descriptive until quantity-specific definitions and uncertainty budgets are supplied."],
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
     const link = document.createElement("a"); link.href = url; link.download = "kythros-rde-run-report.json"; link.click(); URL.revokeObjectURL(url);
@@ -1197,7 +1232,7 @@ export default function Home() {
 
   const updateNumber = (key: keyof CaseMetadata, value: string) => setDraft((current) => ({ ...current, [key]: value === "" ? Number.NaN : Number(value) }));
   const updateText = (key: keyof CaseMetadata, value: string) => setDraft((current) => ({ ...current, [key]: value }));
-  const numberValue = (value: number) => Number.isFinite(value) ? value : "";
+  const numberValue = (value: number | undefined) => typeof value === "number" && Number.isFinite(value) ? value : "";
 
   function saveEngineDesign(design: EngineDesign) {
     setDesigns((current) => current.some((item) => item.id === design.id)
@@ -1320,6 +1355,8 @@ export default function Home() {
 
           </>}
 
+          <section className="evidence-panel physics-comparison-panel" aria-label="Engine physics comparison"><div className="evidence-heading"><div><span className="calculated-label">OPTIONAL DOCUMENTED EVIDENCE</span><h2>Performance, feed-system, thermal, and repeatability comparison</h2><p>{physicsProvidedCount ? `${physicsProvidedCount} of ${physicsComparisons.length} quantities have at least one documented value.` : "No optional engine-physics values were provided for this run."} Kythros reports CFD minus experiment only when both values exist; it never infers a missing value.</p></div><button className="button secondary" onClick={openCaseEditor}>Add or edit values</button></div><div className="comparison-table-wrap"><table className="comparison-table physics-comparison-table"><thead><tr><th>Evidence layer</th><th>Quantity</th><th>Experiment</th><th>CFD</th><th>CFD − experiment</th></tr></thead><tbody>{physicsComparisons.map((row) => <tr key={row.key}><td><span className="physics-layer-tag">{row.layer === "feed" ? "Feed system" : row.layer[0].toUpperCase() + row.layer.slice(1)}</span></td><th scope="row">{row.label}</th><td>{formatPhysicsValue(row.experiment, row.unit)}</td><td>{formatPhysicsValue(row.cfd, row.unit)}</td><td className="difference-cell">{row.difference === null ? "Not comparable" : `${row.difference > 0 ? "+" : ""}${formatPhysicsValue(row.difference, row.unit)}`}</td></tr>)}</tbody></table></div><p className="metric-note">These scalar differences are descriptive in this version. They do not automatically pass or fail a CFD run because the required definitions and uncertainty budgets depend on the measurement method.</p><details className="classification-method physics-sources"><summary>Measurement basis and primary experimental sources</summary><div><p>{PHYSICS_SOURCE_LIMITATION}</p><ul>{PHYSICS_EVIDENCE_SOURCES.map((source) => <li key={source.title}><a href={source.url} target="_blank" rel="noreferrer"><strong>{source.title}</strong></a><span>{source.authors} ({source.year}) · {source.contribution}</span></li>)}</ul></div></details></section>
+
           <section className="evidence-panel" aria-label="Calculated signal evidence"><div className="evidence-heading"><div><span className="calculated-label">CALCULATED AFTER CASE ANALYSIS</span><h2>Pressure and wave evidence</h2><p>Every trace, spectrum, propagation phase, and cycle statistic is calculated from the active case.</p></div><div className="control-group"><div className="probe-tabs" aria-label="Probe selection">{activeCase.testSignals.map((_, probe) => <button key={probe} className={activeProbe === probe ? "active" : ""} onClick={() => setActiveProbe(probe)}>P{probe + 1}</button>)}</div><div className="view-tabs" aria-label="Evidence view"><button className={activeView === "signals" ? "active" : ""} onClick={() => setActiveView("signals")}>Pressure</button><button className={activeView === "spectrum" ? "active" : ""} onClick={() => setActiveView("spectrum")}>Spectrum</button><button className={activeView === "residual" ? "active" : ""} onClick={() => setActiveView("residual")}>Residual</button><button className={activeView === "phase" ? "active" : ""} onClick={() => setActiveView("phase")}>Propagation</button><button className={activeView === "cycles" ? "active" : ""} onClick={() => setActiveView("cycles")}>Cycle stability</button></div></div></div><div className="chart-heading"><span>{activeView === "phase" ? `${activeCase.testSignals.length} probes · ${testMode.identifiability.toLowerCase()} experimental mode` : activeView === "cycles" ? `${testMode.cycleSeries.length} experiment cycles · ${cfdMode.cycleSeries.length} CFD cycles` : `Probe P${activeProbe + 1} · ${activeCase.metadata.probePositionsDeg[activeProbe]}° · ${activeComparison.time.length.toLocaleString()} aligned samples`}</span><Legend residual={activeView === "residual"} /></div>{activeView === "signals" && <SignalChart comparison={activeComparison} />}{activeView === "spectrum" && <SpectrumChart comparison={activeComparison} />}{activeView === "residual" && <ResidualChart comparison={activeComparison} />}{activeView === "phase" && <PhaseChart experiment={testMode} simulation={cfdMode} positionsDeg={activeCase.metadata.probePositionsDeg} />}{activeView === "cycles" && <CycleChart experiment={testMode} simulation={cfdMode} />}<div className="wave-summary"><span><b>{probeSetComparison?.sharedLagUs.toFixed(2)} µs</b> shared experiment–CFD alignment</span><span><b>{testMode.identifiability === "Not identifiable" ? "Not identifiable" : `${testMode.waveCount}-wave ${testMode.direction.toLowerCase()}`}</b> experiment · {testMode.identifiability}</span><span><b>{cfdMode.identifiability === "Not identifiable" ? "Not identifiable" : `${cfdMode.waveCount}-wave ${cfdMode.direction.toLowerCase()}`}</b> CFD · {cfdMode.identifiability}</span><span><b>{testMode.identifiability === "Not identifiable" || cfdMode.identifiability === "Not identifiable" ? "Not identifiable" : `${testMode.phaseJitterDeg.toFixed(1)}° / ${cfdMode.phaseJitterDeg.toFixed(1)}°`}</b> phase jitter</span></div>{[...testMode.warnings, ...cfdMode.warnings].length > 0 && <ul className="wave-warnings">{[...new Set([...testMode.warnings, ...cfdMode.warnings])].map((warning) => <li key={warning}>{warning}</li>)}</ul>}</section>
           <footer><span>Kythros v{ANALYSIS_VERSION} · calculated from the saved run data</span><span>{operatingPoints.length} operating point{operatingPoints.length === 1 ? "" : "s"} · {cases.length} run{cases.length === 1 ? "" : "s"} · not a certification or causal proof</span></footer>
         </>}
@@ -1327,7 +1364,7 @@ export default function Home() {
     </section>
 
     {showLoader && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowLoader(false)}><section className="loader-modal" role="dialog" aria-modal="true" aria-labelledby="loader-title" onMouseDown={(event) => event.stopPropagation()}>
-      <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close inputs">×</button><div className="loader-intro"><div><span className="modal-kicker">{measuredPointDraft ? "MEASURED OPERATING POINT" : "CFD COMPARISON RUN"}</span><h2 id="loader-title">{measuredPointDraft ? "Add measured operating point" : reviewingRerun ? "Review one-change rerun" : editingCaseId ? "Edit run" : draftRelationship ? "Add CFD rerun" : "Add baseline CFD comparison"}</h2></div>{!reviewingRerun && !measuredPointDraft && <button className="input-help-button" onClick={() => setShowHelp(true)}>What does each input mean?</button>}</div>{!reviewingRerun && <p>{measuredPointDraft ? "Enter the physical condition and experimental pressure measurements. No CFD setup or result is required here." : "The experiment and physical condition are inherited from the operating point. Add CFD inputs here only for comparison and rerun planning."}</p>}
+      <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close inputs">×</button><div className="loader-intro"><div><span className="modal-kicker">{measuredPointDraft ? "MEASURED OPERATING POINT" : "CFD COMPARISON RUN"}</span><h2 id="loader-title">{measuredPointDraft ? "Add measured operating point" : reviewingRerun ? "Review one-change rerun" : editingCaseId ? "Edit run" : draftRelationship ? "Add CFD rerun" : "Add baseline CFD comparison"}</h2></div>{!reviewingRerun && <button className="input-help-button" onClick={() => setShowHelp(true)}>What does each input mean?</button>}</div>{!reviewingRerun && <p>{measuredPointDraft ? "Enter the physical condition and experimental measurements. Pressure probes define the wave response; optional performance, feed-system, thermal, and duration values add separate evidence layers. No CFD setup or result is required here." : "The experiment and physical condition are inherited from the operating point. Add CFD inputs here only for comparison and rerun planning."}</p>}
 
       {reviewingRerun && draftReferenceCase && draftRelationship && cfdPending ? <section className="rerun-review-step" aria-label="Controlled rerun review">
         <span>Ready to analyze</span>
@@ -1379,6 +1416,13 @@ export default function Home() {
       </div>
 
       <div className="form-section"><h3>Operating point</h3><p className="form-help">{measuredPointDraft ? "Enter the physical test condition. These values define one marker in the measured envelope." : "This physical condition is inherited from the measured operating point and cannot be changed by a CFD run."}</p><div className="form-grid five"><label><span>Inlet / plenum pressure (bar)</span><input disabled={!measuredPointDraft || rerunFieldLocked("inletPressureBar")} type="number" value={numberValue(draft.inletPressureBar)} onChange={(event) => updateNumber("inletPressureBar", event.target.value)} /></label><label><span>Mass flow (kg/s)</span><input disabled={!measuredPointDraft || rerunFieldLocked("massFlowKgS")} type="number" step="0.001" value={numberValue(draft.massFlowKgS)} onChange={(event) => updateNumber("massFlowKgS", event.target.value)} /></label><label><span>Equivalence ratio</span><input disabled={!measuredPointDraft || rerunFieldLocked("equivalenceRatio")} type="number" step="0.01" value={numberValue(draft.equivalenceRatio)} onChange={(event) => updateNumber("equivalenceRatio", event.target.value)} /></label><label><span>Back pressure (bar)</span><input disabled={!measuredPointDraft || rerunFieldLocked("backPressureBar")} type="number" step="0.01" value={numberValue(draft.backPressureBar)} onChange={(event) => updateNumber("backPressureBar", event.target.value)} /></label><label><span>Inlet temperature (K)</span><input disabled={!measuredPointDraft || rerunFieldLocked("inletTemperatureK")} type="number" value={numberValue(draft.inletTemperatureK)} onChange={(event) => updateNumber("inletTemperatureK", event.target.value)} /></label></div></div>
+
+      <div className="form-section"><h3>{measuredPointDraft ? "Optional engine-physics measurements" : "Optional engine-physics comparison"}</h3><p className="form-help">Add only documented measurements or directly calculated solver outputs. Missing values remain unavailable and do not lower the pressure-and-wave result.</p><div className="form-grid four">{PHYSICS_MEASUREMENT_DEFINITIONS.flatMap((item) => {
+        const experimentField = <label key={`experiment-${item.key}`}><span>Experiment {item.label.toLowerCase()}{item.unit ? ` (${item.unit})` : ""} · optional</span><input disabled={!measuredPointDraft || rerunFieldLocked(item.experimentKey)} type="number" step="any" value={numberValue(draft[item.experimentKey] as number | undefined)} onChange={(event) => updateNumber(item.experimentKey, event.target.value)} /></label>;
+        if (measuredPointDraft) return [experimentField];
+        const cfdField = <label key={`cfd-${item.key}`}><span>CFD {item.label.toLowerCase()}{item.unit ? ` (${item.unit})` : ""} · optional</span><input disabled={rerunFieldLocked(item.cfdKey)} type="number" step="any" value={numberValue(draft[item.cfdKey] as number | undefined)} onChange={(event) => updateNumber(item.cfdKey, event.target.value)} /></label>;
+        return [experimentField, cfdField];
+      })}</div></div>
 
       {!measuredPointDraft && <div className="form-section"><h3>Solver + numerical schemes</h3><div className="form-grid four"><label><span>Solver</span><input disabled={rerunFieldLocked("solver")} value={draft.solver} onChange={(event) => updateText("solver", event.target.value)} /></label><label><span>Version</span><input disabled={rerunFieldLocked("solverVersion")} value={draft.solverVersion} onChange={(event) => updateText("solverVersion", event.target.value)} /></label><label><span>Dimensionality</span><select disabled={rerunFieldLocked("dimensionality")} value={draft.dimensionality} onChange={(event) => setDraft((current) => ({ ...current, dimensionality: event.target.value as Dimensionality }))}><option value="">Select</option><option value="2D">2D</option><option value="3D">3D</option></select></label><label><span>Runtime (hours) · optional</span><input disabled={rerunFieldLocked("solverRuntimeHours")} type="number" min="0" step="0.1" value={numberValue(draft.solverRuntimeHours)} onChange={(event) => updateNumber("solverRuntimeHours", event.target.value)} /></label><label><span>Spatial scheme</span><input disabled={rerunFieldLocked("spatialScheme")} value={draft.spatialScheme} onChange={(event) => updateText("spatialScheme", event.target.value)} /></label><label><span>Spatial order</span><input disabled={rerunFieldLocked("spatialOrder")} type="number" value={numberValue(draft.spatialOrder)} onChange={(event) => updateNumber("spatialOrder", event.target.value)} /></label><label><span>Numerical flux</span><input disabled={rerunFieldLocked("numericalFlux")} value={draft.numericalFlux} onChange={(event) => updateText("numericalFlux", event.target.value)} /></label><label><span>Limiter / filter / dissipation</span><input disabled={rerunFieldLocked("limiterFilter")} placeholder="Enter None if unused" value={draft.limiterFilter} onChange={(event) => updateText("limiterFilter", event.target.value)} /></label><label><span>Temporal scheme</span><input disabled={rerunFieldLocked("temporalScheme")} value={draft.temporalScheme} onChange={(event) => updateText("temporalScheme", event.target.value)} /></label><label><span>Temporal order</span><input disabled={rerunFieldLocked("temporalOrder")} type="number" value={numberValue(draft.temporalOrder)} onChange={(event) => updateNumber("temporalOrder", event.target.value)} /></label><label><span>Time step (µs)</span><input disabled={rerunFieldLocked("timeStepUs")} type="number" step="0.001" value={numberValue(draft.timeStepUs)} onChange={(event) => updateNumber("timeStepUs", event.target.value)} /></label><label><span>CFL</span><input disabled={rerunFieldLocked("cfl")} type="number" step="0.01" value={numberValue(draft.cfl)} onChange={(event) => updateNumber("cfl", event.target.value)} /></label></div></div>}
 

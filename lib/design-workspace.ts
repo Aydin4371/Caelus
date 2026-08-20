@@ -1,5 +1,6 @@
 import type { FileImportProvenance } from "./data-import.ts";
 import type { Signal } from "./rde-analysis.ts";
+import type { RdePhysicsMeasurements } from "./caevera-types.ts";
 
 export type RdeApplication = "Rocket" | "Air-breathing";
 
@@ -55,6 +56,9 @@ export type PublishedOperatingPointObservation = {
   airMassFlowKgS: number;
   fuelMassFlowKgS: number;
   limitation: string;
+  waveSpeedMps?: number | null;
+  physics?: Partial<RdePhysicsMeasurements> | null;
+  evidenceNotes?: Partial<Record<"performance" | "feed" | "thermal" | "repeatability", string>>;
 };
 
 export type OperatingPointExperiment = {
@@ -69,6 +73,7 @@ export type OperatingPointExperiment = {
   experimentFilterCutoffKHz: number;
   pressureUncertaintyPct: number;
   timingUncertaintyUs: number;
+  physics?: Partial<RdePhysicsMeasurements> | null;
 };
 
 export type DesignCalculations = {
@@ -133,10 +138,15 @@ export function cloneOperatingPoint(point: OperatingPoint): OperatingPoint {
     ...point,
     experiment: point.experiment ? {
       ...point.experiment,
+      physics: point.experiment.physics ? { ...point.experiment.physics } : point.experiment.physics,
       probePositionsDeg: [...point.experiment.probePositionsDeg],
       signals: point.experiment.signals.map((signal) => ({ ...signal, time: [...signal.time], pressure: [...signal.pressure] })),
     } : point.experiment,
-    publishedObservation: point.publishedObservation ? { ...point.publishedObservation } : point.publishedObservation,
+    publishedObservation: point.publishedObservation ? {
+      ...point.publishedObservation,
+      physics: point.publishedObservation.physics ? { ...point.publishedObservation.physics } : point.publishedObservation.physics,
+      evidenceNotes: point.publishedObservation.evidenceNotes ? { ...point.publishedObservation.evidenceNotes } : point.publishedObservation.evidenceNotes,
+    } : point.publishedObservation,
   };
 }
 
@@ -168,6 +178,11 @@ export function validateOperatingPoint(point: OperatingPoint) {
     if (!(experiment.experimentSensorBandwidthKHz > 0) || !(experiment.experimentFilterCutoffKHz > 0)) issues.push("Experiment bandwidth and filter cutoff must be greater than zero.");
     if (!(experiment.pressureUncertaintyPct >= 0) || !(experiment.timingUncertaintyUs >= 0)) issues.push("Experiment uncertainty values must be zero or greater.");
     if (!Array.isArray(experiment.signals) || experiment.signals.length !== experiment.probePositionsDeg.length) issues.push("Experiment signals must match the saved probe angles.");
+    const physics = experiment.physics;
+    if (physics) {
+      const nonnegative = [physics.netThrustN, physics.specificImpulseS, physics.injectorPressureRatio, physics.backflowFractionPct, physics.wallHeatFluxMWm2, physics.peakWallTemperatureK, physics.sustainedDurationS];
+      if (nonnegative.some((value) => value != null && Number.isFinite(value) && value < 0)) issues.push("Optional engine-physics measurements must be zero or greater, except pressure gain, which may be negative.");
+    }
   }
   return issues;
 }
