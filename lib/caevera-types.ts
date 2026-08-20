@@ -62,6 +62,7 @@ export type CaseMetadata = {
 
 export type AnalysisCase = {
   id: string;
+  designId?: string | null;
   source: "uploaded" | "demo";
   relationship?: CaseRelationship | null;
   metadata: CaseMetadata;
