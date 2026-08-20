@@ -2,7 +2,7 @@
 
 ## Scope
 
-Version 1.6 analyzes matched RDE operating points using at least three
+Version 1.7 analyzes matched RDE operating points using at least three
 synchronized experimental pressure traces and matching CFD virtual probes. It
 asks:
 
@@ -21,7 +21,25 @@ from the entered equivalence ratio, inlet pressure, or mass flow. Marker color,
 wave count, frequency, propagation speed, and stability come from the analyzed
 experimental pressure probes.
 
-Caevera does not interpolate between markers in version 1.6. It also does not
+Version 1.7 adds an engine-design level above the existing case-family level.
+One engine design fixes the propellant pair, annulus, injector, plenum, wall,
+and exhaust definition. It can contain several physical operating points. Each
+operating point may then contain its own baseline plus related one-change CFD
+reruns. Cases without an explicit engine-design assignment remain available in
+Compare and diagnose but are excluded from an operating map.
+
+The design workspace calculates geometry, area, volume, mass flux, and pressure
+ratios directly from entered values. Its nine-point screening plan brackets the
+entered equivalence-ratio, mass-flow, and inlet-pressure ranges. When measured
+points exist, the next planned point is the untested point farthest from the
+loaded observations in normalized operating-condition space. This is a
+coverage calculation, not an active-learning model or predicted optimum.
+A planned point counts as covered when its normalized Euclidean distance from
+a loaded operating point is at most 0.03 after equivalence ratio, mass flow,
+and inlet pressure are each scaled by the entered design range. This tolerance
+is used only to track plan coverage; it does not merge or alter analyzed cases.
+
+Caevera does not interpolate between markers in version 1.7. It also does not
 infer injector backflow from annulus pressure traces. Backflow requires an
 explicit injector or plenum reverse-flow channel and a separately validated
 calculation. The interface reports these limitations instead of substituting a
