@@ -554,10 +554,10 @@ const INPUT_HELP_DETAILS = {
     "format": "Seconds of physical simulated time after startup transients.", "requirement": "Optional", "obtainFrom": "CFD time history and run log.", "usedFor": "Shows whether simulation covers the experimental sustained window.", "missingEffect": "Duration coverage is not compared."
   },
   "experimentWallFieldCsv": {
-    "format": "CSV/TSV with axial position, circumferential angle, and at least one heat-flux or wall-temperature column.", "requirement": "Optional", "obtainFrom": "Calibrated heat-flux sensors, infrared/thermocouple reconstruction, or another documented spatial thermal diagnostic.", "usedFor": "Plots measured locations on an unwrapped annulus wall without spatial interpolation.", "missingEffect": "No experimental thermal map is displayed; any scalar peak remains a scalar only."
+    "format": "CSV/TSV with axial position, circumferential angle, and at least one heat-flux or wall-temperature column.", "requirement": "Optional", "obtainFrom": "Calibrated heat-flux sensors, infrared/thermocouple reconstruction, or another documented spatial thermal diagnostic.", "usedFor": "Projects measured locations onto the physical annular chamber and preserves their exact coordinates in an unwrapped wall map.", "missingEffect": "No experimental thermal field is displayed; any scalar peak remains a scalar only."
   },
   "cfdWallFieldCsv": {
-    "format": "CSV/TSV with axial position, circumferential angle, and wall heat flux or temperature using matched units and coordinates.", "requirement": "Optional", "obtainFrom": "CFD wall-surface export after applying the documented averaging window.", "usedFor": "Displays the CFD wall field beside measured locations for spatial comparison.", "missingEffect": "No CFD thermal map is displayed; Kythros does not invent a field from a peak value."
+    "format": "CSV/TSV with axial position, circumferential angle, and wall heat flux or temperature using matched units and coordinates.", "requirement": "Optional", "obtainFrom": "CFD wall-surface export after applying the documented averaging window.", "usedFor": "Projects the CFD wall field onto the same physical chamber and exact unwrapped coordinates used by the experiment.", "missingEffect": "No CFD thermal field is displayed; Kythros does not invent a field from a peak value."
   }
 } satisfies Record<CaseInputHelpKey, InputHelpDetails>;
 

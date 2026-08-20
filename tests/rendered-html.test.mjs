@@ -53,6 +53,7 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const envelope = await readFile(new URL("../components/operating-envelope.tsx", import.meta.url), "utf8");
   const design = await readFile(new URL("../components/design-planner.tsx", import.meta.url), "utf8");
+  const physicsVisual = await readFile(new URL("../components/rde-physics-visual.tsx", import.meta.url), "utf8");
   const logic = await readFile(new URL("../lib/operating-envelope.ts", import.meta.url), "utf8");
   assert.match(page, /productView/);
   assert.match(page, /<DesignPlanner designs=\{designs\}/);
@@ -83,6 +84,11 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(logic, /stablePointCount/);
   assert.match(envelope, /How a recommendation becomes trusted/);
   assert.match(design, /RDE geometry/);
+  assert.match(design, /<RdeGeometrySchematic design=\{activeDesign\}/);
+  assert.doesNotMatch(physicsVisual, /<RdeGeometrySchematic design=\{design\}/);
+  assert.match(physicsVisual, /PHYSICAL ANNULUS WALL/);
+  assert.match(physicsVisual, /Show exact circumferential angle × axial position maps/);
+  assert.match(physicsVisual, /full engine definition stays in Design &amp; Plan/);
 });
 
 test("ships an installable Kythros app manifest and service worker", async () => {
