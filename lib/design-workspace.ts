@@ -1,3 +1,6 @@
+import type { FileImportProvenance } from "./data-import.ts";
+import type { Signal } from "./rde-analysis.ts";
+
 export type RdeApplication = "Rocket" | "Air-breathing";
 
 export type EngineDesign = {
@@ -37,6 +40,21 @@ export type OperatingPoint = {
   equivalenceRatio: number;
   massFlowKgS: number;
   backPressureBar: number;
+  experiment?: OperatingPointExperiment | null;
+};
+
+export type OperatingPointExperiment = {
+  signals: Signal[];
+  importProvenance?: FileImportProvenance | null;
+  annulusMeanDiameterMm: number;
+  annulusDiameterUncertaintyMm: number;
+  probePositionsDeg: number[];
+  maximumWaveCount: number;
+  probeSynchronizationConfirmed: boolean;
+  experimentSensorBandwidthKHz: number;
+  experimentFilterCutoffKHz: number;
+  pressureUncertaintyPct: number;
+  timingUncertaintyUs: number;
 };
 
 export type DesignCalculations = {
@@ -96,7 +114,14 @@ export function cloneEngineDesign(design: EngineDesign): EngineDesign {
 }
 
 export function cloneOperatingPoint(point: OperatingPoint): OperatingPoint {
-  return { ...point };
+  return {
+    ...point,
+    experiment: point.experiment ? {
+      ...point.experiment,
+      probePositionsDeg: [...point.experiment.probePositionsDeg],
+      signals: point.experiment.signals.map((signal) => ({ ...signal, time: [...signal.time], pressure: [...signal.pressure] })),
+    } : point.experiment,
+  };
 }
 
 export function validateOperatingPoint(point: OperatingPoint) {
@@ -111,6 +136,17 @@ export function validateOperatingPoint(point: OperatingPoint) {
   if (!(point.massFlowKgS > 0)) issues.push("Mass flow must be greater than zero.");
   if (!(point.backPressureBar > 0)) issues.push("Back pressure must be greater than zero.");
   if (Number.isFinite(point.inletPressureBar) && Number.isFinite(point.backPressureBar) && point.inletPressureBar <= point.backPressureBar) issues.push("Inlet pressure must exceed back pressure.");
+  if (point.experiment) {
+    const experiment = point.experiment;
+    if (!(experiment.annulusMeanDiameterMm > 0)) issues.push("Experiment annulus mean diameter must be greater than zero.");
+    if (!(experiment.annulusDiameterUncertaintyMm >= 0)) issues.push("Experiment diameter uncertainty must be zero or greater.");
+    if (!Array.isArray(experiment.probePositionsDeg) || experiment.probePositionsDeg.length < 3 || experiment.probePositionsDeg.some((value) => !Number.isFinite(value))) issues.push("Experiment requires at least three valid probe angles.");
+    if (!Number.isInteger(experiment.maximumWaveCount) || experiment.maximumWaveCount < 1 || experiment.maximumWaveCount > 12) issues.push("Experiment maximum wave count must be an integer from 1 to 12.");
+    if (!experiment.probeSynchronizationConfirmed) issues.push("Experiment probe synchronization must be confirmed.");
+    if (!(experiment.experimentSensorBandwidthKHz > 0) || !(experiment.experimentFilterCutoffKHz > 0)) issues.push("Experiment bandwidth and filter cutoff must be greater than zero.");
+    if (!(experiment.pressureUncertaintyPct >= 0) || !(experiment.timingUncertaintyUs >= 0)) issues.push("Experiment uncertainty values must be zero or greater.");
+    if (!Array.isArray(experiment.signals) || experiment.signals.length !== experiment.probePositionsDeg.length) issues.push("Experiment signals must match the saved probe angles.");
+  }
   return issues;
 }
 

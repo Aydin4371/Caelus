@@ -82,8 +82,40 @@ test("does not convert an observed map into an unvalidated prediction", () => {
   const baseline: AnalysisCase = { id: "physical", designId: "design", operatingPointId: point.id, source: "uploaded", relationship: null, metadata: metadata("Physical point"), testSignals: demo.test, cfdSignals: demo.cfd };
   const result = buildEnvelopeDataset([point], [baseline]);
   assert.equal(result.status, "Measured envelope");
-  assert.match(result.nextRequirement, /mesh or time-step sequence/i);
-  assert.equal(result.points[0].modelUse, "Needs numerical convergence");
+  assert.match(result.nextRequirement, /more measured operating points/i);
+  assert.equal(result.points[0].modelUse, "Eligible observation");
+});
+
+test("builds a measured envelope point from experiment data without requiring CFD", () => {
+  const demo = makeDemoProbeSignals();
+  const point: OperatingPoint = {
+    id: "experiment-only",
+    designId: "design",
+    name: "Experiment only",
+    source: "uploaded",
+    inletPressureBar: 8,
+    inletTemperatureK: 300,
+    equivalenceRatio: 1,
+    massFlowKgS: 0.62,
+    backPressureBar: 1,
+    experiment: {
+      signals: demo.test,
+      annulusMeanDiameterMm: 82,
+      annulusDiameterUncertaintyMm: 0.1,
+      probePositionsDeg: demo.positionsDeg,
+      maximumWaveCount: 4,
+      probeSynchronizationConfirmed: true,
+      experimentSensorBandwidthKHz: 100,
+      experimentFilterCutoffKHz: 80,
+      pressureUncertaintyPct: 1.5,
+      timingUncertaintyUs: 0.5,
+    },
+  };
+  const result = buildEnvelopeDataset([point], []);
+  assert.equal(result.points.length, 1);
+  assert.equal(result.points[0].evidenceType, "Experiment only");
+  assert.equal(result.points[0].runCount, 0);
+  assert.equal(result.points[0].modelUse, "Eligible observation");
 });
 
 test("gates the exploratory envelope model and leaves unsupported space blank", () => {
@@ -94,7 +126,7 @@ test("gates the exploratory envelope model and leaves unsupported space blank", 
   const design = { ...EMPTY_ENGINE_DESIGN, id: "design", name: "Model test", annulusInnerDiameterMm: 78, annulusOuterDiameterMm: 86, chamberLengthMm: 120, injectorCount: 120, injectorDiameterMm: 0.8, plenumVolumeCm3: 300, equivalenceRatioMin: 0.9, equivalenceRatioMax: 1.1, massFlowKgSMin: 0.5, massFlowKgSMax: 0.7, inletPressureBarMin: 6, inletPressureBarMax: 10, inletTemperatureK: 300, backPressureBar: 1 };
   const blocked = fitEnvelopeModel([seed], design);
   assert.equal(blocked.status, "Blocked");
-  assert.match(blocked.reason, new RegExp(`0 of ${ENVELOPE_MODEL_MINIMUM_POINTS}`));
+  assert.match(blocked.reason, new RegExp(`1 of ${ENVELOPE_MODEL_MINIMUM_POINTS}`));
 
   const points = Array.from({ length: ENVELOPE_MODEL_MINIMUM_POINTS }, (_, index) => ({
     ...seed,

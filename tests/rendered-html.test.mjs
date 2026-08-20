@@ -68,7 +68,9 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(design, /It is not an operability prediction/);
   assert.match(design, /No interpolation, performance, backflow, or thermal prediction/);
   assert.match(logic, /allRuns\.filter\(\(run\) => run\.operatingPointId === operatingPoint\.id\)/);
-  assert.match(logic, /evidenceType: "Experiment \+ CFD"/);
+  assert.match(logic, /evidenceType: baseline \? "Experiment \+ CFD" : "Experiment only"/);
+  assert.match(page, /No CFD setup or result is required here/);
+  assert.match(page, /!measuredPointDraft && <div className="form-section"><h3>Solver \+ numerical schemes/);
   assert.match(logic, /stablePointCount/);
 });
 
@@ -161,7 +163,7 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /chooseCaseFamily/);
   assert.match(page, /inheritStartingCase/);
   assert.match(page, /EXPERIMENT REUSED/);
-  assert.match(page, /Upload and map only the new CFD result/);
+  assert.match(page, /Upload and map the CFD result for this comparison/);
   assert.match(page, /rerunFieldLocked/);
   assert.match(page, /chooseChangedVariable/);
   assert.match(page, /Review rerun →/);

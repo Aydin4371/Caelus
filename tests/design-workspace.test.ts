@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { EMPTY_ENGINE_DESIGN, buildScreeningPlan, calculateDesign, selectCoverageNextPoint, validateEngineDesign, type OperatingPoint } from "../lib/design-workspace.ts";
 import { deserializeWorkspace, serializeWorkspace } from "../lib/workspace.ts";
+import { makeDemoProbeSignals } from "../lib/rde-analysis.ts";
 
 const design = {
   ...EMPTY_ENGINE_DESIGN,
@@ -65,4 +66,36 @@ test("saves engine designs without saving generated recommendations", () => {
   const restored = deserializeWorkspace(text);
   assert.equal(restored.designs[0].name, design.name);
   assert.equal(restored.activeDesignId, design.id);
+});
+
+test("saves a measured operating point before any CFD run exists", () => {
+  const demo = makeDemoProbeSignals();
+  const point: OperatingPoint = {
+    id: "measured-only",
+    designId: design.id,
+    name: "Measured only",
+    source: "uploaded",
+    inletPressureBar: 8,
+    inletTemperatureK: 300,
+    equivalenceRatio: 1,
+    massFlowKgS: 0.6,
+    backPressureBar: 1,
+    experiment: {
+      signals: demo.test,
+      annulusMeanDiameterMm: 82,
+      annulusDiameterUncertaintyMm: 0.1,
+      probePositionsDeg: demo.positionsDeg,
+      maximumWaveCount: 4,
+      probeSynchronizationConfirmed: true,
+      experimentSensorBandwidthKHz: 100,
+      experimentFilterCutoffKHz: 80,
+      pressureUncertaintyPct: 1.5,
+      timingUncertaintyUs: 0.5,
+    },
+  };
+  const text = serializeWorkspace({ cases: [], activeCaseId: null, baselineCaseId: null, designs: [design], activeDesignId: design.id, operatingPoints: [point], activeOperatingPointId: point.id });
+  const restored = deserializeWorkspace(text);
+  assert.equal(restored.cases.length, 0);
+  assert.equal(restored.operatingPoints[0].experiment?.signals.length, demo.test.length);
+  assert.equal(restored.activeOperatingPointId, point.id);
 });
