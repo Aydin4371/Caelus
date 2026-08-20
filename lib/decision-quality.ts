@@ -96,8 +96,8 @@ export function buildDecisionQuality(input: DecisionQualityInput): DecisionQuali
       status: input.uploadedPrecedentCount > 0 ? "passed" : "not-yet",
       statusLabel: input.uploadedPrecedentCount > 0 ? "Available" : "Not available",
       result: input.uploadedPrecedentCount > 0
-        ? `${input.uploadedPrecedentCount} comparable user-provided one-change rerun${input.uploadedPrecedentCount === 1 ? "" : "s"} from another case family met the same decision rule.`
-        : "No comparable user-provided rerun from another case family has confirmed this decision.",
+        ? `${input.uploadedPrecedentCount} comparable user-provided one-change rerun${input.uploadedPrecedentCount === 1 ? "" : "s"} from another operating point met the same decision rule.`
+        : "No comparable user-provided rerun from another operating point has confirmed this decision.",
     },
   ];
 
@@ -132,12 +132,12 @@ export function buildDecisionQuality(input: DecisionQualityInput): DecisionQuali
   if (["effect-confirmed", "converged", "rejected"].includes(input.controlledResultStatus ?? "")) {
     return input.uploadedPrecedentCount > 0 ? {
       label: "Ready for engineering review",
-      explanation: "This case produced a classified controlled result, and another case family independently met the same rule.",
+      explanation: "This operating point produced a classified controlled result, and another operating point independently met the same rule.",
       sourceLabel,
       gates,
     } : {
       label: "Supported by this case",
-      explanation: "This case produced a classified controlled result. Another case family has not independently repeated it.",
+      explanation: "This operating point produced a classified controlled result. Another operating point has not independently repeated it.",
       sourceLabel,
       gates,
     };

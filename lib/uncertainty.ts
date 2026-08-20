@@ -37,7 +37,7 @@ export function assessResolvedDifference(
       combined: null,
       status: "inconclusive",
       label: "Uncertainty incomplete",
-      explanation: "Caevera can report the difference, but it needs both the experiment and CFD uncertainty values to decide whether that difference is meaningful.",
+      explanation: "Kythros can report the difference, but it needs both the experiment and CFD uncertainty values to decide whether that difference is meaningful.",
     };
   }
   const combined = rss(experimentUncertainty, cfdUncertainty);
@@ -47,7 +47,7 @@ export function assessResolvedDifference(
         combined,
         status: "resolved-mismatch",
         label: "Resolved mismatch",
-        explanation: "The absolute CFD-to-experiment difference is larger than the combined one-standard-uncertainty estimate, so Caevera treats it as a resolved mismatch.",
+        explanation: "The absolute CFD-to-experiment difference is larger than the combined one-standard-uncertainty estimate, so Kythros treats it as a resolved mismatch.",
       }
     : {
         combined,

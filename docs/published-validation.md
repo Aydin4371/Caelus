@@ -1,6 +1,6 @@
 # Published pressure/wave validation cases
 
-Caevera separates calculation validation from complete experiment–CFD validation.
+Kythros separates calculation validation from complete experiment–CFD validation.
 
 ## Automated tabulated benchmarks
 
@@ -61,7 +61,7 @@ The committed JSON files are protected by SHA-256 values in
 channel unit, so these fixtures validate frequency and mode ambiguity, not MPa
 amplitude. CE2029 does not validate a full three-wave reconstruction because
 the published pressure geometry has only four unique circumferential angles;
-it validates the more conservative requirement that Caevera not force one
+it validates the more conservative requirement that Kythros not force one
 identified rotating mode from a strong multi-component spectrum.
 
 ## Current claim boundary

@@ -1,8 +1,8 @@
-# Caevera RDE methodology
+# Kythros RDE methodology
 
 ## Scope
 
-Version 1.7 analyzes matched RDE operating points using at least three
+Version 2.0 analyzes matched RDE operating points using at least three
 synchronized experimental pressure traces and matching CFD virtual probes. It
 asks:
 
@@ -13,20 +13,22 @@ asks:
 It does not validate the complete engine or prove that a ranked hypothesis
 caused a discrepancy.
 
-The Operating envelope tab is currently an observed-data workspace, not a
-surrogate model. One baseline case produces one physical marker. Related mesh,
+The Operating Envelope always presents measured observations first. One
+operating point produces one physical marker. Related mesh,
 time-step, chemistry, boundary, or initialization reruns remain evidence for
 that marker and do not create new operating conditions. Marker position comes
 from the entered equivalence ratio, inlet pressure, or mass flow. Marker color,
 wave count, frequency, propagation speed, and stability come from the analyzed
 experimental pressure probes.
 
-Version 1.7 adds an engine-design level above the existing case-family level.
+Version 2.0 uses an explicit three-level hierarchy.
 One engine design fixes the propellant pair, annulus, injector, plenum, wall,
 and exhaust definition. It can contain several physical operating points. Each
 operating point may then contain its own baseline plus related one-change CFD
-reruns. Cases without an explicit engine-design assignment remain available in
-Compare and diagnose but are excluded from an operating map.
+reruns. Each saved run references exactly one operating point, and each
+operating point references exactly one engine design. Older saved workspaces
+are migrated into this hierarchy when the physical condition can be recovered
+from the baseline.
 
 The design workspace calculates geometry, area, volume, mass flux, and pressure
 ratios directly from entered values. Its nine-point screening plan brackets the
@@ -39,11 +41,15 @@ a loaded operating point is at most 0.03 after equivalence ratio, mass flow,
 and inlet pressure are each scaled by the entered design range. This tolerance
 is used only to track plan coverage; it does not merge or alter analyzed cases.
 
-Caevera does not interpolate between markers in version 1.7. It also does not
-infer injector backflow from annulus pressure traces. Backflow requires an
-explicit injector or plenum reverse-flow channel and a separately validated
-calculation. The interface reports these limitations instead of substituting a
-synthetic prediction.
+Kythros does not draw a boundary until the exploratory-model gates pass. The
+gate requires at least 12 real, signal-ready, numerically converged observations, at least two
+measured stability classes, and at least 55% leave-one-out accuracy. The local
+kernel model then requires at least three nearby observations for an individual
+prediction. Unsupported space remains blank, and displayed color fades with
+uncertainty. The next-test recommendation searches only supported space for a
+high-uncertainty class boundary. Kythros still does not infer injector backflow
+from annulus pressure traces; that requires an explicit reverse-flow channel
+and a separately validated calculation.
 
 ## Required assumptions
 
@@ -62,7 +68,7 @@ mode. Equal spacing can make wave count and direction aliases indistinguishable.
 
 ## 1. Comparison validity
 
-Before interpreting CFD error, Caevera checks:
+Before interpreting CFD error, Kythros checks:
 
 1. explicit confirmation that geometry, operating point, coordinates, and
    evidence window match;
@@ -76,7 +82,7 @@ continuing as if the comparison were definitive.
 
 ## 2. Data quality
 
-For each trace, Caevera reports sample count, duration, sample rate, samples per
+For each trace, Kythros reports sample count, duration, sample rate, samples per
 dominant cycle, captured cycles, interval variation, detected gaps, dropped
 source rows, and possible clipping plateaus.
 
@@ -84,14 +90,14 @@ Current review rules flag fewer than five captured cycles, fewer than twenty
 samples per cycle, sample-interval variation above 1%, acquisition gaps,
 dropped nonnumeric rows, or three or more consecutive identical samples.
 
-Caevera also compares Nyquist frequency, sensor bandwidth, and filter cutoff
+Kythros also compares Nyquist frequency, sensor bandwidth, and filter cutoff
 with the passage-frequency harmonic bands used by the pressure metrics. These
 are explicit method checks. Passing them does not establish a complete sensor
 transfer function or eliminate measurement bias.
 
 ## 3. Common time base and bounded alignment
 
-Caevera first estimates bounded correlation lags for every matching probe pair,
+Kythros first estimates bounded correlation lags for every matching probe pair,
 then uses the median as one shared experiment-to-CFD lag for the entire probe
 array. Every pair is recomputed using that shared lag. This prevents independent
 per-probe alignment from removing a real circumferential phase mismatch. Each
@@ -127,7 +133,7 @@ The sinusoidal-equivalent oscillation amplitude is
 A=\sqrt{2}\,\mathrm{RMS}(p-\bar p).
 \]
 
-Rising mean crossings define pressure cycles. Caevera calculates:
+Rising mean crossings define pressure cycles. Kythros calculates:
 
 - mean peak pressure across complete cycles;
 - mean positive pressure impulse per cycle,
@@ -142,7 +148,7 @@ normalized RMSE, correlation, and mean pressure bias.
 ## 5. Rotating-mode inference
 
 The passage frequency is the median dominant FFT frequency across probes. At
-that frequency, Caevera calculates Hann-windowed complex phase \(\phi_i\) at
+that frequency, Kythros calculates Hann-windowed complex phase \(\phi_i\) at
 every probe position \(\theta_i\).
 
 For candidate wave count \(m\in\{1,\ldots,m_{max}\}\), where the user supplies
@@ -153,7 +159,7 @@ the physically plausible maximum, and direction sign
 \Delta\phi_i^{pred}=s\,m\,(\theta_i-\theta_1).
 \]
 
-The candidate with the smallest RMS wrapped phase error is selected. Caevera
+The candidate with the smallest RMS wrapped phase error is selected. Kythros
 also reports the next candidate and classifies the result as **Identified**,
 **Candidate**, or **Not identifiable** using phase residual, separation from the
 runner-up, probe count, synchronization, and window-to-window mode consistency.
@@ -194,7 +200,7 @@ fits; it is not uniquely decomposed by this release.
 ## 7. Uncertainty-aware difference states
 
 For an experiment value \(x_t\), CFD value \(x_c\), and corresponding standard
-uncertainties \(u_t\) and \(u_c\), Caevera uses
+uncertainties \(u_t\) and \(u_c\), Kythros uses
 
 \[
 u_{comb}=\sqrt{u_t^2+u_c^2}.
@@ -257,7 +263,7 @@ The result prioritizes a sensitivity experiment. It is not causal inference.
 
 ## 9. Evidence-state diagnosis and case history
 
-Caevera does not assign a numeric confidence or cause score. Each diagnostic
+Kythros does not assign a numeric confidence or cause score. Each diagnostic
 observation is recorded as `supports`, `weakens`, `unknown`, or
 `cannot-assess`, with a strength and basis (`case`, `case-history`, or
 `literature`). A computed policy requirement may also appear with basis
@@ -278,13 +284,13 @@ method; they never raise the recommendation status for an analyzed case.
 Every uploaded item is a case. A related case identifies a case-family baseline,
 the exact starting case whose settings it inherited, and one changed CFD
 variable group. The relationship is used as diagnostic evidence only when
-Caevera verifies the same geometry, operating point, probe layout, every
+Kythros verifies the same geometry, operating point, probe layout, every
 experimental trace sample, and exactly one changed CFD group relative to that
 starting case. Otherwise the item remains a comparison only.
 
 For a new related rerun, the interface copies the selected starting case's
 complete metadata and reuses its exact experiment samples. The user supplies
-the declared CFD-setting change and the new CFD result. Caevera still verifies
+the declared CFD-setting change and the new CFD result. Kythros still verifies
 the saved data rather than trusting the selection. If verification fails, the
 case remains comparison-only and the evidence record lists each changed
 physical input, experiment-sample difference, missing declared setting change,
@@ -320,9 +326,9 @@ requires a controlled rerun whose result supports or weakens the hypothesis.
 Each displayed research claim stores its own source IDs and applicability
 boundary. Sources are mapped only to claims they directly support. A diagnostic
 branch with no directly applicable reviewed source is visibly labeled as a
-prototype policy; Caevera does not borrow a citation from an adjacent topic.
+prototype policy; Kythros does not borrow a citation from an adjacent topic.
 
-The pressure files contain time and pressure values only. Caevera creates the
+The pressure files contain time and pressure values only. Kythros creates the
 evidence findings after it analyzes the active case and its verified
 one-change reruns. In the interface, "supports" means a calculated finding is
 consistent with the explanation, "contradicts" means a calculated finding
@@ -331,7 +337,7 @@ classification can be made. A zero count means no analyzed finding was placed
 in that category. It never means that a contradictory CSV column was expected
 or missing.
 
-For a verified one-variable rerun, Caevera evaluates the metrics predicted to
+For a verified one-variable rerun, Kythros evaluates the metrics predicted to
 respond to that variable:
 
 | Changed CFD group | Targeted outputs | Decision rule |
@@ -345,7 +351,7 @@ respond to that variable:
 | Measured unsteady forcing | Cycle variability, frequency drift, phase jitter | 2% minimum response |
 
 Numerical refinements and model sensitivities use different decision paths.
-For mesh and flow-time-step refinement, Caevera compares targeted CFD outputs
+For mesh and flow-time-step refinement, Kythros compares targeted CFD outputs
 between adjacent levels. A change at or below 2% completes that numerical
 sequence; a change above 2% means the solution remains sensitive and another
 level is required. Experimental agreement is reported separately. Improvement,
@@ -364,13 +370,13 @@ discrepancy.
 The displayed next-run title, question, change, fixed inputs, target outputs,
 and outcome criteria are assembled from structured fields: the selected
 variable, current case setting, target metric IDs, calculated observations,
-case-history state, and versioned policy values. Caevera does not select a
+case-history state, and versioned policy values. Kythros does not select a
 stored paragraph for a named cause. Static interface labels remain fixed, but
 the decision content is generated from the analyzed case state.
 
 ## 10. Comparable-case intelligence
 
-Caevera aggregates completed controlled reruns across the open workspace when
+Kythros aggregates completed controlled reruns across the open workspace when
 they share the selected cause and overlap the active mismatch signature. The
 active case family is excluded from this pool because its reruns are already
 used as direct case-history evidence and are not independent precedent. The
@@ -395,7 +401,7 @@ demonstration; no percentage confidence is shown because the prototype has not
 been calibrated against a sufficiently large independent case set.
 
 No precedent result is embedded in the application or saved as a derived
-workspace output. On every render, Caevera recalculates baseline and rerun
+workspace output. On every render, Kythros recalculates baseline and rerun
 metrics from the stored experiment and CFD pressure arrays, verifies the
 one-variable relationship from entered metadata, classifies the result, and
 then aggregates it. Runtime multipliers use only user-entered solver hours.
@@ -409,7 +415,7 @@ configuration-specific; they are not calibrated probabilities. Synthetic demo
 cases are labeled as demonstrations and are excluded from precedent used for an
 uploaded case. The generated demo contains signal arrays and model-card inputs,
 but its metrics and recommendations pass through the same analysis pipeline as
-uploaded files. Caevera never substitutes invented historical counts for
+uploaded files. Kythros never substitutes invented historical counts for
 missing case history.
 
 ## 11. Coverage and traceable report
@@ -440,7 +446,7 @@ analysis methods.
 
 A stronger release should pre-register tolerances, use paired public or
 partner-laboratory data, withhold operating points from method development, and
-compare Caevera recommendations with expert assessments. It should report
+compare Kythros recommendations with expert assessments. It should report
 sensitivity to sample rate, window length, noise, missing samples, timing error,
 probe placement, sensor response, mesh refinement, and time-step refinement.
 
@@ -492,7 +498,7 @@ criteria.
 
 ## 15. Workspace persistence
 
-A Caevera workspace is versioned JSON containing raw mapped signals, file
+A Kythros workspace is versioned JSON containing raw mapped signals, file
 provenance, probe geometry, model-card inputs, uncertainty, and related-case
 links. Non-finite optional values use an explicit tagged representation rather
 than silently becoming JSON null. Opening a workspace validates every signal,

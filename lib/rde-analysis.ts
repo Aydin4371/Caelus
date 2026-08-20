@@ -69,7 +69,7 @@ export type DataQualityResult = {
   findings: string[];
 };
 
-export const ANALYSIS_VERSION = "1.7.0";
+export const ANALYSIS_VERSION = "2.0.0";
 
 export const REVIEW_THRESHOLDS = {
   minimumCorrelation: 0.7,
@@ -730,7 +730,7 @@ export function parseProbeCsv(text: string, name: string): Signal[] {
 export function serializeReport(result: Comparison, sources: { test: string; cfd: string }) {
   return JSON.stringify(
     {
-      schema: "caevera-rde-comparison-report",
+      schema: "kythros-rde-comparison-report",
       analysisVersion: ANALYSIS_VERSION,
       generatedAt: new Date().toISOString(),
       sources,

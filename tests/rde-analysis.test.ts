@@ -59,6 +59,7 @@ const DEMO_METADATA: CaseMetadata = {
   experimentSensorBandwidthKHz: 100,
   experimentFilterCutoffKHz: 80,
   inletPressureBar: 8,
+  backPressureBar: 1,
   inletTemperatureK: 300,
   equivalenceRatio: 1,
   massFlowKgS: 0.62,
@@ -706,7 +707,7 @@ test("case input guide documents every model-card field", () => {
 test("serialized report exposes cycle metrics, data quality, provenance, and limitations", () => {
   const result = compareSignals(sineSignal({ name: "test" }), sineSignal({ name: "cfd", bias: 1.55 }));
   const report = JSON.parse(serializeReport(result, { test: "test.csv", cfd: "cfd.csv" }));
-  assert.equal(report.schema, "caevera-rde-comparison-report");
+  assert.equal(report.schema, "kythros-rde-comparison-report");
   assert.equal(report.sources.test, "test.csv");
   assert.equal(report.units.pressure, "MPa");
   close(report.metrics.pressureBias, 0.05, 1e-12, "pressure bias");
@@ -792,7 +793,7 @@ test("complete workspaces round-trip raw signals, mappings, links, and non-finit
     droppedRows: 0,
   };
   const item: AnalysisCase = { id: "saved-case", source: "uploaded", relationship: null, metadata, testSignals: demo.test, cfdSignals: demo.cfd, imports: { experiment: provenance, cfd: { ...provenance, fileName: "cfd.csv" } } };
-  const serialized = serializeWorkspace({ cases: [item], activeCaseId: item.id, baselineCaseId: item.id, designs: [], activeDesignId: null });
+  const serialized = serializeWorkspace({ cases: [item], activeCaseId: item.id, baselineCaseId: item.id, designs: [], activeDesignId: null, operatingPoints: [], activeOperatingPointId: null });
   assert.match(serialized, new RegExp(WORKSPACE_SCHEMA));
   assert.doesNotMatch(serialized, /controlledNextRun|metricImprovements|confirmedCount/, "workspaces store inputs, not pre-generated analytical conclusions");
   const restored = deserializeWorkspace(serialized);
@@ -804,7 +805,7 @@ test("complete workspaces round-trip raw signals, mappings, links, and non-finit
   const legacyEnvelope = JSON.parse(serialized);
   delete legacyEnvelope.state.cases[0].metadata.solverRuntimeHours;
   assert.ok(Number.isNaN(deserializeWorkspace(JSON.stringify(legacyEnvelope)).cases[0].metadata.solverRuntimeHours));
-  assert.throws(() => deserializeWorkspace('{"schema":"other"}'), /not a Caevera/i);
+  assert.throws(() => deserializeWorkspace('{"schema":"other"}'), /not a Kythros/i);
 });
 
 test("published RDE wave-speed values are reproduced without treating them as paired CFD validation", () => {

@@ -26,7 +26,7 @@ export const PUBLISHED_VALIDATION_SOURCES = {
     doi: "10.5281/zenodo.18886925",
     url: "https://doi.org/10.5281/zenodo.18886925",
     validationUse: "Three traceable 4,096-sample fixtures extracted from the published pressure records are mandatory regression tests for ambiguous and multi-component wave modes.",
-    limitation: "The archive contains experiment data only. CE2029 also has repeated circumferential probe angles, leaving four unique azimuths for phase analysis. These fixtures test whether Caevera reports such modes conservatively; they are not independent case-family evidence and cannot validate an experiment-CFD recommendation.",
+    limitation: "The archive contains experiment data only. CE2029 also has repeated circumferential probe angles, leaving four unique azimuths for phase analysis. These fixtures test whether Kythros reports such modes conservatively; they are not independent case-family evidence and cannot validate an experiment-CFD recommendation.",
   },
 } as const;
 

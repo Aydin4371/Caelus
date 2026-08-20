@@ -1,10 +1,10 @@
-const CACHE_NAME = "caevera-shell-v1";
+const CACHE_NAME = "kythros-shell-v1";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
   "/favicon.svg",
-  "/caevera-icon-192.png",
-  "/caevera-icon-512.png",
+  "/kythros-icon-192.png",
+  "/kythros-icon-512.png",
   "/apple-touch-icon.png",
 ];
 

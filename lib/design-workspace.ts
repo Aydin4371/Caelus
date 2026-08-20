@@ -1,5 +1,3 @@
-import type { AnalysisCase } from "./caevera-types.ts";
-
 export type RdeApplication = "Rocket" | "Air-breathing";
 
 export type EngineDesign = {
@@ -29,6 +27,18 @@ export type EngineDesign = {
   backPressureBar: number;
 };
 
+export type OperatingPoint = {
+  id: string;
+  designId: string;
+  name: string;
+  source: "uploaded" | "demo";
+  inletPressureBar: number;
+  inletTemperatureK: number;
+  equivalenceRatio: number;
+  massFlowKgS: number;
+  backPressureBar: number;
+};
+
 export type DesignCalculations = {
   meanDiameterMm: number;
   annulusGapMm: number;
@@ -46,11 +56,11 @@ export type DesignCalculations = {
 
 export type PlannedOperatingPoint = {
   id: string;
-  role: "Baseline" | "Equivalence-ratio bracket" | "Mass-flow bracket" | "Coupled boundary" | "Pressure bracket";
+  role: "Baseline" | "Equivalence-ratio bracket" | "Mass-flow bracket" | "Coupled boundary" | "Pressure bracket" | "Uncertain boundary";
   equivalenceRatio: number;
   massFlowKgS: number;
   inletPressureBar: number;
-  matchedCaseId: string | null;
+  matchedOperatingPointId: string | null;
   nearestDistance: number | null;
 };
 
@@ -83,6 +93,29 @@ export const EMPTY_ENGINE_DESIGN: EngineDesign = {
 
 export function cloneEngineDesign(design: EngineDesign): EngineDesign {
   return { ...design };
+}
+
+export function cloneOperatingPoint(point: OperatingPoint): OperatingPoint {
+  return { ...point };
+}
+
+export function validateOperatingPoint(point: OperatingPoint) {
+  const issues: string[] = [];
+  if (!point.id) issues.push("Operating-point identifier is required.");
+  if (!point.designId) issues.push("An engine design is required.");
+  if (!point.name.trim()) issues.push("Operating-point name is required.");
+  if (point.source !== "uploaded" && point.source !== "demo") issues.push("Operating-point source must be uploaded or demonstration data.");
+  if (!(point.inletPressureBar > 0)) issues.push("Inlet pressure must be greater than zero.");
+  if (!(point.inletTemperatureK > 0)) issues.push("Inlet temperature must be greater than zero.");
+  if (!(point.equivalenceRatio > 0)) issues.push("Equivalence ratio must be greater than zero.");
+  if (!(point.massFlowKgS > 0)) issues.push("Mass flow must be greater than zero.");
+  if (!(point.backPressureBar > 0)) issues.push("Back pressure must be greater than zero.");
+  if (Number.isFinite(point.inletPressureBar) && Number.isFinite(point.backPressureBar) && point.inletPressureBar <= point.backPressureBar) issues.push("Inlet pressure must exceed back pressure.");
+  return issues;
+}
+
+export function operatingPointLabel(point: Pick<OperatingPoint, "inletPressureBar" | "massFlowKgS" | "equivalenceRatio" | "backPressureBar">) {
+  return `${point.inletPressureBar.toFixed(2)} bar · ${point.massFlowKgS.toFixed(3)} kg/s · φ ${point.equivalenceRatio.toFixed(2)} · Pb ${point.backPressureBar.toFixed(2)} bar`;
 }
 
 export function validateEngineDesign(design: EngineDesign) {
@@ -140,18 +173,18 @@ function normalize(value: number, low: number, high: number) {
   return (value - low) / Math.max(high - low, 1e-12);
 }
 
-function pointDistance(design: EngineDesign, point: Pick<PlannedOperatingPoint, "equivalenceRatio" | "massFlowKgS" | "inletPressureBar">, item: AnalysisCase) {
-  const phi = normalize(point.equivalenceRatio, design.equivalenceRatioMin, design.equivalenceRatioMax) - normalize(item.metadata.equivalenceRatio, design.equivalenceRatioMin, design.equivalenceRatioMax);
-  const mass = normalize(point.massFlowKgS, design.massFlowKgSMin, design.massFlowKgSMax) - normalize(item.metadata.massFlowKgS, design.massFlowKgSMin, design.massFlowKgSMax);
-  const pressure = normalize(point.inletPressureBar, design.inletPressureBarMin, design.inletPressureBarMax) - normalize(item.metadata.inletPressureBar, design.inletPressureBarMin, design.inletPressureBarMax);
+function pointDistance(design: EngineDesign, point: Pick<PlannedOperatingPoint, "equivalenceRatio" | "massFlowKgS" | "inletPressureBar">, item: OperatingPoint) {
+  const phi = normalize(point.equivalenceRatio, design.equivalenceRatioMin, design.equivalenceRatioMax) - normalize(item.equivalenceRatio, design.equivalenceRatioMin, design.equivalenceRatioMax);
+  const mass = normalize(point.massFlowKgS, design.massFlowKgSMin, design.massFlowKgSMax) - normalize(item.massFlowKgS, design.massFlowKgSMin, design.massFlowKgSMax);
+  const pressure = normalize(point.inletPressureBar, design.inletPressureBarMin, design.inletPressureBarMax) - normalize(item.inletPressureBar, design.inletPressureBarMin, design.inletPressureBarMax);
   return Math.hypot(phi, mass, pressure);
 }
 
-export function buildScreeningPlan(design: EngineDesign, cases: AnalysisCase[]): PlannedOperatingPoint[] {
+export function buildScreeningPlan(design: EngineDesign, operatingPoints: OperatingPoint[]): PlannedOperatingPoint[] {
   const phiMid = midpoint(design.equivalenceRatioMin, design.equivalenceRatioMax);
   const massMid = midpoint(design.massFlowKgSMin, design.massFlowKgSMax);
   const pressureMid = midpoint(design.inletPressureBarMin, design.inletPressureBarMax);
-  const definitions: Omit<PlannedOperatingPoint, "matchedCaseId" | "nearestDistance">[] = [
+  const definitions: Omit<PlannedOperatingPoint, "matchedOperatingPointId" | "nearestDistance">[] = [
     { id: "baseline", role: "Baseline", equivalenceRatio: phiMid, massFlowKgS: massMid, inletPressureBar: pressureMid },
     { id: "phi-low", role: "Equivalence-ratio bracket", equivalenceRatio: design.equivalenceRatioMin, massFlowKgS: massMid, inletPressureBar: pressureMid },
     { id: "phi-high", role: "Equivalence-ratio bracket", equivalenceRatio: design.equivalenceRatioMax, massFlowKgS: massMid, inletPressureBar: pressureMid },
@@ -162,21 +195,21 @@ export function buildScreeningPlan(design: EngineDesign, cases: AnalysisCase[]):
     { id: "pressure-low", role: "Pressure bracket", equivalenceRatio: phiMid, massFlowKgS: massMid, inletPressureBar: design.inletPressureBarMin },
     { id: "pressure-high", role: "Pressure bracket", equivalenceRatio: phiMid, massFlowKgS: massMid, inletPressureBar: design.inletPressureBarMax },
   ];
-  const observations = cases.filter((item) => !item.relationship && item.designId === design.id && item.source === "uploaded");
+  const observations = operatingPoints.filter((item) => item.designId === design.id && item.source === "uploaded");
   return definitions.map((point) => {
     const ranked = observations
       .map((item) => ({ item, distance: pointDistance(design, point, item) }))
       .sort((left, right) => left.distance - right.distance);
     const nearest = ranked[0] ?? null;
     const matched = nearest && nearest.distance <= 0.03 ? nearest.item : null;
-    return { ...point, matchedCaseId: matched?.id ?? null, nearestDistance: nearest?.distance ?? null };
+    return { ...point, matchedOperatingPointId: matched?.id ?? null, nearestDistance: nearest?.distance ?? null };
   });
 }
 
 export function selectCoverageNextPoint(points: PlannedOperatingPoint[]) {
   const baseline = points.find((point) => point.role === "Baseline");
   if (baseline && baseline.nearestDistance === null) return baseline;
-  const untested = points.filter((point) => !point.matchedCaseId);
+  const untested = points.filter((point) => !point.matchedOperatingPointId);
   if (!untested.length) return null;
   return [...untested].sort((left, right) => {
     const rightDistance = right.nearestDistance ?? Number.POSITIVE_INFINITY;

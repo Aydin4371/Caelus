@@ -69,7 +69,7 @@ export const CONTROLLED_RERUN_FIELDS: Record<SensitivityVariable, (keyof CaseMet
 const PHYSICAL_CASE_FIELDS: (keyof CaseMetadata)[] = [
   "annulusMeanDiameterMm", "annulusDiameterUncertaintyMm", "probePositionsDeg", "maximumWaveCount",
   "probeSynchronizationConfirmed", "experimentSensorBandwidthKHz", "experimentFilterCutoffKHz",
-  "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS", "comparisonMatchConfirmed",
+  "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS", "backPressureBar", "comparisonMatchConfirmed",
   "pressureUncertaintyPct", "timingUncertaintyUs",
 ];
 
@@ -85,6 +85,7 @@ const FIELD_LABELS: Partial<Record<keyof CaseMetadata, string>> = {
   inletTemperatureK: "inlet temperature",
   equivalenceRatio: "equivalence ratio",
   massFlowKgS: "mass flow",
+  backPressureBar: "back pressure",
   comparisonMatchConfirmed: "comparison-match confirmation",
   pressureUncertaintyPct: "experiment pressure uncertainty",
   timingUncertaintyUs: "experiment timing uncertainty",
@@ -195,7 +196,7 @@ function mean(values: number[]) {
 
 function agreementDetail(errorReductionPct: number, newMismatchMetricIds: string[]) {
   const agreement = !Number.isFinite(errorReductionPct)
-    ? "Caevera could not calculate the mean CFD-to-experiment error change for the targeted values."
+    ? "Kythros could not calculate the mean CFD-to-experiment error change for the targeted values."
     : Math.abs(errorReductionPct) < 0.05
       ? "The mean CFD-to-experiment error in the targeted values was unchanged."
       : errorReductionPct > 0
@@ -270,7 +271,7 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
     const extraChangedSettings = rule ? changedSettings.filter((field) => !CONTROLLED_RERUN_FIELDS[variable].includes(field)) : changedSettings;
     const relationshipIssues: string[] = [];
     if (!rule || variable === "other") relationshipIssues.push("No single CFD setting group was declared. Choose one named change if this rerun should update the plan.");
-    if (!referenceInFamily) relationshipIssues.push("The selected starting case is outside this case family.");
+    if (!referenceInFamily) relationshipIssues.push("The selected starting run is outside this operating point.");
     if (physicalDifferences.length) relationshipIssues.push(`Physical or comparison inputs changed: ${fieldNames(physicalDifferences)}.`);
     if (!experimentMatches) relationshipIssues.push(`Experiment pressure samples differ from the starting case ${referenceCase.metadata.name}.`);
     if (rule && expectedChangedSettings.length === 0) relationshipIssues.push(`No ${variable === "time-step" ? "time-step" : variable} setting differs from the starting case ${referenceCase.metadata.name}.`);
@@ -308,7 +309,7 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       relationshipIssues,
       sequenceStatus: "comparison-only" as const,
       planDisposition: "ignore" as const,
-      detail: `Comparison only. Caevera did not use this case to update the plan. ${relationshipIssues.join(" ") || "The saved case relationship is not a valid one-change rerun."}`,
+      detail: `Comparison only. Kythros did not use this case to update the plan. ${relationshipIssues.join(" ") || "The saved case relationship is not a valid one-change rerun."}`,
     };
 
     const candidateSummary = summaryFor(candidate);
@@ -374,8 +375,8 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
             : sequenceStatus === "rejected"
               ? `${change} does not support the tested explanation because the mean CFD-to-experiment error in ${targetNames} increased by ${Math.abs(errorReductionPct).toFixed(1)}%.`
               : Number.isFinite(errorReductionPct)
-                ? `Caevera cannot classify ${change}. The mean CFD-to-experiment error in ${targetNames} changed by ${Math.abs(errorReductionPct).toFixed(1)}%, which meets neither the support rule nor a rejection rule.`
-                : `Caevera cannot classify ${change} because it could not calculate the error change for ${targetNames}.`;
+                ? `Kythros cannot classify ${change}. The mean CFD-to-experiment error in ${targetNames} changed by ${Math.abs(errorReductionPct).toFixed(1)}%, which meets neither the support rule nor a rejection rule.`
+                : `Kythros cannot classify ${change} because it could not calculate the error change for ${targetNames}.`;
 
     const evidence: CaseHistoryEvidence = {
       baselineCaseId: baseline.id,

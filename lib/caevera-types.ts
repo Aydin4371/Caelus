@@ -25,6 +25,7 @@ export type CaseMetadata = {
   inletTemperatureK: number;
   equivalenceRatio: number;
   massFlowKgS: number;
+  backPressureBar: number;
   comparisonMatchConfirmed: boolean;
   solver: string;
   solverVersion: string;
@@ -63,6 +64,7 @@ export type CaseMetadata = {
 export type AnalysisCase = {
   id: string;
   designId?: string | null;
+  operatingPointId?: string | null;
   source: "uploaded" | "demo";
   relationship?: CaseRelationship | null;
   metadata: CaseMetadata;
@@ -84,6 +86,7 @@ export const EMPTY_METADATA: CaseMetadata = {
   inletTemperatureK: Number.NaN,
   equivalenceRatio: Number.NaN,
   massFlowKgS: Number.NaN,
+  backPressureBar: Number.NaN,
   comparisonMatchConfirmed: false,
   solver: "",
   solverVersion: "",

@@ -27,7 +27,7 @@ type InputHelpDetails = Omit<CaseInputHelpGroup["items"][number], "key" | "label
 const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: Array<Pick<CaseInputHelpGroup["items"][number], "key" | "label" | "definition">> }> = [
   {
     title: "Case and geometry",
-    description: "Names the case, defines the annulus geometry, and tells Caevera where each synchronized pressure probe is located.",
+    description: "Names the case, defines the annulus geometry, and tells Kythros where each synchronized pressure probe is located.",
     items: [
       { key: "name", label: "Case name", definition: "A short identifier for this experiment–CFD comparison, such as Baseline 8 bar." },
       { key: "annulusMeanDiameterMm", label: "Mean diameter (mm)", definition: "The annulus mean-line diameter used with the measured wave frequency to calculate circumferential wave speed." },
@@ -35,19 +35,19 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
       { key: "probePositionsDeg", label: "Probe angles (deg)", definition: "The circumferential locations of P1 through PN in one angular coordinate system shared by experiment and CFD. Use at least three; four or more nonuniform locations are preferred." },
       { key: "maximumWaveCount", label: "Maximum expected waves", definition: "The largest physically plausible simultaneous co-rotating wave count included in the phase-mode search. Use prior imaging, operating knowledge, or a conservative upper bound." },
       { key: "probeSynchronizationConfirmed", label: "Probe synchronization", definition: "Confirms that every pressure column within each file was acquired or exported on one common clock. This is required for direction, wave count, and phase calculations." },
-      { key: "comparisonMatchConfirmed", label: "Comparison-match confirmation", definition: "Confirms that geometry, operating point, probe locations, and analysis window match before Caevera interprets any difference." },
+      { key: "comparisonMatchConfirmed", label: "Comparison-match confirmation", definition: "Confirms that geometry, operating point, probe locations, and analysis window match before Kythros interprets any difference." },
       { key: "baselineCaseId", label: "Case family baseline · optional", definition: "Starts a case family. Every related rerun must reuse this baseline's experiment and physical operating point." },
-      { key: "changedVariable", label: "Single CFD change · optional", definition: "Declares the only CFD setting group allowed to differ from the selected starting case. Caevera verifies the saved settings before using the rerun to update the plan." },
+      { key: "changedVariable", label: "Single CFD change · optional", definition: "Declares the only CFD setting group allowed to differ from the selected starting case. Kythros verifies the saved settings before using the rerun to update the plan." },
       { key: "changeDescription", label: "Change description · optional", definition: "Records exactly what changed, including the old and new values, for example front-cell size 0.25 mm → 0.125 mm." },
     ],
   },
   {
     title: "Pressure files",
-    description: "Supplies the experiment and CFD pressure histories. Caevera calculates the graphs and metrics from these values; the CSV does not contain diagnoses or evidence labels.",
+    description: "Supplies the experiment and CFD pressure histories. Kythros calculates the graphs and metrics from these values; the CSV does not contain diagnoses or evidence labels.",
     items: [
       { key: "experimentCsv", label: "Experiment CSV", definition: "Measured pressure history with time_ms and contiguous p1_MPa through pN_MPa columns. Each row must represent the same instant for every probe." },
       { key: "cfdCsv", label: "CFD CSV", definition: "Virtual-probe pressure history at the same locations and operating point, using the same probe count and column naming as the experiment file." },
-      { key: "experimentSensorBandwidthKHz", label: "Experiment sensor bandwidth (kHz)", definition: "Usable frequency bandwidth of the complete pressure sensor and conditioning chain. Caevera checks whether it covers the fundamental and harmonic bands used in the analysis." },
+      { key: "experimentSensorBandwidthKHz", label: "Experiment sensor bandwidth (kHz)", definition: "Usable frequency bandwidth of the complete pressure sensor and conditioning chain. Kythros checks whether it covers the fundamental and harmonic bands used in the analysis." },
       { key: "experimentFilterCutoffKHz", label: "Experiment filter cutoff (kHz)", definition: "Applied analog or digital low-pass/anti-alias cutoff. A cutoff below the analyzed harmonic band limits sharp-front and harmonic comparisons." },
     ],
   },
@@ -56,6 +56,7 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
     description: "Defines the physical state represented by both datasets and helps verify whether related cases are comparable.",
     items: [
       { key: "inletPressureBar", label: "Inlet pressure (bar)", definition: "The documented inlet or plenum pressure for the case. Use one consistent pressure definition across related cases." },
+      { key: "backPressureBar", label: "Back pressure (bar)", definition: "The documented downstream pressure paired with this operating point. Use one consistent static or total-pressure definition across the engine dataset." },
       { key: "inletTemperatureK", label: "Inlet temperature (K)", definition: "The reactant inlet or plenum temperature corresponding to the stated inlet pressure." },
       { key: "equivalenceRatio", label: "Equivalence ratio", definition: "Actual fuel-to-oxidizer ratio divided by the stoichiometric ratio; 1.0 is stoichiometric, below 1.0 is lean, and above 1.0 is rich." },
       { key: "massFlowKgS", label: "Mass flow (kg/s)", definition: "Total reactant mass flow represented by the experiment and CFD case." },
@@ -109,7 +110,7 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
   },
   {
     title: "Experiment and CFD uncertainty",
-    description: "Lets Caevera distinguish a resolved discrepancy from a difference that is smaller than current uncertainty.",
+    description: "Lets Kythros distinguish a resolved discrepancy from a difference that is smaller than current uncertainty.",
     items: [
       { key: "pressureUncertaintyPct", label: "Experiment pressure uncertainty (%)", definition: "The stated uncertainty of measured pressure amplitude or level, expressed as a percentage of the reported quantity." },
       { key: "timingUncertaintyUs", label: "Experiment timing uncertainty (µs)", definition: "Combined timing uncertainty from acquisition, synchronization, and sensor response, in microseconds." },
@@ -161,19 +162,19 @@ const INPUT_HELP_DETAILS = {
     "requirement": "Required",
     "obtainFrom": "DAQ configuration and CFD sampling setup.",
     "usedFor": "Authorizes probe-to-probe phase, direction, count, speed, and jitter calculations.",
-    "missingEffect": "Caevera does not report wave count, direction, speed, phase pattern, or phase jitter as identified results."
+    "missingEffect": "Kythros does not report wave count, direction, speed, phase pattern, or phase jitter as identified results."
   },
   "comparisonMatchConfirmed": {
     "format": "Checkbox; confirm same geometry, operating point, probe locations, and evidence window.",
     "requirement": "Required",
     "obtainFrom": "Experiment run sheet, CFD case setup, and export window.",
     "usedFor": "Controls whether any mismatch may influence a diagnostic recommendation.",
-    "missingEffect": "Diagnosis is blocked; Caevera recommends correcting the pairing."
+    "missingEffect": "Diagnosis is blocked; Kythros recommends correcting the pairing."
   },
   "baselineCaseId": {
-    "format": "Select one existing Caevera case.",
+    "format": "Select one existing Kythros case.",
     "requirement": "Optional",
-    "obtainFrom": "Caevera case list.",
+    "obtainFrom": "Kythros case list.",
     "usedFor": "Groups one baseline with reruns that reuse its experiment and physical operating point.",
     "missingEffect": "The case is analyzed by itself. It cannot update a related case family's plan."
   },
@@ -182,7 +183,7 @@ const INPUT_HELP_DETAILS = {
     "requirement": "Conditional",
     "obtainFrom": "Simulation change log.",
     "usedFor": "Checks whether exactly one CFD setting group changed from the selected starting case.",
-    "missingEffect": "Caevera treats the case as a comparison only and does not use it to update the plan."
+    "missingEffect": "Kythros treats the case as a comparison only and does not use it to update the plan."
   },
   "changeDescription": {
     "format": "Exact before → after wording, including values and units where known.",
@@ -225,6 +226,13 @@ const INPUT_HELP_DETAILS = {
     "obtainFrom": "Experiment run sheet and CFD inlet definition.",
     "usedFor": "Verifies operating-point matching and supports inlet-related diagnostic context.",
     "missingEffect": "The physical pairing and related-case comparison are incomplete."
+  },
+  "backPressureBar": {
+    "format": "bar; state whether this is static or total pressure consistently across operating points.",
+    "requirement": "Required",
+    "obtainFrom": "Facility run sheet and CFD outlet boundary definition.",
+    "usedFor": "Defines the operating point, pressure ratio, 2D envelope slice, and predictive-model feature vector.",
+    "missingEffect": "The operating point cannot be stored or compared on a pressure-ratio-consistent envelope."
   },
   "inletTemperatureK": {
     "format": "kelvin; use the temperature at the same inlet/plenum definition as pressure.",
@@ -301,7 +309,7 @@ const INPUT_HELP_DETAILS = {
     "requirement": "Required",
     "obtainFrom": "Solver input deck.",
     "usedFor": "Interprets attenuated peaks, rise time, and harmonics.",
-    "missingEffect": "Caevera cannot distinguish undocumented numerical damping from physical/model effects."
+    "missingEffect": "Kythros cannot distinguish undocumented numerical damping from physical/model effects."
   },
   "temporalScheme": {
     "format": "Named time integrator.",
@@ -364,14 +372,14 @@ const INPUT_HELP_DETAILS = {
     "requirement": "Optional",
     "obtainFrom": "Documented mesh sensitivity study.",
     "usedFor": "Provides prior mesh-sensitivity context before a related rerun is added.",
-    "missingEffect": "Caevera does not assume mesh convergence. A related one-change mesh rerun can provide the missing result."
+    "missingEffect": "Kythros does not assume mesh convergence. A related one-change mesh rerun can provide the missing result."
   },
   "timeStepConvergencePct": {
     "format": "Percent change in a named CFD output between two documented flow time steps; enter the magnitude as a non-negative value.",
     "requirement": "Optional",
     "obtainFrom": "Documented time-step study.",
     "usedFor": "Provides prior time-step-sensitivity context before a related rerun is added.",
-    "missingEffect": "Caevera does not assume time-step convergence. A related one-change time-step rerun can provide the missing result."
+    "missingEffect": "Kythros does not assume time-step convergence. A related one-change time-step rerun can provide the missing result."
   },
   "chemistryModel": {
     "format": "Mechanism name and preferably file/version.",

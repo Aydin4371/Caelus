@@ -1,10 +1,10 @@
-# Caevera by Caelus
+# Kythros by Caelus
 
-Caevera is a browser-based RDE simulation-to-test research application. It
+Kythros is a browser-based RDE simulation-to-test research application. It
 compares three or more synchronized experimental pressure traces with matching
 CFD virtual probes, determines whether differences are resolved beyond the stated
 uncertainty, orders traceable diagnostic hypotheses by evidence state, and recommends one
-controlled next simulation. When a related rerun is added, Caevera classifies
+controlled next simulation. When a related rerun is added, Kythros classifies
 the calculated response as supporting, converged, unsupported, or inconclusive and
 updates the next recommendation. It also aggregates comparable controlled
 reruns already analyzed in the workspace, showing observed outcome counts,
@@ -25,9 +25,37 @@ residual, propagation-phase, and cycle-stability graphs remain absent until a
 case has been parsed and analyzed; their traces are calculated from the active
 case rather than embedded examples.
 
-The current release is a research prototype. It does not certify a model,
-establish an engine-wide operating envelope, or prove the cause of a
-discrepancy.
+The current release is a research prototype. It does not certify a model or
+prove the cause of a discrepancy.
+
+## v2.0.0 Kythros hierarchy and evidence-learning envelope
+
+- Renames the product to Kythros by Caelus.
+- Stores one explicit hierarchy: engine/design → operating point → runs.
+  Experiment, baseline CFD, and controlled CFD reruns therefore cannot be
+  mistaken for separate physical conditions.
+- Keeps Comparison focused on one operating point while its calculated mode,
+  stability, evidence quality, and numerical status feed the separate
+  Operating Envelope.
+- Builds the measured envelope directly from completed real operating points
+  and reports stable, transitional, and unstable counts without inventing a
+  boundary between observations.
+- Uses an explicit 2D slice with inlet pressure and mass flow as the default
+  axes. The two remaining variables are shown as held-fixed controls, while
+  geometry, injector, propellants, and walls are fixed by the engine record.
+- Gates the first exploratory local-kernel classifier on at least 12 real,
+  signal-ready, numerically converged points, at least two measured stability classes, and at least
+  55% leave-one-out accuracy. A prediction also requires three nearby
+  observations; unsupported space stays blank.
+- Selects an uncertainty-aware next operating point only inside measured
+  support. Until the model gate passes, the recommendation remains the
+  transparent coverage-based screening point.
+- Preserves older workspace files through a version-3 migration that creates
+  explicit operating-point records from older engine-linked baselines.
+- Defines the matching durable-storage target in
+  `docs/kythros-data-model.sql`. Cloud persistence is not enabled until an
+  authenticated owner boundary is available; the current browser workspace
+  remains the source of persistence for this release.
 
 ## v1.7.0 design and screening workspace
 
@@ -66,7 +94,7 @@ discrepancy.
   means no analyzed finding was classified in that direction; it does not mean
   the CSV is incomplete.
 - The interface explicitly distinguishes pressure-file values from findings
-  that Caevera calculates after comparing cases.
+  that Kythros calculates after comparing cases.
 - Numerical-convergence, model-sensitivity, evidence-readiness, prior-family,
   and research-source descriptions now name what is compared, which rule is
   applied, and what the user should do next.
@@ -226,7 +254,7 @@ uncertainty, evidence-state, source, and next-run records.
   baseline
 - A validation-coverage matrix that explicitly marks thermal and performance
   modules as not assessed when those measurements are absent
-- Caevera branding throughout the interface and reports
+- Kythros branding throughout the interface and reports
 
 That release also calculated every result directly from the saved case data rather than using an LLM.
 
@@ -240,7 +268,7 @@ That release also calculated every result directly from the saved case data rath
   and narrowed cause mappings so papers are not cited for claims they did not
   study.
 - Added optional baseline relationships for controlled reruns. A linked rerun
-  affects a diagnosis only after Caevera verifies the same experiment and
+  affects a diagnosis only after Kythros verifies the same experiment and
   operating point and exactly one changed CFD variable group.
 - Renamed the multi-case feature to case history. Every uploaded item remains
   a case; unrelated cases remain comparisons only.
@@ -355,7 +383,7 @@ loader, explicitly select:
 
 Each file needs at least 32 valid mapped rows. The experiment and CFD files need
 the same probe count, and the entered angles define their one-to-one physical
-matching. Caevera previews values after conversion to milliseconds and MPa
+matching. Kythros previews values after conversion to milliseconds and MPa
 before analysis. Nonuniform probe spacing is strongly preferred because equally
 spaced layouts can alias wave-count and direction combinations.
 
@@ -380,7 +408,7 @@ The suite also covers adaptive confirmed, rejected, and inconclusive branches.
 Uncertainty statuses use a root-sum-square one-standard-uncertainty estimate
 (`k = 1`) from the inputs supplied by the user. This is not a certification
 tolerance. Harmonic and cycle-variability checks still use clearly labeled
-Caevera prototype product limits because estimator/repeatability uncertainty is not yet
+Kythros prototype product limits because estimator/repeatability uncertainty is not yet
 available.
 
 Diagnostic hypotheses prioritize controlled sensitivity studies; they are not
