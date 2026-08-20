@@ -792,7 +792,7 @@ test("complete workspaces round-trip raw signals, mappings, links, and non-finit
     droppedRows: 0,
   };
   const item: AnalysisCase = { id: "saved-case", source: "uploaded", relationship: null, metadata, testSignals: demo.test, cfdSignals: demo.cfd, imports: { experiment: provenance, cfd: { ...provenance, fileName: "cfd.csv" } } };
-  const serialized = serializeWorkspace({ cases: [item], activeCaseId: item.id, baselineCaseId: item.id });
+  const serialized = serializeWorkspace({ cases: [item], activeCaseId: item.id, baselineCaseId: item.id, designs: [], activeDesignId: null });
   assert.match(serialized, new RegExp(WORKSPACE_SCHEMA));
   assert.doesNotMatch(serialized, /controlledNextRun|metricImprovements|confirmedCount/, "workspaces store inputs, not pre-generated analytical conclusions");
   const restored = deserializeWorkspace(serialized);
