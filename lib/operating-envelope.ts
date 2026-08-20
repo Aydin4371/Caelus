@@ -140,3 +140,4 @@ export function buildEnvelopeDataset(cases: AnalysisCase[]): EnvelopeDataset {
 export function envelopeAxisValue(point: EnvelopePoint, axis: EnvelopeAxisKey) {
   return point[axis];
 }
+

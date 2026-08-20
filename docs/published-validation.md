@@ -58,7 +58,7 @@ recorded in `lib/published-benchmarks.ts`:
 
 The committed JSON files are protected by SHA-256 values in
 `lib/published-benchmarks.ts`. The pressure values retain the source-processed
-channel unit, so these fixtures validate frequency and mode ambiguity—not MPa
+channel unit, so these fixtures validate frequency and mode ambiguity, not MPa
 amplitude. CE2029 does not validate a full three-wave reconstruction because
 the published pressure geometry has only four unique circumferential angles;
 it validates the more conservative requirement that Caevera not force one

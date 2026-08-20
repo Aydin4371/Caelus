@@ -5,7 +5,7 @@ compares three or more synchronized experimental pressure traces with matching
 CFD virtual probes, determines whether differences are resolved beyond the stated
 uncertainty, orders traceable diagnostic hypotheses by evidence state, and recommends one
 controlled next simulation. When a related rerun is added, Caevera classifies
-the predicted response as confirmed, converged, rejected, or inconclusive and
+the calculated response as supporting, converged, unsupported, or inconclusive and
 updates the next recommendation. It also aggregates comparable controlled
 reruns already analyzed in the workspace, showing observed outcome counts,
 metric-error improvement, and runtime multiplier without inventing precedent.
@@ -28,6 +28,24 @@ case rather than embedded examples.
 The current release is a research prototype. It does not certify a model,
 establish an engine-wide operating envelope, or prove the cause of a
 discrepancy.
+
+## v1.7.0 design and screening workspace
+
+- Adds engine-design records above operating points and CFD rerun case families.
+- Records gas-fed annular geometry, injector configuration, propellants, and
+  operating limits without inferring missing engineering inputs.
+- Calculates mean diameter, annulus gap and area, chamber volume, total
+  injector area, area ratio, mass-flux ranges, and pressure ratio directly from
+  the entered values.
+- Generates a nine-point screening plan and selects the next condition by
+  measured coverage distance. This is a data-coverage decision, not an
+  operability or performance prediction.
+- Keeps operating maps separated by engine design, displays planned conditions
+  as hollow markers, and excludes every synthetic case from physical-evidence
+  counts.
+- Exports a versioned design manifest and screening-plan CSV for CFD or test
+  setup while marking predictive operability, backflow, performance, and
+  thermal models as unavailable.
 
 ## v1.6.0 observed operating-map workspace
 

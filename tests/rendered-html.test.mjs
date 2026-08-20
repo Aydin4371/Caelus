@@ -32,18 +32,15 @@ test("renders development preview metadata", async () => {
   const html = await response.text();
   assert.match(html, developmentPreviewMeta);
   assert.match(html, /CAEVERA/);
-  assert.match(html, /Welcome to Caevera/);
+  assert.match(html, /Define the engine before mapping it/);
+  assert.match(html, /Design &amp; plan/);
   assert.match(html, /Compare &amp; diagnose/);
-  assert.match(html, /Operating envelope/);
-  assert.match(html, /recommends one CFD change/);
-  assert.match(html, /No case has been added yet/);
+  assert.match(html, /Operating map/);
+  assert.match(html, /Create first engine design/);
   assert.match(html, /rel="manifest"/);
   assert.match(html, />Install Caevera</);
-  assert.match(html, /Add first case/);
-  assert.match(html, /Load synthetic case history/);
   assert.match(html, />Help</);
   assert.match(html, /Open workspace/);
-  assert.match(html, /Open saved workspace/);
   assert.match(html, /Return to empty home workspace/);
   assert.doesNotMatch(html, /Synthetic baseline/);
   assert.doesNotMatch(html, /Signal evidence/);
@@ -51,20 +48,26 @@ test("renders development preview metadata", async () => {
   assert.doesNotMatch(html, /\u2014/);
 });
 
-test("keeps the observed operating map separate from case comparison", async () => {
+test("keeps design planning, operating maps, and case comparison separate", async () => {
   const { readFile } = await import("node:fs/promises");
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const envelope = await readFile(new URL("../components/operating-envelope.tsx", import.meta.url), "utf8");
+  const design = await readFile(new URL("../components/design-planner.tsx", import.meta.url), "utf8");
   const logic = await readFile(new URL("../lib/operating-envelope.ts", import.meta.url), "utf8");
   assert.match(page, /productView/);
-  assert.match(page, /<OperatingEnvelope cases=\{cases\}/);
-  assert.match(envelope, /Observed operating map/);
-  assert.match(envelope, /blank space is untested, not predicted/);
-  assert.match(envelope, /No surrogate prediction yet/);
-  assert.match(envelope, /Open full comparison/);
+  assert.match(page, /<DesignPlanner designs=\{designs\}/);
+  assert.match(page, /<OperatingEnvelope designs=\{designs\}/);
+  assert.match(envelope, /Solid markers are measured results/);
+  assert.match(envelope, /Predictive envelope model/);
+  assert.match(envelope, /No interpolation, stability probability, backflow, performance, or thermal prediction/);
+  assert.match(envelope, /Observed and planned, not predicted/);
+  assert.match(envelope, /Open comparison/);
+  assert.match(design, /Nine traceable operating points/);
+  assert.match(design, /It is not an operability prediction/);
+  assert.match(design, /No interpolation, performance, backflow, or thermal prediction/);
   assert.match(logic, /cases\.filter\(\(item\) => !item\.relationship\)/);
   assert.match(logic, /backflowStatus: "Not assessed"/);
-  assert.doesNotMatch(envelope, /predicted stable|predicted unstable|probability/i);
+  assert.doesNotMatch(envelope, /predicted stable|predicted unstable/i);
 });
 
 test("ships an installable Caevera app manifest and service worker", async () => {

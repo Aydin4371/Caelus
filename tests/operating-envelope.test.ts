@@ -79,3 +79,4 @@ test("does not convert an observed map into an unvalidated prediction", () => {
   assert.match(result.nextRequirement, /mesh or time-step sequence/i);
   assert.equal(result.points[0].modelUse, "Needs numerical convergence");
 });
+

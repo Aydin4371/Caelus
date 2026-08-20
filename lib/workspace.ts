@@ -1,13 +1,16 @@
 import type { AnalysisCase } from "./caevera-types.ts";
+import { validateEngineDesign, type EngineDesign } from "./design-workspace.ts";
 import { ANALYSIS_VERSION } from "./rde-analysis.ts";
 
 export const WORKSPACE_SCHEMA = "caevera-pressure-wave-workspace";
-export const WORKSPACE_FORMAT_VERSION = 1;
+export const WORKSPACE_FORMAT_VERSION = 2;
 
 export type WorkspaceState = {
   cases: AnalysisCase[];
   activeCaseId: string | null;
   baselineCaseId: string | null;
+  designs: EngineDesign[];
+  activeDesignId: string | null;
 };
 
 type WorkspaceEnvelope = {
@@ -116,6 +119,7 @@ function validateCase(value: unknown, index: number): asserts value is AnalysisC
   value.testSignals.forEach((signal, probe) => validateSignal(signal, `Case ${index + 1} experiment P${probe + 1}`));
   value.cfdSignals.forEach((signal, probe) => validateSignal(signal, `Case ${index + 1} CFD P${probe + 1}`));
   if (value.source !== "uploaded" && value.source !== "demo") throw new Error(`Case ${index + 1} has an invalid source type.`);
+  if (value.designId != null && typeof value.designId !== "string") throw new Error(`Case ${index + 1} has an invalid engine-design link.`);
   if (value.relationship != null) {
     const allowedChanges = ["mesh", "time-step", "chemistry", "inlet", "wall", "initialization", "unsteadiness", "other"];
     if (!isObject(value.relationship)
@@ -152,7 +156,7 @@ export function deserializeWorkspace(text: string): WorkspaceState {
     throw new Error("This is not valid JSON.");
   }
   if (!isObject(parsed) || parsed.schema !== WORKSPACE_SCHEMA) throw new Error("This is not a Caevera pressure-and-wave workspace.");
-  if (parsed.formatVersion !== WORKSPACE_FORMAT_VERSION) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
+  if (parsed.formatVersion !== 1 && parsed.formatVersion !== WORKSPACE_FORMAT_VERSION) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
   if (!isObject(parsed.state) || !Array.isArray(parsed.state.cases)) throw new Error("The workspace does not contain a case list.");
   parsed.state.cases.forEach(validateCase);
   const cases = parsed.state.cases as AnalysisCase[];
@@ -171,10 +175,25 @@ export function deserializeWorkspace(text: string): WorkspaceState {
   }
   const requestedActive = typeof parsed.state.activeCaseId === "string" ? parsed.state.activeCaseId : null;
   const requestedBaseline = typeof parsed.state.baselineCaseId === "string" ? parsed.state.baselineCaseId : null;
+  const designs = Array.isArray(parsed.state.designs) ? parsed.state.designs as EngineDesign[] : [];
+  const designIdentifiers = new Set<string>();
+  designs.forEach((design, index) => {
+    if (!isObject(design) || typeof design.id !== "string" || !design.id) throw new Error(`Engine design ${index + 1} has no valid identifier.`);
+    if (designIdentifiers.has(design.id)) throw new Error("The workspace contains duplicate engine-design identifiers.");
+    designIdentifiers.add(design.id);
+    const issues = validateEngineDesign(design);
+    if (issues.length) throw new Error(`Engine design ${index + 1}: ${issues[0]}`);
+  });
+  for (const item of cases) {
+    if (item.designId && !designIdentifiers.has(item.designId)) throw new Error(`Case ${item.metadata.name} links to an engine design that is not present.`);
+  }
+  const requestedDesign = typeof parsed.state.activeDesignId === "string" ? parsed.state.activeDesignId : null;
   return {
     cases,
     activeCaseId: requestedActive && identifiers.has(requestedActive) ? requestedActive : cases[0]?.id ?? null,
     baselineCaseId: requestedBaseline && identifiers.has(requestedBaseline) ? requestedBaseline : cases[0]?.id ?? null,
+    designs,
+    activeDesignId: requestedDesign && designIdentifiers.has(requestedDesign) ? requestedDesign : designs[0]?.id ?? null,
   };
 }
 
