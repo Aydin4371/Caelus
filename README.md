@@ -68,7 +68,7 @@ prove the cause of a discrepancy.
 - Generates a nine-point screening plan and selects the next condition by
   measured coverage distance. This is a data-coverage decision, not an
   operability or performance prediction.
-- Keeps operating maps separated by engine design, displays planned conditions
+- Keeps Operating Envelopes separated by engine design, displays planned conditions
   as hollow markers, and excludes every synthetic case from physical-evidence
   counts.
 - Exports a versioned design manifest and screening-plan CSV for CFD or test

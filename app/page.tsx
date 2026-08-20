@@ -22,6 +22,7 @@ import { KNOWLEDGE_BASE_VERSION, sourcesFor, type DiagnosticResearchClaim, type 
 import { CASE_INPUT_HELP } from "@/lib/case-input-help";
 import { WAVE_METHOD_SOURCES } from "@/lib/wave-method-sources";
 import { calculateDesign, operatingPointLabel, type EngineDesign, type OperatingPoint, type PlannedOperatingPoint } from "@/lib/design-workspace";
+import { GE_2022_DESIGN, GE_2022_DESIGN_ID, buildGe2022OperatingPoints } from "@/lib/published-envelope-data";
 import type { MappedProbeImport } from "@/lib/data-import";
 import { PUBLISHED_VALIDATION_SOURCES, PUBLISHED_VALIDATION_SUMMARY, RAW_DATASET_VALIDATION_CASES } from "@/lib/published-benchmarks";
 import { deserializeWorkspace, serializeWorkspace, workspaceFileName } from "@/lib/workspace";
@@ -112,7 +113,7 @@ function evidenceBasisLabel(basis: DiagnosticEvidence["basis"]) {
   if (basis === "case-history") return "Calculated from a related one-change rerun";
   if (basis === "literature") return "Supported by published research";
   if (basis === "policy") return "Result still required";
-  return "Calculated from this case";
+  return "Calculated from this run";
 }
 
 function EvidenceLedgerColumn({
@@ -456,7 +457,7 @@ function EngineeringDecisionPanel({
           <div className="outcome-rules">
             <article className="branch-converged"><strong>Numerically converged</strong><span>The targeted CFD values change by no more than {policy.convergenceResponsePct!.toFixed(1)}% between the two adjacent levels.</span><small>Keep the newer setting and move to the next unresolved explanation.</small></article>
             <article className="branch-confirmed"><strong>{changeLabel(policy.changedVariable!)} still changes the result</strong><span>The targeted CFD values change by more than {policy.convergenceResponsePct!.toFixed(1)}% between the two adjacent levels.</span><small>Keep the newer setting and test the next {testedVariable} level before changing the physics.</small></article>
-            <article className="branch-inconclusive"><strong>Cannot classify</strong><span>The two levels are not a valid one-change pair, or a required targeted value cannot be calculated.</span><small>Correct the case relationship or data problem, then repeat the same comparison.</small></article>
+            <article className="branch-inconclusive"><strong>Cannot classify</strong><span>The two runs are not a valid one-change pair, or a required targeted value cannot be calculated.</span><small>Correct the run relationship or data problem, then repeat the same comparison.</small></article>
           </div>
           <p className="decision-agreement-note"><strong>Separate question:</strong> Kythros also reports whether the newer CFD result moved closer to the experiment, moved farther away, or created a new mismatch.</p>
         </> : isModelSensitivityPolicy ? <div className="outcome-rules">
@@ -485,11 +486,11 @@ function EngineeringDecisionPanel({
         <p className="selected-data-source"><strong>{selectedCaseName}</strong> · {selectedAnalysisInput.experimentSamples.toLocaleString()} experiment + {selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values · {selectedAnalysisInput.probeCount} probes</p>
         {planUsesDifferentCase && <p className="planning-data-source"><strong>Plan reference:</strong> {planningCaseName}</p>}
         <ul>{decisionQuality.gates.map((gate) => <li key={gate.id} className={`evidence-${gate.status}`}><i>{gate.status === "passed" ? "✓" : gate.status === "blocked" ? "×" : gate.status === "review" ? "!" : "○"}</i><strong>{gate.label}</strong><b>{gate.statusLabel}</b><small>{gate.result}</small></li>)}</ul>
-        <p><strong>Method support only:</strong> {publishedSources.length} published reference{publishedSources.length === 1 ? "" : "s"} support the method, and {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} public validation cases test the analyzer. Neither confirms the explanation in this case.</p>
+        <p><strong>Method support only:</strong> {publishedSources.length} published reference{publishedSources.length === 1 ? "" : "s"} support the method, and {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} public validation cases test the analyzer. Neither confirms the explanation for this operating point.</p>
       </details>
       {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
     </section>
-    <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit case</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View case history</button>}</div>
+    <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit run</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View run history</button>}</div>
   </section>;
 }
 export default function Home() {
@@ -618,7 +619,7 @@ export default function Home() {
     lead: "Likely issue:",
     title: likelyHypothesis?.title ?? "Cannot assess",
     detail: null,
-    meaning: planAssessment?.nextRun.reason ?? "Kythros cannot choose a next run from the analyzed case data.",
+    meaning: planAssessment?.nextRun.reason ?? "Kythros cannot choose a next run from the analyzed evidence.",
     tone: "neutral",
   };
   const showDetailedEvidence = false;
@@ -642,6 +643,7 @@ export default function Home() {
         nextDraft.equivalenceRatio = point.equivalenceRatio;
         nextDraft.massFlowKgS = point.massFlowKgS;
         nextDraft.inletPressureBar = point.inletPressureBar;
+        nextDraft.inletTemperatureK = point.inletTemperatureK;
       }
     }
     const nextPoint: OperatingPoint = {
@@ -806,11 +808,11 @@ export default function Home() {
 
   function reviewRerun() {
     if (!draftRelationship || editingCaseId) return applyCase();
-    if (!draftReferenceCase) return setError("Choose the exact starting case for this rerun.");
+    if (!draftReferenceCase) return setError("Choose the exact starting run for this rerun.");
     if (draftRelationship.changedVariable === "other") return setError("Choose the single CFD change being tested. Other remains comparison-only.");
     if (!changedRerunFields.length) return setError(`Change at least one ${changeLabel(draftRelationship.changedVariable).toLowerCase()} setting before reviewing this rerun.`);
     if (!cfdPending) return setError("Upload and map the new CFD result before reviewing this rerun.");
-    if (cfdPending.signals.length !== draft.probePositionsDeg.length) return setError(`The CFD file contains ${cfdPending.signals.length} probes, but the starting case uses ${draft.probePositionsDeg.length}.`);
+    if (cfdPending.signals.length !== draft.probePositionsDeg.length) return setError(`The CFD file contains ${cfdPending.signals.length} probes, but the starting run uses ${draft.probePositionsDeg.length}.`);
     setError("");
     setReviewingRerun(true);
   }
@@ -917,14 +919,14 @@ export default function Home() {
       const referenceCase = referenceId ? cases.find((item) => item.id === referenceId) ?? null : null;
       const nextTest = testPending?.signals ?? editingCase?.testSignals ?? referenceCase?.testSignals ?? draftOperatingPoint?.experiment?.signals;
       const nextCfd = cfdPending?.signals ?? editingCase?.cfdSignals;
-      if (!nextTest) return setError("Upload the experimental multi-probe file for this baseline case.");
-      if (!nextCfd) return setError(effectiveRelationship ? "Upload the new CFD multi-probe result for this rerun." : "Upload the CFD multi-probe file for this case.");
+      if (!nextTest) return setError("Upload the experimental multi-probe file for this operating point.");
+      if (!nextCfd) return setError(effectiveRelationship ? "Upload the new CFD multi-probe result for this rerun." : "Upload the CFD multi-probe file for this baseline run.");
       if (nextTest.length !== draft.probePositionsDeg.length || nextCfd.length !== draft.probePositionsDeg.length) return setError(`The files contain ${nextTest.length} experiment and ${nextCfd.length} CFD probes, but ${draft.probePositionsDeg.length} probe angles were entered.`);
       compareProbeSets(nextTest, nextCfd);
       analyzeRdeProbeSet(nextTest, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed, sensorBandwidthKHz: draft.experimentSensorBandwidthKHz, filterCutoffKHz: draft.experimentFilterCutoffKHz });
       analyzeRdeProbeSet(nextCfd, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed });
       const id = editingCaseId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      if (effectiveRelationship?.baselineCaseId === id) return setError("A case cannot be its own baseline.");
+      if (effectiveRelationship?.baselineCaseId === id) return setError("A run cannot be its own baseline.");
       if (effectiveRelationship) {
         if (!referenceCase || referenceCase.id !== effectiveRelationship.baselineCaseId && referenceCase.relationship?.baselineCaseId !== effectiveRelationship.baselineCaseId) return setError("Choose a starting run from the selected operating point.");
       }
@@ -1085,6 +1087,22 @@ export default function Home() {
     setActiveCaseId(examples[0].id); setWorkspaceView("case"); setActiveProbe(0);
   }
 
+  function loadPublishedEnvelopeExample() {
+    const points = buildGe2022OperatingPoints();
+    setDesigns((current) => current.some((item) => item.id === GE_2022_DESIGN_ID) ? current : [...current, { ...GE_2022_DESIGN }]);
+    setOperatingPoints((current) => {
+      const existing = new Set(current.map((item) => item.id));
+      return [...current, ...points.filter((item) => !existing.has(item.id))];
+    });
+    setActiveDesignId(GE_2022_DESIGN_ID);
+    setActiveOperatingPointId(points[0]?.id ?? null);
+    setActiveCaseId(null);
+    setCaseBaselineId(null);
+    setWorkspaceView("case");
+    setProductView("envelope");
+    setWorkspaceError("");
+  }
+
   function downloadExample() {
     const demo = makeDemoProbeSignals();
     const header = ["time_ms", ...demo.test.map((_, index) => `p${index + 1}_MPa`)].join(",");
@@ -1109,15 +1127,15 @@ export default function Home() {
       publishedValidationSources: PUBLISHED_VALIDATION_SOURCES,
       evidenceRoles: {
         directCaseEvidence: activeCase.source === "demo"
-          ? "Generated demonstration pressure values, entered case settings, declared uncertainties, and verified one-change relationships determine this result. It is not evidence from a physical engine."
-          : "The user-provided experiment and CFD pressure values, entered case settings, declared uncertainties, and verified one-change relationships determine the metrics and recommendation.",
+          ? "Generated demonstration pressure values, entered run settings, declared uncertainties, and verified one-change relationships determine this result. It is not evidence from a physical engine."
+          : "The user-provided experiment and CFD pressure values, entered run settings, declared uncertainties, and verified one-change relationships determine the metrics and recommendation.",
         recommendationScope: {
           selectedCase: activeCase.metadata.name,
           planningReferenceCase: planningCase.metadata.name,
           sharedAcrossCaseFamily: caseHistoryEvidence.length > 0,
           explanation: "Kythros recalculates the selected run's diagnosis or rerun result. One operating point contains its experiment, baseline CFD, and qualifying one-change CFD reruns. The next-run plan starts from the most recent rerun that passed a support or convergence rule.",
         },
-        storageBoundary: "A saved workspace stores the entered settings, pressure values, file mappings, and case relationships. When the workspace is reopened, Kythros recalculates the metrics, diagnoses, rerun classifications, and recommendation.",
+        storageBoundary: "A saved workspace stores the entered settings, pressure values, file mappings, and run relationships. When the workspace is reopened, Kythros recalculates the metrics, diagnoses, rerun classifications, and recommendation.",
         diagnosticRuleSources: likelySources,
         methodSources: WAVE_METHOD_SOURCES,
         publicAnalyzerValidation: {
@@ -1221,12 +1239,12 @@ export default function Home() {
       <a className="brand" href="#top" aria-label="Return to empty home workspace" onClick={(event) => { event.preventDefault(); returnToEmptyWorkspace(); }}><span className="brand-mark">K</span><span><strong>KYTHROS</strong><small>BY CAELUS</small></span></a>
       <p>RDE simulation-to-test intelligence</p>
       <nav className="product-tabs" aria-label="Kythros workspaces"><button className={productView === "design" ? "active" : ""} aria-current={productView === "design" ? "page" : undefined} onClick={() => setProductView("design")}>Design &amp; plan</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Operating Envelope</button><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Comparison</button></nav>
-      <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><PwaInstallButton /><label className="button secondary workspace-file-button">Open workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Operating point</button></div>
+      <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><PwaInstallButton /><label className="button secondary workspace-file-button">Open workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Measured point</button></div>
     </header>
     {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
 
     <section className="content" id="top">
-      {productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onOpenDesign={() => setProductView("design")} onAddBaselineCfd={openBaselineCfdForOperatingPoint} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
+      {productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onLoadPublished={loadPublishedEnvelopeExample} onOpenDesign={() => setProductView("design")} onAddBaselineCfd={openBaselineCfdForOperatingPoint} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
         <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>{activeOperatingPoint?.experiment ? "Measured operating point ready" : "Welcome to Kythros"}</h1>
         <p>{activeOperatingPoint?.experiment ? "The experimental observation is already part of the measured envelope. Add a baseline CFD result only when you want to compare simulation with this measurement." : "Choose an engine and add a measured operating point. CFD comparisons are created separately and stay attached to that physical condition."}</p>
         <span className="empty-status">{activeOperatingPoint?.experiment ? "No CFD comparison has been added for this operating point" : "No measured operating point has been selected"}</span>
@@ -1249,7 +1267,7 @@ export default function Home() {
                 <td>{isBaseline ? <strong>Reference condition</strong> : <><strong>φ {signed(delta.condition.equivalenceRatio, 2)} · pressure {signed(delta.condition.inletPressureBar, 1)} bar</strong><span>Temperature {signed(delta.condition.inletTemperatureK, 0)} K</span><span>Mass flow {signed(delta.condition.massFlowKgS, 2)} kg/s</span></>}</td>
                 <td>{isBaseline ? <strong>Reference behavior</strong> : <><strong>Frequency {signed(delta.experiment.frequencyKHz, 2)} kHz</strong><span>Peak pressure {signed(delta.experiment.peakPressureMpa, 3)} MPa</span><span>Amplitude {signed(delta.experiment.pressureAmplitudeMpa, 3)} MPa · variability {signed(delta.experiment.cycleVariabilityPoints, 1)} pt</span></>}</td>
                 <td>{isBaseline ? <strong>Reference error</strong> : <><strong>Frequency error {signed(delta.cfdAgreement.frequencyErrorPointChange, 1)} pt</strong><span>Peak error {signed(delta.cfdAgreement.peakPressureErrorPointChange, 1)} pt</span><span>Amplitude error {signed(delta.cfdAgreement.amplitudeErrorPointChange, 1)} pt</span></>}</td>
-                <td><span className={`comparison-status ${relationEvidence?.state === "supports" || relationEvidence?.sequenceStatus === "converged" ? "pass" : relationEvidence?.controlled ? "review" : summary.assessment.validity.status === "Blocked" || caseReviews ? "review" : "neutral"}`}>{isBaseline ? "Baseline case" : relationEvidence?.controlled ? outcomeLabel(relationEvidence) : "Comparison only"}</span></td>
+                <td><span className={`comparison-status ${relationEvidence?.state === "supports" || relationEvidence?.sequenceStatus === "converged" ? "pass" : relationEvidence?.controlled ? "review" : summary.assessment.validity.status === "Blocked" || caseReviews ? "review" : "neutral"}`}>{isBaseline ? "Baseline CFD" : relationEvidence?.controlled ? outcomeLabel(relationEvidence) : "Comparison only"}</span></td>
               </tr>;
             })}</tbody>
           </table></div>
@@ -1261,7 +1279,7 @@ export default function Home() {
 
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
-            <div><span>COMPARISON CONCLUSION</span><h2>{assessment.validity.status === "Blocked" ? "Assessment blocked until case matching is confirmed" : totalReview ? `${totalReview} evidence check${totalReview === 1 ? "" : "s"} require review` : "No selected CFD-to-experiment difference exceeds current uncertainty"}</h2><p>{assessment.validity.status === "Blocked" ? "Do not change the CFD model from this pairing yet." : totalReview ? "The highlighted findings determine the ranked explanations and one-variable next-run plan below." : "This does not prove the CFD is valid for every output or operating point. It means this pressure case does not contain a resolved discrepancy."}</p></div>
+            <div><span>COMPARISON CONCLUSION</span><h2>{assessment.validity.status === "Blocked" ? "Assessment blocked until experiment–CFD matching is confirmed" : totalReview ? `${totalReview} evidence check${totalReview === 1 ? "" : "s"} require review` : "No selected CFD-to-experiment difference exceeds current uncertainty"}</h2><p>{assessment.validity.status === "Blocked" ? "Do not change the CFD model from this pairing yet." : totalReview ? "The highlighted findings determine the ranked explanations and one-variable next-run plan below." : "This does not prove the CFD is valid for every output or operating point. It means this run contains no resolved pressure discrepancy."}</p></div>
             <strong>{assessment.validity.status === "Blocked" ? "BLOCKED" : totalReview ? "REVIEW" : "NO RESOLVED MISMATCH"}</strong>
           </section>
 
@@ -1275,7 +1293,7 @@ export default function Home() {
           </section>
 
           <section className="workflow" aria-label="Kythros inputs and outputs">
-            <article className="inputs-panel"><div className="panel-heading"><div><span className="step-number">03</span><div><h2>Inputs used</h2><p>Every required field affects validity, calculation, or diagnosis</p></div></div><button className="text-button" onClick={openCaseEditor}>Edit case</button></div><ol className="input-list">{inputRows.map(([label, value]) => <li key={label}><i aria-hidden="true">✓</i><div><strong>{label}</strong><span>{value}</span></div></li>)}</ol></article>
+            <article className="inputs-panel"><div className="panel-heading"><div><span className="step-number">03</span><div><h2>Inputs used</h2><p>Every required field affects validity, calculation, or diagnosis</p></div></div><button className="text-button" onClick={openCaseEditor}>Edit run</button></div><ol className="input-list">{inputRows.map(([label, value]) => <li key={label}><i aria-hidden="true">✓</i><div><strong>{label}</strong><span>{value}</span></div></li>)}</ol></article>
             <div className="flow-arrow" aria-hidden="true"><span>ANALYZE</span><i>→</i></div>
             <article className="outputs-panel"><div className="panel-heading"><div><span className="step-number">04</span><div><h2>Experiment vs CFD</h2><p>CFD minus experiment, resolved against uncertainty where supported</p></div></div></div>
               <div className="comparison-table-wrap"><table className="comparison-table uncertainty-table">
@@ -1292,7 +1310,7 @@ export default function Home() {
                 <div className={waveformWithinLimit ? "metric-pass" : "metric-review"}><span>Aligned correlation</span><strong>{correlation.toFixed(3)}</strong><small>{waveformWithinLimit ? "Passes Kythros prototype limit: at least 0.700" : "Outside Kythros prototype limit: below 0.700"}</small></div>
                 <div><span>Normalized RMSE</span><strong>{(nrmse * 100).toFixed(1)}<i>%</i></strong><small>Residual relative to experimental oscillation RMS</small></div>
                 <div><span>Mean pressure bias</span><strong>{signed(pressureBias, 3)} <i>MPa</i></strong><small>Its significance is assessed in the mean-pressure row above</small></div>
-              </div><p className="metric-note">Correlation, harmonic, and variability checks use Kythros prototype product limits. The cited papers did not set these limits. Pressure, frequency, speed, impulse, and rise-time rows use the entered experiment and CFD uncertainties. {inconclusiveMetrics ? `${inconclusiveMetrics} metric${inconclusiveMetrics === 1 ? " cannot" : "s cannot"} be classified from the available case data.` : ""}</p></section>
+              </div><p className="metric-note">Correlation, harmonic, and variability checks use Kythros prototype product limits. The cited papers did not set these limits. Pressure, frequency, speed, impulse, and rise-time rows use the entered experiment and CFD uncertainties. {inconclusiveMetrics ? `${inconclusiveMetrics} metric${inconclusiveMetrics === 1 ? " cannot" : "s cannot"} be classified from the available run data.` : ""}</p></section>
 
               <section className="result-block causes-block"><div><span className="result-index">06</span><h3>Ranked diagnostic hypotheses</h3></div><ol>{assessment.hypotheses.map((hypothesis, index) => <li key={hypothesis.title}><b>{index + 1}. {hypothesis.title}</b><span>{hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`).join(" ")}</span><small>Model inputs: {hypothesis.modelInputs.filter(Boolean).join(" · ")}</small></li>)}</ol><small>These are transparent sensitivity-test priorities, not causal proof.</small></section>
 
@@ -1329,7 +1347,7 @@ export default function Home() {
         <div className="form-grid four">
           <label><span>Engine / design</span><select disabled={!measuredPointDraft} value={draftDesignId ?? ""} onChange={(event) => setDraftDesignId(event.target.value || null)}><option value="" disabled>Select engine</option>{designs.map((design) => <option key={design.id} value={design.id}>{design.name}</option>)}</select></label>
           <label><span>{measuredPointDraft ? "Operating point name" : draftRelationship ? "Rerun name" : "Baseline CFD run name"}</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label>
-          <label><span>Mean diameter (mm)</span><input disabled={rerunFieldLocked("annulusMeanDiameterMm")} type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label>
+          <label><span>{measuredPointDraft ? "Mean diameter from engine (mm)" : "Mean diameter (mm)"}</span><input disabled={measuredPointDraft || rerunFieldLocked("annulusMeanDiameterMm")} type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label>
           <label><span>Diameter uncertainty (mm)</span><input disabled={rerunFieldLocked("annulusDiameterUncertaintyMm")} type="number" step="0.01" value={numberValue(draft.annulusDiameterUncertaintyMm)} onChange={(event) => updateNumber("annulusDiameterUncertaintyMm", event.target.value)} /></label>
           <label><span>Maximum expected waves</span><input disabled={rerunFieldLocked("maximumWaveCount")} type="number" min="1" max="12" value={numberValue(draft.maximumWaveCount)} onChange={(event) => updateNumber("maximumWaveCount", event.target.value)} /></label>
         </div>
@@ -1375,9 +1393,9 @@ export default function Home() {
     </section></div>}
 
     {showHelp && <div className="modal-backdrop help-backdrop" role="presentation" onMouseDown={() => setShowHelp(false)}><section className="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}>
-      <button className="close-button" onClick={() => setShowHelp(false)} aria-label="Close input guide">×</button><span className="modal-kicker">CASE INPUT GUIDE</span><h2 id="help-title">What each case input means</h2><p>Use the documented value from the experiment or CFD setup. Kythros does not infer missing model settings or uncertainty.</p>
+      <button className="close-button" onClick={() => setShowHelp(false)} aria-label="Close input guide">×</button><span className="modal-kicker">OPERATING POINT AND RUN INPUT GUIDE</span><h2 id="help-title">What each input means</h2><p>Physical test conditions belong to the operating point; solver settings belong to a CFD run. Use documented values—Kythros does not infer missing settings or uncertainty.</p>
       <div className="help-groups">{CASE_INPUT_HELP.map((group) => <section key={group.title} className="help-group"><div><h3>{group.title}</h3><p>{group.description}</p></div><dl>{group.items.map((item) => <div key={item.key} className="help-item"><dt>{item.label}<span className={`requirement-tag ${item.requirement.toLowerCase()}`}>{item.requirement}</span></dt><dd><p>{item.definition}</p><div className="help-details"><span><b>Format / units</b>{item.format}</span><span><b>Where to find it</b>{item.obtainFrom}</span><span><b>Used for</b>{item.usedFor}</span><span><b>If missing</b>{item.missingEffect}</span></div></dd></div>)}</dl></section>)}</div>
-      <div className="help-actions"><button className="button primary" onClick={() => setShowHelp(false)}>{showLoader ? "Back to case inputs" : "Close guide"}</button></div>
+      <div className="help-actions"><button className="button primary" onClick={() => setShowHelp(false)}>{showLoader ? "Back to inputs" : "Close guide"}</button></div>
     </section></div>}
   </main>;
 }

@@ -6,7 +6,7 @@ export type RdeApplication = "Rocket" | "Air-breathing";
 export type EngineDesign = {
   id: string;
   name: string;
-  source: "user" | "demo";
+  source: "user" | "published" | "demo";
   application: RdeApplication;
   fuel: string;
   oxidizer: string;
@@ -34,13 +34,27 @@ export type OperatingPoint = {
   id: string;
   designId: string;
   name: string;
-  source: "uploaded" | "demo";
+  source: "uploaded" | "published" | "demo";
   inletPressureBar: number;
   inletTemperatureK: number;
   equivalenceRatio: number;
   massFlowKgS: number;
   backPressureBar: number;
   experiment?: OperatingPointExperiment | null;
+  publishedObservation?: PublishedOperatingPointObservation | null;
+};
+
+export type PublishedOperatingPointObservation = {
+  sourceTitle: string;
+  sourceUrl: string;
+  sourceLocator: string;
+  reportedMode: string;
+  classification: "Stable" | "Transitional" | "Unstable";
+  waveCount: number | null;
+  waveFrequencyKHz: number;
+  airMassFlowKgS: number;
+  fuelMassFlowKgS: number;
+  limitation: string;
 };
 
 export type OperatingPointExperiment = {
@@ -78,6 +92,7 @@ export type PlannedOperatingPoint = {
   equivalenceRatio: number;
   massFlowKgS: number;
   inletPressureBar: number;
+  inletTemperatureK: number;
   matchedOperatingPointId: string | null;
   nearestDistance: number | null;
 };
@@ -121,6 +136,7 @@ export function cloneOperatingPoint(point: OperatingPoint): OperatingPoint {
       probePositionsDeg: [...point.experiment.probePositionsDeg],
       signals: point.experiment.signals.map((signal) => ({ ...signal, time: [...signal.time], pressure: [...signal.pressure] })),
     } : point.experiment,
+    publishedObservation: point.publishedObservation ? { ...point.publishedObservation } : point.publishedObservation,
   };
 }
 
@@ -129,13 +145,19 @@ export function validateOperatingPoint(point: OperatingPoint) {
   if (!point.id) issues.push("Operating-point identifier is required.");
   if (!point.designId) issues.push("An engine design is required.");
   if (!point.name.trim()) issues.push("Operating-point name is required.");
-  if (point.source !== "uploaded" && point.source !== "demo") issues.push("Operating-point source must be uploaded or demonstration data.");
-  if (!(point.inletPressureBar > 0)) issues.push("Inlet pressure must be greater than zero.");
+  if (point.source !== "uploaded" && point.source !== "published" && point.source !== "demo") issues.push("Operating-point source must be uploaded, published, or demonstration data.");
+  if (point.source !== "published" && !(point.inletPressureBar > 0)) issues.push("Inlet pressure must be greater than zero.");
   if (!(point.inletTemperatureK > 0)) issues.push("Inlet temperature must be greater than zero.");
   if (!(point.equivalenceRatio > 0)) issues.push("Equivalence ratio must be greater than zero.");
   if (!(point.massFlowKgS > 0)) issues.push("Mass flow must be greater than zero.");
   if (!(point.backPressureBar > 0)) issues.push("Back pressure must be greater than zero.");
   if (Number.isFinite(point.inletPressureBar) && Number.isFinite(point.backPressureBar) && point.inletPressureBar <= point.backPressureBar) issues.push("Inlet pressure must exceed back pressure.");
+  if (point.source === "published") {
+    const observation = point.publishedObservation;
+    if (!observation?.sourceTitle.trim() || !observation.sourceUrl.trim() || !observation.sourceLocator.trim()) issues.push("Published operating points require a traceable source citation.");
+    if (!observation?.reportedMode.trim()) issues.push("Published operating points require the mode reported by the source.");
+    if (!observation || !["Stable", "Transitional", "Unstable"].includes(observation.classification)) issues.push("Published operating points require a mapped stability class.");
+  }
   if (point.experiment) {
     const experiment = point.experiment;
     if (!(experiment.annulusMeanDiameterMm > 0)) issues.push("Experiment annulus mean diameter must be greater than zero.");
@@ -151,12 +173,14 @@ export function validateOperatingPoint(point: OperatingPoint) {
 }
 
 export function operatingPointLabel(point: Pick<OperatingPoint, "inletPressureBar" | "massFlowKgS" | "equivalenceRatio" | "backPressureBar">) {
-  return `${point.inletPressureBar.toFixed(2)} bar · ${point.massFlowKgS.toFixed(3)} kg/s · φ ${point.equivalenceRatio.toFixed(2)} · Pb ${point.backPressureBar.toFixed(2)} bar`;
+  const inlet = Number.isFinite(point.inletPressureBar) ? `${point.inletPressureBar.toFixed(2)} bar inlet` : "inlet pressure not reported";
+  const back = Number.isFinite(point.backPressureBar) ? `Pb ${point.backPressureBar.toFixed(2)} bar` : "back pressure not reported";
+  return `${inlet} · ${point.massFlowKgS.toFixed(3)} kg/s · φ ${point.equivalenceRatio.toFixed(2)} · ${back}`;
 }
 
 export function validateEngineDesign(design: EngineDesign) {
   const issues: string[] = [];
-  if (design.source !== "user" && design.source !== "demo") issues.push("Design source must be user or demonstration data.");
+  if (design.source !== "user" && design.source !== "published" && design.source !== "demo") issues.push("Design source must be user, published, or demonstration data.");
   if (design.application !== "Rocket" && design.application !== "Air-breathing") issues.push("Application must be rocket or air-breathing.");
   if (!design.name.trim()) issues.push("Design name is required.");
   if (!design.fuel.trim() || !design.oxidizer.trim()) issues.push("Fuel and oxidizer are required.");
@@ -165,12 +189,12 @@ export function validateEngineDesign(design: EngineDesign) {
   if (!(design.annulusOuterDiameterMm > design.annulusInnerDiameterMm)) issues.push("Annulus outer diameter must exceed the inner diameter.");
   if (!(design.chamberLengthMm > 0)) issues.push("Chamber length must be greater than zero.");
   if (!Number.isInteger(design.injectorCount) || design.injectorCount < 1) issues.push("Injector count must be a positive integer.");
-  if (!(design.injectorDiameterMm > 0)) issues.push("Injector diameter must be greater than zero.");
-  if (!(design.injectorAngleDeg >= 0 && design.injectorAngleDeg <= 90)) issues.push("Injector angle must be between 0 and 90 degrees.");
-  if (!(design.plenumVolumeCm3 > 0)) issues.push("Plenum volume must be greater than zero.");
+  if (design.source !== "published" && !(design.injectorDiameterMm > 0)) issues.push("Injector diameter must be greater than zero.");
+  if (design.source !== "published" && !(design.injectorAngleDeg >= 0 && design.injectorAngleDeg <= 90)) issues.push("Injector angle must be between 0 and 90 degrees.");
+  if (design.source !== "published" && !(design.plenumVolumeCm3 > 0)) issues.push("Plenum volume must be greater than zero.");
   if (!(design.equivalenceRatioMin > 0 && design.equivalenceRatioMax > design.equivalenceRatioMin)) issues.push("Equivalence-ratio maximum must exceed its positive minimum.");
   if (!(design.massFlowKgSMin > 0 && design.massFlowKgSMax > design.massFlowKgSMin)) issues.push("Mass-flow maximum must exceed its positive minimum.");
-  if (!(design.inletPressureBarMin > 0 && design.inletPressureBarMax > design.inletPressureBarMin)) issues.push("Inlet-pressure maximum must exceed its positive minimum.");
+  if (design.source !== "published" && !(design.inletPressureBarMin > 0 && design.inletPressureBarMax > design.inletPressureBarMin)) issues.push("Inlet-pressure maximum must exceed its positive minimum.");
   if (!(design.inletTemperatureK > 0)) issues.push("Inlet temperature must be greater than zero.");
   if (!(design.backPressureBar > 0)) issues.push("Back pressure must be greater than zero.");
   if (Number.isFinite(design.inletPressureBarMin) && Number.isFinite(design.backPressureBar) && design.inletPressureBarMin <= design.backPressureBar) issues.push("The full inlet-pressure range must exceed the entered back pressure.");
@@ -221,15 +245,15 @@ export function buildScreeningPlan(design: EngineDesign, operatingPoints: Operat
   const massMid = midpoint(design.massFlowKgSMin, design.massFlowKgSMax);
   const pressureMid = midpoint(design.inletPressureBarMin, design.inletPressureBarMax);
   const definitions: Omit<PlannedOperatingPoint, "matchedOperatingPointId" | "nearestDistance">[] = [
-    { id: "baseline", role: "Baseline", equivalenceRatio: phiMid, massFlowKgS: massMid, inletPressureBar: pressureMid },
-    { id: "phi-low", role: "Equivalence-ratio bracket", equivalenceRatio: design.equivalenceRatioMin, massFlowKgS: massMid, inletPressureBar: pressureMid },
-    { id: "phi-high", role: "Equivalence-ratio bracket", equivalenceRatio: design.equivalenceRatioMax, massFlowKgS: massMid, inletPressureBar: pressureMid },
-    { id: "mass-low", role: "Mass-flow bracket", equivalenceRatio: phiMid, massFlowKgS: design.massFlowKgSMin, inletPressureBar: pressureMid },
-    { id: "mass-high", role: "Mass-flow bracket", equivalenceRatio: phiMid, massFlowKgS: design.massFlowKgSMax, inletPressureBar: pressureMid },
-    { id: "coupled-low", role: "Coupled boundary", equivalenceRatio: design.equivalenceRatioMin, massFlowKgS: design.massFlowKgSMin, inletPressureBar: pressureMid },
-    { id: "coupled-high", role: "Coupled boundary", equivalenceRatio: design.equivalenceRatioMax, massFlowKgS: design.massFlowKgSMax, inletPressureBar: pressureMid },
-    { id: "pressure-low", role: "Pressure bracket", equivalenceRatio: phiMid, massFlowKgS: massMid, inletPressureBar: design.inletPressureBarMin },
-    { id: "pressure-high", role: "Pressure bracket", equivalenceRatio: phiMid, massFlowKgS: massMid, inletPressureBar: design.inletPressureBarMax },
+    { id: "baseline", role: "Baseline", equivalenceRatio: phiMid, massFlowKgS: massMid, inletPressureBar: pressureMid, inletTemperatureK: design.inletTemperatureK },
+    { id: "phi-low", role: "Equivalence-ratio bracket", equivalenceRatio: design.equivalenceRatioMin, massFlowKgS: massMid, inletPressureBar: pressureMid, inletTemperatureK: design.inletTemperatureK },
+    { id: "phi-high", role: "Equivalence-ratio bracket", equivalenceRatio: design.equivalenceRatioMax, massFlowKgS: massMid, inletPressureBar: pressureMid, inletTemperatureK: design.inletTemperatureK },
+    { id: "mass-low", role: "Mass-flow bracket", equivalenceRatio: phiMid, massFlowKgS: design.massFlowKgSMin, inletPressureBar: pressureMid, inletTemperatureK: design.inletTemperatureK },
+    { id: "mass-high", role: "Mass-flow bracket", equivalenceRatio: phiMid, massFlowKgS: design.massFlowKgSMax, inletPressureBar: pressureMid, inletTemperatureK: design.inletTemperatureK },
+    { id: "coupled-low", role: "Coupled boundary", equivalenceRatio: design.equivalenceRatioMin, massFlowKgS: design.massFlowKgSMin, inletPressureBar: pressureMid, inletTemperatureK: design.inletTemperatureK },
+    { id: "coupled-high", role: "Coupled boundary", equivalenceRatio: design.equivalenceRatioMax, massFlowKgS: design.massFlowKgSMax, inletPressureBar: pressureMid, inletTemperatureK: design.inletTemperatureK },
+    { id: "pressure-low", role: "Pressure bracket", equivalenceRatio: phiMid, massFlowKgS: massMid, inletPressureBar: design.inletPressureBarMin, inletTemperatureK: design.inletTemperatureK },
+    { id: "pressure-high", role: "Pressure bracket", equivalenceRatio: phiMid, massFlowKgS: massMid, inletPressureBar: design.inletPressureBarMax, inletTemperatureK: design.inletTemperatureK },
   ];
   const observations = operatingPoints.filter((item) => item.designId === design.id && item.source === "uploaded");
   return definitions.map((point) => {

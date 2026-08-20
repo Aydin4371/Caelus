@@ -26,18 +26,18 @@ type InputHelpDetails = Omit<CaseInputHelpGroup["items"][number], "key" | "label
 
 const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: Array<Pick<CaseInputHelpGroup["items"][number], "key" | "label" | "definition">> }> = [
   {
-    title: "Case and geometry",
-    description: "Names the case, defines the annulus geometry, and tells Kythros where each synchronized pressure probe is located.",
+    title: "Operating point, run, and geometry",
+    description: "Names the physical operating point or CFD run, inherits the annulus geometry from the engine, and records where each synchronized pressure probe is located.",
     items: [
-      { key: "name", label: "Case name", definition: "A short identifier for this experiment–CFD comparison, such as Baseline 8 bar." },
-      { key: "annulusMeanDiameterMm", label: "Mean diameter (mm)", definition: "The annulus mean-line diameter used with the measured wave frequency to calculate circumferential wave speed." },
+      { key: "name", label: "Operating-point or run name", definition: "A short identifier for the physical test condition or CFD run, such as 8 bar · φ 1.0 or Baseline CFD." },
+      { key: "annulusMeanDiameterMm", label: "Mean diameter from engine (mm)", definition: "The annulus mean-line diameter calculated from the selected engine geometry and used with measured wave frequency to calculate circumferential wave speed." },
       { key: "annulusDiameterUncertaintyMm", label: "Diameter uncertainty (mm)", definition: "Standard uncertainty of the mean-line diameter used when propagating uncertainty into circumferential wave speed." },
       { key: "probePositionsDeg", label: "Probe angles (deg)", definition: "The circumferential locations of P1 through PN in one angular coordinate system shared by experiment and CFD. Use at least three; four or more nonuniform locations are preferred." },
       { key: "maximumWaveCount", label: "Maximum expected waves", definition: "The largest physically plausible simultaneous co-rotating wave count included in the phase-mode search. Use prior imaging, operating knowledge, or a conservative upper bound." },
       { key: "probeSynchronizationConfirmed", label: "Probe synchronization", definition: "Confirms that every pressure column within each file was acquired or exported on one common clock. This is required for direction, wave count, and phase calculations." },
       { key: "comparisonMatchConfirmed", label: "Comparison-match confirmation", definition: "Confirms that geometry, operating point, probe locations, and analysis window match before Kythros interprets any difference." },
-      { key: "baselineCaseId", label: "Case family baseline · optional", definition: "Starts a case family. Every related rerun must reuse this baseline's experiment and physical operating point." },
-      { key: "changedVariable", label: "Single CFD change · optional", definition: "Declares the only CFD setting group allowed to differ from the selected starting case. Kythros verifies the saved settings before using the rerun to update the plan." },
+      { key: "baselineCaseId", label: "Baseline CFD run · optional", definition: "Links later CFD reruns to the baseline at this operating point. Every linked rerun reuses the operating point's experiment and physical condition." },
+      { key: "changedVariable", label: "Single CFD change · optional", definition: "Declares the only CFD setting group allowed to differ from the selected starting run. Kythros verifies the saved settings before using the rerun to update the plan." },
       { key: "changeDescription", label: "Change description · optional", definition: "Records exactly what changed, including the old and new values, for example front-cell size 0.25 mm → 0.125 mm." },
     ],
   },
@@ -53,7 +53,7 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
   },
   {
     title: "Operating conditions",
-    description: "Defines the physical state represented by both datasets and helps verify whether related cases are comparable.",
+    description: "Defines the physical state stored once on the operating point and inherited by every CFD run beneath it.",
     items: [
       { key: "inletPressureBar", label: "Inlet pressure (bar)", definition: "The documented inlet or plenum pressure for the case. Use one consistent pressure definition across related cases." },
       { key: "backPressureBar", label: "Back pressure (bar)", definition: "The documented downstream pressure paired with this operating point. Use one consistent static or total-pressure definition across the engine dataset." },
@@ -126,8 +126,8 @@ const INPUT_HELP_DETAILS = {
     "format": "Free text; use a unique run or operating-point identifier.",
     "requirement": "Required",
     "obtainFrom": "Experiment log or CFD run directory.",
-    "usedFor": "Case tabs, reports, exports, and related-case links.",
-    "missingEffect": "The case cannot be saved or distinguished from other runs."
+    "usedFor": "Operating-point and run selectors, reports, exports, and rerun links.",
+    "missingEffect": "The operating point or run cannot be saved or distinguished from others."
   },
   "annulusMeanDiameterMm": {
     "format": "Millimetres; mean of inner and outer annulus diameters at the probe plane.",
@@ -172,18 +172,18 @@ const INPUT_HELP_DETAILS = {
     "missingEffect": "Diagnosis is blocked; Kythros recommends correcting the pairing."
   },
   "baselineCaseId": {
-    "format": "Select one existing Kythros case.",
+    "format": "Select one existing baseline CFD run at this operating point.",
     "requirement": "Optional",
-    "obtainFrom": "Kythros case list.",
+    "obtainFrom": "Kythros run list for the selected operating point.",
     "usedFor": "Groups one baseline with reruns that reuse its experiment and physical operating point.",
-    "missingEffect": "The case is analyzed by itself. It cannot update a related case family's plan."
+    "missingEffect": "The run is analyzed as a standalone comparison and cannot update the operating point's one-change rerun plan."
   },
   "changedVariable": {
     "format": "Choose exactly one CFD variable group.",
     "requirement": "Conditional",
     "obtainFrom": "Simulation change log.",
-    "usedFor": "Checks whether exactly one CFD setting group changed from the selected starting case.",
-    "missingEffect": "Kythros treats the case as a comparison only and does not use it to update the plan."
+    "usedFor": "Checks whether exactly one CFD setting group changed from the selected starting run.",
+    "missingEffect": "Kythros treats the run as a comparison only and does not use it to update the plan."
   },
   "changeDescription": {
     "format": "Exact before → after wording, including values and units where known.",
@@ -293,7 +293,7 @@ const INPUT_HELP_DETAILS = {
   "spatialOrder": {
     "format": "Positive integer formal order in smooth regions.",
     "requirement": "Required",
-    "obtainFrom": "Solver documentation and case input.",
+    "obtainFrom": "Solver documentation and run input.",
     "usedFor": "Interprets numerical dissipation with the spatial scheme.",
     "missingEffect": "Spatial-resolution context is incomplete."
   },

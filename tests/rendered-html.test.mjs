@@ -57,12 +57,12 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(page, /productView/);
   assert.match(page, /<DesignPlanner designs=\{designs\}/);
   assert.match(page, /<OperatingEnvelope designs=\{designs\}/);
-  assert.match(envelope, /Measured mode by operating point/);
+  assert.match(envelope, /Observed mode by operating point/);
   assert.match(envelope, /Predictive layer/);
-  assert.match(envelope, /real-data and validation gates pass/);
-  assert.match(envelope, /Measured, not predicted/);
+  assert.match(envelope, /raw-data and validation gates pass/);
+  assert.match(envelope, /Observed, not predicted/);
   assert.match(envelope, /Held fixed for this 2D slice/);
-  assert.match(envelope, /Most informative next test/);
+  assert.match(envelope, /Next-test recommendation/);
   assert.match(envelope, /Open comparison/);
   assert.match(design, /Nine traceable operating points/);
   assert.match(design, /It is not an operability prediction/);
