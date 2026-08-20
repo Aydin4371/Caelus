@@ -1,0 +1,74 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { AnalysisCase } from "../lib/caevera-types.ts";
+import { EMPTY_ENGINE_DESIGN, buildScreeningPlan, calculateDesign, selectCoverageNextPoint, validateEngineDesign } from "../lib/design-workspace.ts";
+import { makeDemoProbeSignals } from "../lib/rde-analysis.ts";
+import { deserializeWorkspace, serializeWorkspace } from "../lib/workspace.ts";
+
+const design = {
+  ...EMPTY_ENGINE_DESIGN,
+  id: "design-1",
+  name: "Hydrogen annular demonstrator",
+  annulusInnerDiameterMm: 78,
+  annulusOuterDiameterMm: 86,
+  chamberLengthMm: 120,
+  injectorCount: 120,
+  injectorDiameterMm: 0.8,
+  plenumVolumeCm3: 300,
+  equivalenceRatioMin: 0.7,
+  equivalenceRatioMax: 1.3,
+  massFlowKgSMin: 0.4,
+  massFlowKgSMax: 0.8,
+  inletPressureBarMin: 6,
+  inletPressureBarMax: 10,
+  inletTemperatureK: 300,
+  backPressureBar: 1,
+};
+
+test("calculates geometry and flow quantities directly from entered design values", () => {
+  assert.deepEqual(validateEngineDesign(design), []);
+  const result = calculateDesign(design);
+  assert.equal(result.meanDiameterMm, 82);
+  assert.equal(result.annulusGapMm, 4);
+  assert.ok(result.annulusAreaMm2 > 0);
+  assert.ok(result.injectorAreaRatioPct > 0);
+  assert.equal(result.minimumPressureRatio, 6);
+});
+
+test("starts an unobserved screening plan at the entered range center", () => {
+  const points = buildScreeningPlan(design, []);
+  assert.equal(points.length, 9);
+  assert.equal(selectCoverageNextPoint(points)?.id, "baseline");
+  assert.equal(points[0].equivalenceRatio, 1);
+  assert.ok(Math.abs(points[0].massFlowKgS - 0.6) < 1e-12);
+  assert.equal(points[0].inletPressureBar, 8);
+});
+
+test("marks a directly observed operating point without inventing predictions", () => {
+  const demo = makeDemoProbeSignals();
+  const item = {
+    id: "observed",
+    designId: design.id,
+    source: "uploaded",
+    relationship: null,
+    metadata: {
+      name: "Observed center",
+      equivalenceRatio: 1,
+      massFlowKgS: 0.6,
+      inletPressureBar: 8,
+    },
+    testSignals: demo.test,
+    cfdSignals: demo.cfd,
+  } as AnalysisCase;
+  const points = buildScreeningPlan(design, [item]);
+  assert.equal(points[0].matchedCaseId, item.id);
+  assert.notEqual(selectCoverageNextPoint(points)?.id, "baseline");
+});
+
+test("saves engine designs without saving generated recommendations", () => {
+  const text = serializeWorkspace({ cases: [], activeCaseId: null, baselineCaseId: null, designs: [design], activeDesignId: design.id });
+  assert.doesNotMatch(text, /coverage-based next point|predicted stable/i);
+  const restored = deserializeWorkspace(text);
+  assert.equal(restored.designs[0].name, design.name);
+  assert.equal(restored.activeDesignId, design.id);
+});
