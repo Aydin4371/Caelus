@@ -3,6 +3,7 @@
 import { ChangeEvent, useMemo, useState } from "react";
 import { PwaInstallButton } from "@/components/pwa-install-button";
 import { PressureFileMapper } from "@/components/pressure-file-mapper";
+import { DesignPlanner } from "@/components/design-planner";
 import { OperatingEnvelope } from "@/components/operating-envelope";
 import { CONTROLLED_RERUN_FIELDS, buildCaseDelta, buildCaseHistoryEvidence, caseFieldLabel, selectIndependentPrecedents, selectPlanningEvidence, summarizeCase, type CaseHistoryEvidence } from "@/lib/case-history";
 import {
@@ -19,6 +20,7 @@ import { buildDecisionQuality, type DecisionQuality } from "@/lib/decision-quali
 import { KNOWLEDGE_BASE_VERSION, sourcesFor, type DiagnosticResearchClaim, type DiagnosticSource } from "@/lib/diagnostic-knowledge";
 import { CASE_INPUT_HELP } from "@/lib/case-input-help";
 import { WAVE_METHOD_SOURCES } from "@/lib/wave-method-sources";
+import { calculateDesign, type EngineDesign, type PlannedOperatingPoint } from "@/lib/design-workspace";
 import type { MappedProbeImport } from "@/lib/data-import";
 import { PUBLISHED_VALIDATION_SOURCES, PUBLISHED_VALIDATION_SUMMARY, RAW_DATASET_VALIDATION_CASES } from "@/lib/published-benchmarks";
 import { deserializeWorkspace, serializeWorkspace, workspaceFileName } from "@/lib/workspace";
@@ -498,6 +500,9 @@ function EngineeringDecisionPanel({
 }
 export default function Home() {
   const [cases, setCases] = useState<AnalysisCase[]>([]);
+  const [designs, setDesigns] = useState<EngineDesign[]>([]);
+  const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
+  const [draftDesignId, setDraftDesignId] = useState<string | null>(null);
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
   const [caseBaselineId, setCaseBaselineId] = useState<string | null>(null);
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
@@ -513,7 +518,7 @@ export default function Home() {
   const [activeView, setActiveView] = useState<"signals" | "spectrum" | "residual" | "phase" | "cycles">("signals");
   const [activeProbe, setActiveProbe] = useState(0);
   const [workspaceView, setWorkspaceView] = useState<"case" | "compare">("case");
-  const [productView, setProductView] = useState<"comparison" | "envelope">("comparison");
+  const [productView, setProductView] = useState<"design" | "envelope" | "comparison">("design");
 
   const activeCase = cases.find((item) => item.id === activeCaseId) ?? null;
   const probeSetComparison = useMemo(() => activeCase ? compareProbeSets(activeCase.testSignals, activeCase.cfdSignals) : null, [activeCase]);
@@ -616,6 +621,29 @@ export default function Home() {
   function openNewCase() {
     setEditingCaseId(null);
     setDraft(cloneMetadata(EMPTY_METADATA));
+    setDraftDesignId(activeDesignId);
+    setDraftRelationship(null);
+    setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
+  }
+
+  function openOperatingPoint(designId: string, point?: PlannedOperatingPoint) {
+    const design = designs.find((item) => item.id === designId);
+    const nextDraft = cloneMetadata(EMPTY_METADATA);
+    if (design) {
+      const calculated = calculateDesign(design);
+      nextDraft.annulusMeanDiameterMm = calculated.meanDiameterMm;
+      nextDraft.inletTemperatureK = design.inletTemperatureK;
+      if (point) {
+        nextDraft.name = `${design.name} · φ ${point.equivalenceRatio.toFixed(2)} · ${point.massFlowKgS.toFixed(3)} kg/s`;
+        nextDraft.equivalenceRatio = point.equivalenceRatio;
+        nextDraft.massFlowKgS = point.massFlowKgS;
+        nextDraft.inletPressureBar = point.inletPressureBar;
+      }
+    }
+    setActiveDesignId(designId);
+    setDraftDesignId(designId);
+    setEditingCaseId(null);
+    setDraft(nextDraft);
     setDraftRelationship(null);
     setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
@@ -624,6 +652,7 @@ export default function Home() {
     if (!activeCase) return;
     setEditingCaseId(activeCase.id);
     setDraft(cloneMetadata(activeCase.metadata));
+    setDraftDesignId(activeCase.designId ?? null);
     setDraftRelationship(activeCase.relationship ?? null);
     setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
@@ -642,6 +671,7 @@ export default function Home() {
           : current.name;
         return inherited;
       });
+      setDraftDesignId(reference.designId ?? null);
     }
     setTestPending(null);
     setCfdPending(null);
@@ -751,7 +781,7 @@ export default function Home() {
       const cfdProvenance = cfdPending?.provenance ?? editingCase?.imports?.cfd;
       const nextImports = experimentProvenance && cfdProvenance ? { experiment: experimentProvenance, cfd: cfdProvenance } : null;
       const nextRelationship = effectiveRelationship ? { ...effectiveRelationship, referenceCaseId: effectiveRelationship.referenceCaseId ?? effectiveRelationship.baselineCaseId } : null;
-      const nextCase: AnalysisCase = { id, source: editingCase?.source ?? "uploaded", relationship: nextRelationship, metadata: cloneMetadata(draft), testSignals: nextTest, cfdSignals: nextCfd, imports: nextImports };
+      const nextCase: AnalysisCase = { id, designId: editingCase?.designId ?? referenceCase?.designId ?? draftDesignId, source: editingCase?.source ?? "uploaded", relationship: nextRelationship, metadata: cloneMetadata(draft), testSignals: nextTest, cfdSignals: nextCfd, imports: nextImports };
       setCases((current) => editingCaseId ? current.map((item) => item.id === editingCaseId ? nextCase : item) : [...current, nextCase]);
       if (!caseBaselineId) setCaseBaselineId(id);
       setActiveCaseId(id); setWorkspaceView("case"); setActiveProbe(0); setReviewingRerun(false); setShowLoader(false); setError("");
@@ -766,6 +796,33 @@ export default function Home() {
     const baselineId = `demo-${stamp}-baseline`;
     const meshId = `demo-${stamp}-mesh`;
     const wallId = `demo-${stamp}-wall`;
+    const designId = `demo-${stamp}-design`;
+    const demoDesign: EngineDesign = {
+      id: designId,
+      name: "Synthetic annular demonstrator",
+      source: "demo",
+      application: "Rocket",
+      fuel: "Hydrogen",
+      oxidizer: "Air",
+      annulusInnerDiameterMm: 78,
+      annulusOuterDiameterMm: 86,
+      chamberLengthMm: 120,
+      injectorType: "Discrete orifices",
+      injectorCount: 120,
+      injectorDiameterMm: 0.8,
+      injectorAngleDeg: 0,
+      plenumVolumeCm3: 300,
+      wallCondition: "Isothermal 450 K",
+      exhaustConfiguration: "Open exit",
+      equivalenceRatioMin: 0.75,
+      equivalenceRatioMax: 1.25,
+      massFlowKgSMin: 0.4,
+      massFlowKgSMax: 0.84,
+      inletPressureBarMin: 6,
+      inletPressureBarMax: 10,
+      inletTemperatureK: 300,
+      backPressureBar: 1,
+    };
     const baseMetadata: CaseMetadata = {
         name: "Synthetic baseline",
         annulusMeanDiameterMm: 82,
@@ -819,21 +876,23 @@ export default function Home() {
     const fineSignals = blendTowardExperiment(0.95);
     const wallSignals = fineSignals.map((signal, probe) => ({ ...signal, pressure: signal.pressure.map((value, index) => value + 0.001 * (demo.test[probe].pressure[index] - value)) }));
     const examples: AnalysisCase[] = [
-      { id: baselineId, source: "demo", relationship: null, metadata: baseMetadata, testSignals: cloneSignals(demo.test), cfdSignals: cloneSignals(demo.cfd) },
+      { id: baselineId, designId, source: "demo", relationship: null, metadata: baseMetadata, testSignals: cloneSignals(demo.test), cfdSignals: cloneSignals(demo.cfd) },
       {
-        id: meshId, source: "demo",
+        id: meshId, designId, source: "demo",
         relationship: { baselineCaseId: baselineId, referenceCaseId: baselineId, changedVariable: "mesh", description: "50% front-region cell-size refinement" },
         metadata: fineMetadata,
         testSignals: cloneSignals(demo.test), cfdSignals: fineSignals,
       },
       {
-        id: wallId, source: "demo",
+        id: wallId, designId, source: "demo",
         relationship: { baselineCaseId: baselineId, referenceCaseId: meshId, changedVariable: "wall", description: "Adjacent wall thermal boundary" },
         metadata: { ...cloneMetadata(fineMetadata), name: "Synthetic wall sensitivity", wallBoundaryCondition: "Adiabatic", solverRuntimeHours: 18.5 },
         testSignals: cloneSignals(demo.test), cfdSignals: wallSignals,
       },
     ];
     setCases((current) => [...current, ...examples]);
+    setDesigns((current) => [...current, demoDesign]);
+    setActiveDesignId(designId);
     setCaseBaselineId(examples[0].id);
     setActiveCaseId(examples[0].id); setWorkspaceView("case"); setActiveProbe(0);
   }
@@ -848,12 +907,13 @@ export default function Home() {
 
   function downloadReport() {
     if (!activeCase || !testMode || !cfdMode || !assessment || !decisionQuality || !planningCase) return;
+    const engineDesign = designs.find((design) => design.id === activeCase.designId) ?? null;
     const report = {
       schema: "caevera-rde-case-report",
       analysisVersion: ANALYSIS_VERSION,
       knowledgeBaseVersion: KNOWLEDGE_BASE_VERSION,
       generatedAt: new Date().toISOString(),
-      inputs: { metadata: activeCase.metadata, relationship: activeCase.relationship ?? null, fileMappings: activeCase.imports ?? null, experimentalSources: activeCase.testSignals.map((signal) => signal.name), cfdSources: activeCase.cfdSignals.map((signal) => signal.name), units: { time: "ms", pressure: "MPa", frequency: "kHz", waveSpeed: "m/s" } },
+      inputs: { engineDesign, metadata: activeCase.metadata, relationship: activeCase.relationship ?? null, fileMappings: activeCase.imports ?? null, experimentalSources: activeCase.testSignals.map((signal) => signal.name), cfdSources: activeCase.cfdSignals.map((signal) => signal.name), units: { time: "ms", pressure: "MPa", frequency: "kHz", waveSpeed: "m/s" } },
       outputs: { experimentMode: testMode, cfdMode, validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, activeCaseOutcome: activeCaseEvidence, decisionQuality, controlledNextRun: planAssessment?.nextRun ?? assessment.nextRun, caseHistoryEvidence, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias, sharedAlignmentLagUs: probeSetComparison?.sharedLagUs, individualLagUs: probeSetComparison?.individualLagUs, alignmentSpreadUs: probeSetComparison?.alignmentSpreadUs } },
       citedSources: sourcesFor([...new Set(assessment.hypotheses.flatMap((hypothesis) => hypothesis.sourceIds))]),
       methodSources: WAVE_METHOD_SOURCES,
@@ -877,6 +937,7 @@ export default function Home() {
           role: "Software validation only. Public benchmark cases test the analyzer; they do not count as independent case-family evidence and do not choose the recommendation for this user-provided case.",
         },
       },
+      predictiveModelState: { operability: "Not fitted", backflow: "Not available", performance: "Not available", thermal: "Not available", explanation: "No predictive output is substituted for a missing validated model." },
       perProbe: comparisons,
       methods: ["shared bounded cross-correlation", "Hann-windowed FFT pressure spectrum", "cycle-by-cycle passage tracking", "sliding-window circumferential phase-mode fit", "uncertainty resolution by RSS", "structured diagnostic rules", "adaptive controlled-rerun outcome classification"],
       limitations: ["The ranked explanations choose which one-change CFD test to run next; they do not prove causality.", "The support, rejection, and convergence limits are Caevera prototype product rules. They are not probabilities and are not taken from the cited papers.", "Caevera propagates pressure and timing uncertainty only into the scalar outputs that support that calculation.", "Wave-mode inference requires synchronized probes and assumes one dominant rotating mode. Caevera reports ambiguous or simultaneous modes as not identifiable.", "This product version does not assess thermal, performance, combustion, or flowfield agreement."],
@@ -886,8 +947,8 @@ export default function Home() {
   }
 
   function downloadWorkspace() {
-    if (!cases.length) return;
-    const content = serializeWorkspace({ cases, activeCaseId, baselineCaseId: caseBaselineId });
+    if (!cases.length && !designs.length) return;
+    const content = serializeWorkspace({ cases, activeCaseId, baselineCaseId: caseBaselineId, designs, activeDesignId });
     const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
@@ -902,8 +963,10 @@ export default function Home() {
     if (!file) return;
     try {
       const restored = deserializeWorkspace(await file.text());
-      if (cases.length && !window.confirm("Replace the current browser-session cases with this saved workspace?")) return;
+      if ((cases.length || designs.length) && !window.confirm("Replace the current browser-session designs and cases with this saved workspace?")) return;
       setCases(restored.cases);
+      setDesigns(restored.designs);
+      setActiveDesignId(restored.activeDesignId);
       setActiveCaseId(restored.activeCaseId);
       setCaseBaselineId(restored.baselineCaseId);
       setEditingCaseId(null);
@@ -927,8 +990,18 @@ export default function Home() {
   const updateText = (key: keyof CaseMetadata, value: string) => setDraft((current) => ({ ...current, [key]: value }));
   const numberValue = (value: number) => Number.isFinite(value) ? value : "";
 
+  function saveEngineDesign(design: EngineDesign) {
+    setDesigns((current) => current.some((item) => item.id === design.id)
+      ? current.map((item) => item.id === design.id ? design : item)
+      : [...current, design]);
+    setActiveDesignId(design.id);
+  }
+
   function returnToEmptyWorkspace() {
     setCases([]);
+    setDesigns([]);
+    setActiveDesignId(null);
+    setDraftDesignId(null);
     setActiveCaseId(null);
     setCaseBaselineId(null);
     setEditingCaseId(null);
@@ -943,7 +1016,7 @@ export default function Home() {
     setActiveProbe(0);
     setActiveView("signals");
     setWorkspaceView("case");
-    setProductView("comparison");
+    setProductView("design");
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
     requestAnimationFrame(() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
@@ -952,13 +1025,13 @@ export default function Home() {
     <header className="product-header">
       <a className="brand" href="#top" aria-label="Return to empty home workspace" onClick={(event) => { event.preventDefault(); returnToEmptyWorkspace(); }}><span className="brand-mark">C</span><span><strong>CAEVERA</strong><small>BY CAELUS</small></span></a>
       <p>RDE simulation-to-test intelligence</p>
-      <nav className="product-tabs" aria-label="Caevera workspaces"><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Compare &amp; diagnose</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Operating envelope</button></nav>
+      <nav className="product-tabs" aria-label="Caevera workspaces"><button className={productView === "design" ? "active" : ""} aria-current={productView === "design" ? "page" : undefined} onClick={() => setProductView("design")}>Design &amp; plan</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Operating map</button><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Compare &amp; diagnose</button></nav>
       <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><PwaInstallButton /><label className="button secondary workspace-file-button">Open workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Add case</button></div>
     </header>
     {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
 
     <section className="content" id="top">
-      {productView === "envelope" ? <OperatingEnvelope cases={cases} onAddCase={openNewCase} onLoadDemo={loadExampleCaseHistory} onOpenCase={(caseId) => { setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
+      {productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} cases={cases} onSelectDesign={setActiveDesignId} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { setActiveDesignId(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} cases={cases} onSelectDesign={setActiveDesignId} onAddCase={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onOpenDesign={() => setProductView("design")} onOpenCase={(caseId) => { setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
         <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>Welcome to Caevera</h1>
         <p>Compare experimental pressure-probe data with CFD. Caevera identifies differences larger than the stated uncertainty, recommends one CFD change, and uses the rerun result to choose what happens next.</p>
         <span className="empty-status">No case has been added yet</span>
@@ -1060,7 +1133,7 @@ export default function Home() {
         <div className="modal-actions"><button className="button secondary" onClick={() => setReviewingRerun(false)}>Back to inputs</button><button className="button primary" onClick={applyCase}>Analyze rerun →</button></div>
       </section> : <>
 
-      <div className="form-section"><h3>Case + geometry</h3><div className="form-grid four"><label><span>Case name</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label><label><span>Mean diameter (mm)</span><input disabled={rerunFieldLocked("annulusMeanDiameterMm")} type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label><label><span>Diameter uncertainty (mm)</span><input disabled={rerunFieldLocked("annulusDiameterUncertaintyMm")} type="number" step="0.01" value={numberValue(draft.annulusDiameterUncertaintyMm)} onChange={(event) => updateNumber("annulusDiameterUncertaintyMm", event.target.value)} /></label><label><span>Maximum expected waves</span><input disabled={rerunFieldLocked("maximumWaveCount")} type="number" min="1" max="12" value={numberValue(draft.maximumWaveCount)} onChange={(event) => updateNumber("maximumWaveCount", event.target.value)} /></label></div><label className="probe-angle-editor"><span>Probe angles (deg) · minimum 3, nonuniform preferred</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input disabled={rerunFieldLocked("probePositionsDeg")} key={index} type="number" aria-label={`Probe ${index + 1} angle`} placeholder={`P${index + 1}`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}<button disabled={controlledRerunDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: [...current.probePositionsDeg, Number.NaN] }))}>+ probe</button>{draft.probePositionsDeg.length > 3 && <button disabled={controlledRerunDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.slice(0, -1) }))}>Remove</button>}</div></label><label className="confirmation-check"><input disabled={rerunFieldLocked("probeSynchronizationConfirmed")} type="checkbox" checked={draft.probeSynchronizationConfirmed} onChange={(event) => setDraft((current) => ({ ...current, probeSynchronizationConfirmed: event.target.checked }))} /><span>I confirm every pressure probe in each file uses one synchronized acquisition time base.</span></label><label className="confirmation-check"><input disabled={rerunFieldLocked("comparisonMatchConfirmed")} type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label></div>
+      <div className="form-section"><h3>Case + geometry</h3><div className="form-grid four"><label><span>Engine design for operating map</span><select disabled={Boolean(draftRelationship)} value={draftDesignId ?? ""} onChange={(event) => setDraftDesignId(event.target.value || null)}><option value="">Comparison only, not mapped</option>{designs.map((design) => <option key={design.id} value={design.id}>{design.name}</option>)}</select></label><label><span>Case name</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label><label><span>Mean diameter (mm)</span><input disabled={rerunFieldLocked("annulusMeanDiameterMm")} type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label><label><span>Diameter uncertainty (mm)</span><input disabled={rerunFieldLocked("annulusDiameterUncertaintyMm")} type="number" step="0.01" value={numberValue(draft.annulusDiameterUncertaintyMm)} onChange={(event) => updateNumber("annulusDiameterUncertaintyMm", event.target.value)} /></label><label><span>Maximum expected waves</span><input disabled={rerunFieldLocked("maximumWaveCount")} type="number" min="1" max="12" value={numberValue(draft.maximumWaveCount)} onChange={(event) => updateNumber("maximumWaveCount", event.target.value)} /></label></div><label className="probe-angle-editor"><span>Probe angles (deg) · minimum 3, nonuniform preferred</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input disabled={rerunFieldLocked("probePositionsDeg")} key={index} type="number" aria-label={`Probe ${index + 1} angle`} placeholder={`P${index + 1}`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}<button disabled={controlledRerunDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: [...current.probePositionsDeg, Number.NaN] }))}>+ probe</button>{draft.probePositionsDeg.length > 3 && <button disabled={controlledRerunDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.slice(0, -1) }))}>Remove</button>}</div></label><label className="confirmation-check"><input disabled={rerunFieldLocked("probeSynchronizationConfirmed")} type="checkbox" checked={draft.probeSynchronizationConfirmed} onChange={(event) => setDraft((current) => ({ ...current, probeSynchronizationConfirmed: event.target.checked }))} /><span>I confirm every pressure probe in each file uses one synchronized acquisition time base.</span></label><label className="confirmation-check"><input disabled={rerunFieldLocked("comparisonMatchConfirmed")} type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label></div>
 
       {cases.length > 0 && <div className="form-section"><h3>{editingCaseId ? "Case relationship" : "Related rerun · optional"}</h3><p className="form-help">{editingCaseId ? "This relationship is locked because changing it would change the meaning of the saved result. Add a new case to test a different CFD change." : "A case family is one baseline plus reruns that reuse its experiment and physical operating point. Choose the family baseline and the exact case whose CFD settings you are changing."}</p><div className="form-grid four">
         <label><span>Case family baseline</span><select disabled={Boolean(editingCaseId)} value={draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseCaseFamily(event.target.value)}><option value="">Not a related rerun</option>{cases.filter((item) => item.id !== editingCaseId && !item.relationship).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
