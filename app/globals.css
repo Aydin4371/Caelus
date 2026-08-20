@@ -1024,3 +1024,92 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
   .envelope-slice-controls { align-items: stretch; flex-direction: column; }
   .envelope-slice-controls small { margin-left: 0; }
 }
+
+/* Geometry and spatial multi-physics evidence */
+.design-geometry-card { grid-column: 1 / -1; }
+.rde-schematic { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcf8; }
+.rde-schematic svg { display: block; width: 100%; min-height: 245px; }
+.rde-schematic text { fill: #486875; font-size: 11px; }
+.schematic-wall { fill: #dbe6e4; stroke: #264e5d; stroke-width: 2; }
+.schematic-core { fill: #fffaf0; stroke: #264e5d; stroke-width: 2; }
+.schematic-annulus { fill: none; stroke: #8ed2df; stroke-width: 28; opacity: .72; }
+.schematic-injector { fill: #c27b2a; stroke: #fffaf0; stroke-width: .8; }
+.schematic-wave { fill: none; stroke: #c84f58; stroke-width: 4; stroke-linecap: round; }
+.schematic-wave-marker { fill: #c84f58; }
+.schematic-flow-marker { fill: #2588a2; }
+.schematic-core-label { font-size: 10px !important; }
+.schematic-section-shell { fill: #eef3f1; stroke: #264e5d; stroke-width: 2; }
+.schematic-section-core { fill: #fffaf0; stroke: #264e5d; stroke-width: 1.5; }
+.schematic-section-annulus { stroke: #2588a2; stroke-width: 1.5; }
+.schematic-exhaust { fill: #f7efe1; stroke: #264e5d; stroke-width: 1.5; }
+.schematic-hot-wall { stroke: #c84f58; stroke-width: 3; }
+.schematic-flow { stroke: #2588a2; stroke-width: 2.5; }
+.schematic-dimension { stroke: #526d77; stroke-width: 1; stroke-dasharray: 3 3; }
+.schematic-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 6px 8px 2px; color: var(--quiet); font-size: 10px; }
+.schematic-legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 99px; background: #7aa9b5; }
+.schematic-legend .legend-injector::before { background: #c27b2a; }
+.schematic-legend .legend-thermal::before { background: #c84f58; }
+.schematic-unavailable { min-height: 210px; display: grid; place-content: center; gap: 6px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; color: var(--quiet); }
+.schematic-unavailable strong { color: var(--text); }
+.physics-visual-workspace { margin-bottom: 22px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
+.physics-visual-workspace > .evidence-heading { padding: 22px 24px; border-bottom: 1px solid var(--line); background: var(--surface-blue); }
+.physics-system-grid { padding: 20px 22px; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, .8fr); gap: 16px; }
+.geometry-visual-card, .system-evidence-card { padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: #fffdf8; }
+.geometry-visual-card h3 { margin: 0 0 10px; }
+.system-evidence-card { display: grid; align-content: start; gap: 14px; }
+.system-evidence-card > div { padding-bottom: 14px; display: grid; gap: 5px; border-bottom: 1px solid var(--line); }
+.system-evidence-card span, .field-comparison-heading span { color: var(--test); font-size: 9px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+.system-evidence-card strong { font-size: 14px; }
+.system-evidence-card small, .system-evidence-card p { color: var(--quiet); line-height: 1.45; }
+.field-comparison { padding: 20px 22px 24px; border-top: 1px solid var(--line); }
+.field-comparison-heading { margin-bottom: 14px; display: flex; align-items: end; justify-content: space-between; gap: 16px; }
+.field-comparison-heading h3 { margin: 4px 0 0; font-size: 18px; }
+.field-scale { display: grid; justify-items: end; gap: 5px; color: var(--quiet); font-size: 10px; }
+.field-scale i { display: block; width: 150px; height: 9px; border-radius: 99px; }
+.wall-map-grid-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.wall-map, .wall-map-empty { min-width: 0; min-height: 250px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: #fbfcf8; }
+.wall-map-heading { padding: 10px 13px 0; display: flex; justify-content: space-between; color: var(--quiet); font-size: 10px; }
+.wall-map-heading strong { color: var(--text); }
+.wall-map svg { display: block; width: 100%; }
+.wall-map svg text { fill: #55717c; font-size: 10px; }
+.wall-map-grid { stroke: #d8e6e5; stroke-width: 1; }
+.wall-map-axis { fill: #173b49 !important; font-size: 11px !important; font-weight: 700; }
+.experiment-field-point { stroke: #fff; stroke-width: 1.6; }
+.wall-map-empty { padding: 24px; display: grid; place-content: center; justify-items: center; gap: 6px; text-align: center; color: var(--quiet); }
+.wall-map-empty strong { color: var(--text); }
+.empty-grid { width: min(260px, 80%); height: 110px; margin-bottom: 8px; border: 1px dashed #a8c4c9; background-image: linear-gradient(#dbe8e8 1px, transparent 1px), linear-gradient(90deg, #dbe8e8 1px, transparent 1px); background-size: 22px 22px; }
+.spatial-field-mapper { align-self: start; }
+.spatial-mapping-grid { padding: 14px 0; display: grid; grid-template-columns: 1.4fr .7fr; gap: 10px 12px; }
+.spatial-mapping-grid label { display: grid; gap: 5px; }
+.spatial-mapping-grid label > span { color: var(--quiet); font-size: 10px; }
+
+/* Retrospective and prospective prediction validation */
+.prediction-validation-panel { margin: 18px 0; padding: 20px 22px; border: 1px solid var(--line); border-left: 3px solid var(--test); border-radius: 10px; background: #fffdf8; }
+.prediction-validation-heading { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.prediction-validation-heading span { color: var(--test); font-size: 9px; font-weight: 800; letter-spacing: .1em; }
+.prediction-validation-heading h2 { margin: 5px 0; font-size: 20px; }
+.prediction-validation-heading p { max-width: 760px; margin: 0; color: var(--quiet); }
+.prediction-validation-heading > strong { padding: 8px 12px; white-space: nowrap; border: 1px solid #bfd8dc; border-radius: 99px; background: #edf8f9; color: #1b687b; font-size: 11px; }
+.prediction-validation-panel ol { margin: 0; padding: 18px 0 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; list-style: none; }
+.prediction-validation-panel ol li { padding: 11px; display: grid; grid-template-columns: 27px 1fr; gap: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.prediction-validation-panel ol li > b { width: 24px; height: 24px; display: grid; place-content: center; border-radius: 50%; background: var(--test); color: white; }
+.prediction-validation-panel ol span { display: grid; gap: 4px; }
+.prediction-validation-panel ol small { color: var(--quiet); line-height: 1.35; }
+.prediction-validation-panel details { margin-top: 14px; }
+.prediction-validation-panel details ul { padding-left: 20px; display: grid; gap: 9px; }
+.prediction-validation-panel details li span { display: block; color: var(--quiet); font-size: 11px; }
+.prospective-result { padding: 8px !important; border-radius: 6px; background: #edf8f9; }
+.prospective-result small { display: block; margin-top: 4px; color: var(--quiet); }
+
+@media (max-width: 980px) {
+  .physics-system-grid, .wall-map-grid-layout { grid-template-columns: 1fr; }
+  .prediction-validation-panel ol { grid-template-columns: 1fr 1fr; }
+  .rde-schematic svg { min-height: 200px; }
+}
+
+@media (max-width: 620px) {
+  .prediction-validation-heading, .field-comparison-heading { align-items: stretch; flex-direction: column; }
+  .prediction-validation-panel ol { grid-template-columns: 1fr; }
+  .field-scale { justify-items: start; }
+  .spatial-mapping-grid { grid-template-columns: 1fr; }
+}

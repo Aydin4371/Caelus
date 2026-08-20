@@ -1,5 +1,6 @@
 import type { Signal } from "./rde-analysis.ts";
 import type { FileImportProvenance } from "./data-import.ts";
+import type { WallFieldImport } from "./spatial-field.ts";
 
 export type Dimensionality = "2D" | "3D" | "";
 
@@ -109,6 +110,7 @@ export type AnalysisCase = {
   testSignals: Signal[];
   cfdSignals: Signal[];
   imports?: { experiment: FileImportProvenance; cfd: FileImportProvenance } | null;
+  wallFields?: { experiment: WallFieldImport | null; cfd: WallFieldImport | null } | null;
 };
 
 export const EMPTY_METADATA: CaseMetadata = {

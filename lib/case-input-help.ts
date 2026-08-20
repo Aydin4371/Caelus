@@ -5,7 +5,9 @@ export type CaseInputHelpKey = keyof CaseMetadata
   | "changedVariable"
   | "changeDescription"
   | "experimentCsv"
-  | "cfdCsv";
+  | "cfdCsv"
+  | "experimentWallFieldCsv"
+  | "cfdWallFieldCsv";
 
 export type CaseInputHelpGroup = {
   title: string;
@@ -100,6 +102,8 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
       { key: "cfdPeakWallTemperatureK", label: "CFD peak wall temperature (K) · optional", definition: "Highest simulated wall temperature over the matching surface and time window." },
       { key: "experimentSustainedDurationS", label: "Experiment sustained run duration (s) · optional", definition: "Continuous duration for which the reported rotating-wave response was observed under the stated condition." },
       { key: "cfdSustainedDurationS", label: "CFD sustained duration (s) · optional", definition: "Physical flow time represented after startup transients for which the simulated response remains sustained." },
+      { key: "experimentWallFieldCsv", label: "Experiment spatial wall field · optional", definition: "Measured axial and circumferential locations with wall heat flux, wall temperature, or both. Each row is one documented sensor or reconstructed surface location." },
+      { key: "cfdWallFieldCsv", label: "CFD spatial wall field · optional", definition: "CFD surface samples using the same axial origin, circumferential convention, wall selection, and averaging window as the experiment." },
     ],
   },
   {
@@ -548,6 +552,12 @@ const INPUT_HELP_DETAILS = {
   },
   "cfdSustainedDurationS": {
     "format": "Seconds of physical simulated time after startup transients.", "requirement": "Optional", "obtainFrom": "CFD time history and run log.", "usedFor": "Shows whether simulation covers the experimental sustained window.", "missingEffect": "Duration coverage is not compared."
+  },
+  "experimentWallFieldCsv": {
+    "format": "CSV/TSV with axial position, circumferential angle, and at least one heat-flux or wall-temperature column.", "requirement": "Optional", "obtainFrom": "Calibrated heat-flux sensors, infrared/thermocouple reconstruction, or another documented spatial thermal diagnostic.", "usedFor": "Plots measured locations on an unwrapped annulus wall without spatial interpolation.", "missingEffect": "No experimental thermal map is displayed; any scalar peak remains a scalar only."
+  },
+  "cfdWallFieldCsv": {
+    "format": "CSV/TSV with axial position, circumferential angle, and wall heat flux or temperature using matched units and coordinates.", "requirement": "Optional", "obtainFrom": "CFD wall-surface export after applying the documented averaging window.", "usedFor": "Displays the CFD wall field beside measured locations for spatial comparison.", "missingEffect": "No CFD thermal map is displayed; Kythros does not invent a field from a peak value."
   }
 } satisfies Record<CaseInputHelpKey, InputHelpDetails>;
 

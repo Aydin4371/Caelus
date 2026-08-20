@@ -147,10 +147,27 @@ test("gates the exploratory envelope model and leaves unsupported space blank", 
   }));
   const ready = fitEnvelopeModel(points, design);
   assert.equal(ready.status, "Exploratory model ready");
-  assert.ok((ready.leaveOneOutAccuracy ?? 0) >= 0.55);
+  assert.ok((ready.leaveOneOutAccuracy ?? 0) >= 0.6);
+  assert.equal(ready.validationLevel, "Retrospective only");
   const unsupported = ready.predict({ inletPressureBar: 30, massFlowKgS: 2, equivalenceRatio: 1, backPressureBar: 1 });
   assert.equal(unsupported.supported, false);
   assert.equal(unsupported.uncertainty, 1);
+
+  const prospectivelyTested = points.map((point, index) => index < 5 ? {
+    ...point,
+    recommendation: {
+      kind: "uncertain-boundary" as const,
+      createdAt: "2026-08-20T00:00:00.000Z",
+      trainingPointCount: ENVELOPE_MODEL_MINIMUM_POINTS,
+      predictedClass: point.classification as "Stable" | "Transitional" | "Unstable",
+      stabilityProbabilities: point.classification === "Stable" ? { Stable: 0.8, Transitional: 0.1, Unstable: 0.1 } : { Stable: 0.1, Transitional: 0.1, Unstable: 0.8 },
+      uncertainty: 0.2,
+    },
+  } : point);
+  const validated = fitEnvelopeModel(prospectivelyTested, design);
+  assert.equal(validated.prospectiveCount, 5);
+  assert.equal(validated.prospectiveAccuracy, 1);
+  assert.equal(validated.validationLevel, "Prospectively validated");
 });
 
 test("loads published operating conditions without pretending summary rows are raw pressure data", () => {
