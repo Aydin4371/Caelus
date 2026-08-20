@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Caevera by Caelus",
   "short_name": "Caevera",
-  "description": "Compare RDE experiment and CFD pressure data, diagnose wave mismatches, and choose the recommended next CFD run.",
+  "description": "Define gas-fed annular RDE designs, plan and map measured operating points, and compare experiment with CFD.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
