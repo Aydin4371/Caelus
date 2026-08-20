@@ -78,6 +78,13 @@ test("builds one observed envelope point per baseline, not per CFD rerun", () =>
   assert.equal(result.points[0].evidenceType, "Experiment + CFD");
 });
 
+test("keeps the empty operating-envelope state safe when no engine design exists", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const component = await readFile(new URL("../components/operating-envelope.tsx", import.meta.url), "utf8");
+  assert.match(component, /publishedPhiTemperatureSweep = activeDesign\?\.source === "published"/);
+  assert.match(component, /if \(!activeDesign\) return <section className="envelope-empty"/);
+});
+
 test("does not convert an observed map into an unvalidated prediction", () => {
   const demo = makeDemoProbeSignals();
   const point: OperatingPoint = { id: "physical-point", designId: "design", name: "Physical point", source: "uploaded", inletPressureBar: 8, inletTemperatureK: 300, equivalenceRatio: 1, massFlowKgS: 0.62, backPressureBar: 1 };

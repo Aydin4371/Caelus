@@ -93,7 +93,7 @@ export function OperatingEnvelope({ designs, activeDesignId, operatingPoints, ru
   const yLimits = domain?.[effectiveYAxis] ?? [0, 1] as const;
   const xDefinition = axisDefinition(effectiveXAxis);
   const yDefinition = axisDefinition(effectiveYAxis);
-  const publishedPhiTemperatureSweep = activeDesign.source === "published" && [effectiveXAxis, effectiveYAxis].includes("equivalenceRatio") && [effectiveXAxis, effectiveYAxis].includes("inletTemperatureK");
+  const publishedPhiTemperatureSweep = activeDesign?.source === "published" && [effectiveXAxis, effectiveYAxis].includes("equivalenceRatio") && [effectiveXAxis, effectiveYAxis].includes("inletTemperatureK");
   const fixedAxes = FEATURE_KEYS.filter((key) => key !== effectiveXAxis && key !== effectiveYAxis && !(publishedPhiTemperatureSweep && key === "massFlowKgS") && observedValues(designPoints, key, fixedValues[key]).length > 0);
   const ticks = [0, 0.25, 0.5, 0.75, 1];
 
