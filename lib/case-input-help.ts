@@ -81,6 +81,28 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
     ],
   },
   {
+    title: "Optional engine-physics evidence",
+    description: "Adds documented performance, feed-system, thermal, and sustained-operation quantities. Experiment values belong to the operating point; CFD values belong to a run. Missing values remain unavailable.",
+    items: [
+      { key: "experimentNetThrustN", label: "Experiment net thrust (N) · optional", definition: "Measured gross thrust after documented tare, base-drag, and facility corrections needed to obtain net thrust." },
+      { key: "cfdNetThrustN", label: "CFD net thrust (N) · optional", definition: "Net axial force calculated from the CFD control surface using a definition matched to the corrected experiment." },
+      { key: "experimentSpecificImpulseS", label: "Experiment specific impulse (s) · optional", definition: "Measured net thrust divided by the documented propellant weight-flow definition." },
+      { key: "cfdSpecificImpulseS", label: "CFD specific impulse (s) · optional", definition: "CFD net thrust divided by the same propellant weight-flow definition used for the experiment." },
+      { key: "experimentPressureGainPct", label: "Experiment total-pressure gain (%) · optional", definition: "Documented change in total pressure from the selected inlet/plenum station to the selected exit station, expressed relative to the inlet value." },
+      { key: "cfdPressureGainPct", label: "CFD total-pressure gain (%) · optional", definition: "CFD total-pressure change evaluated at stations and with averaging definitions matched to the experiment." },
+      { key: "experimentInjectorPressureRatio", label: "Experiment injector pressure ratio · optional", definition: "Documented upstream injector/plenum pressure divided by the chamber-side reference pressure, using consistent static or total definitions." },
+      { key: "cfdInjectorPressureRatio", label: "CFD injector pressure ratio · optional", definition: "Simulated injector pressure ratio evaluated with the same station and pressure definitions as the experiment." },
+      { key: "experimentBackflowFractionPct", label: "Experiment injector backflow duty cycle (%) · optional", definition: "Fraction of the documented observation window during which injector or plenum flow is measured to reverse." },
+      { key: "cfdBackflowFractionPct", label: "CFD injector backflow duty cycle (%) · optional", definition: "Fraction of the CFD comparison window during which the matched injector control surface has negative mass flux." },
+      { key: "experimentWallHeatFluxMWm2", label: "Experiment wall heat flux (MW/m²) · optional", definition: "Measured wall heat flux at a documented location, time window, and sensor response definition." },
+      { key: "cfdWallHeatFluxMWm2", label: "CFD wall heat flux (MW/m²) · optional", definition: "Simulated wall heat flux at the matching location and with the same averaging window." },
+      { key: "experimentPeakWallTemperatureK", label: "Experiment peak wall temperature (K) · optional", definition: "Highest documented wall temperature over the stated sensor locations and observation window." },
+      { key: "cfdPeakWallTemperatureK", label: "CFD peak wall temperature (K) · optional", definition: "Highest simulated wall temperature over the matching surface and time window." },
+      { key: "experimentSustainedDurationS", label: "Experiment sustained run duration (s) · optional", definition: "Continuous duration for which the reported rotating-wave response was observed under the stated condition." },
+      { key: "cfdSustainedDurationS", label: "CFD sustained duration (s) · optional", definition: "Physical flow time represented after startup transients for which the simulated response remains sustained." },
+    ],
+  },
+  {
     title: "Resolution and convergence",
     description: "Describes whether the detonation front, induction region, wall region, and time evolution are numerically resolved.",
     items: [
@@ -478,6 +500,54 @@ const INPUT_HELP_DETAILS = {
     "obtainFrom": "Mesh/time-step timing study.",
     "usedFor": "Combines with experiment timing uncertainty for supported timing outputs.",
     "missingEffect": "Timing-sensitive differences are inconclusive."
+  },
+  "experimentNetThrustN": {
+    "format": "Newtons; corrected net axial force using a documented sign and tare convention.", "requirement": "Optional", "obtainFrom": "Calibrated thrust stand, facility tare, and base-drag correction.", "usedFor": "Descriptive performance evidence and matched CFD comparison.", "missingEffect": "Kythros makes no thrust claim for this operating point."
+  },
+  "cfdNetThrustN": {
+    "format": "Newtons; matched control-surface and pressure-reference definition.", "requirement": "Optional", "obtainFrom": "CFD force or momentum-balance report.", "usedFor": "CFD minus experiment net-thrust comparison.", "missingEffect": "Net thrust is not compared."
+  },
+  "experimentSpecificImpulseS": {
+    "format": "Seconds; document whether denominator is fuel, total propellant, or another convention.", "requirement": "Optional", "obtainFrom": "Corrected net thrust and calibrated mass-flow measurements.", "usedFor": "Descriptive propulsion-performance evidence.", "missingEffect": "Kythros makes no specific-impulse claim."
+  },
+  "cfdSpecificImpulseS": {
+    "format": "Seconds; use the same denominator convention as experiment.", "requirement": "Optional", "obtainFrom": "CFD net thrust and matched mass flow.", "usedFor": "CFD minus experiment specific-impulse comparison.", "missingEffect": "Specific impulse is not compared."
+  },
+  "experimentPressureGainPct": {
+    "format": "Signed percent; negative values are permitted. Document stations and averaging.", "requirement": "Optional", "obtainFrom": "Calibrated total-pressure survey or documented equivalent-available-pressure method.", "usedFor": "Descriptive pressure-gain evidence.", "missingEffect": "Kythros makes no pressure-gain claim."
+  },
+  "cfdPressureGainPct": {
+    "format": "Signed percent using experiment-matched stations and averaging.", "requirement": "Optional", "obtainFrom": "CFD total-pressure integration or matched equivalent method.", "usedFor": "CFD minus experiment pressure-gain comparison.", "missingEffect": "Pressure gain is not compared."
+  },
+  "experimentInjectorPressureRatio": {
+    "format": "Dimensionless upstream-to-chamber pressure ratio; state static or total.", "requirement": "Optional", "obtainFrom": "Synchronized plenum and chamber pressure measurements.", "usedFor": "Feed-system margin and injector-coupling evidence.", "missingEffect": "Injector pressure-ratio behavior remains unavailable."
+  },
+  "cfdInjectorPressureRatio": {
+    "format": "Dimensionless; use the same stations and pressure definitions as experiment.", "requirement": "Optional", "obtainFrom": "CFD plenum/injector and chamber monitors.", "usedFor": "Matched feed-system comparison.", "missingEffect": "Injector pressure ratio is not compared."
+  },
+  "experimentBackflowFractionPct": {
+    "format": "Percent of observation time with documented reverse flow.", "requirement": "Optional", "obtainFrom": "Time-resolved injector/plenum flow or a validated reverse-flow diagnostic.", "usedFor": "Quantifies measured feed-system interruption.", "missingEffect": "A pressure trace alone is not relabeled as backflow."
+  },
+  "cfdBackflowFractionPct": {
+    "format": "Percent of matched CFD window with negative injector mass flux.", "requirement": "Optional", "obtainFrom": "Signed injector-face mass-flow history.", "usedFor": "CFD minus experiment backflow-duty-cycle comparison.", "missingEffect": "CFD backflow is not compared."
+  },
+  "experimentWallHeatFluxMWm2": {
+    "format": "MW/m² at a documented location and averaging window.", "requirement": "Optional", "obtainFrom": "Calibrated heat-flux gauge or documented inverse heat-transfer method.", "usedFor": "Thermal-loading evidence.", "missingEffect": "Kythros makes no wall heat-flux claim."
+  },
+  "cfdWallHeatFluxMWm2": {
+    "format": "MW/m² at the experiment-matched wall location and window.", "requirement": "Optional", "obtainFrom": "CFD wall heat-flux field or monitor.", "usedFor": "CFD minus experiment heat-flux comparison.", "missingEffect": "Wall heat flux is not compared."
+  },
+  "experimentPeakWallTemperatureK": {
+    "format": "Kelvin; document sensor locations, response, and observation window.", "requirement": "Optional", "obtainFrom": "Calibrated thermocouple, pyrometry, or infrared measurement.", "usedFor": "Thermal-limit and cooling evidence.", "missingEffect": "Kythros makes no wall-temperature claim."
+  },
+  "cfdPeakWallTemperatureK": {
+    "format": "Kelvin over the matched wall surface and time window.", "requirement": "Optional", "obtainFrom": "Conjugate or prescribed-wall CFD result.", "usedFor": "CFD minus experiment peak-temperature comparison.", "missingEffect": "Peak wall temperature is not compared."
+  },
+  "experimentSustainedDurationS": {
+    "format": "Seconds of continuous reported response after startup.", "requirement": "Optional", "obtainFrom": "Test log and synchronized diagnostics.", "usedFor": "Separates a short mode observation from sustained-operation evidence.", "missingEffect": "Kythros does not claim repeatability or endurance."
+  },
+  "cfdSustainedDurationS": {
+    "format": "Seconds of physical simulated time after startup transients.", "requirement": "Optional", "obtainFrom": "CFD time history and run log.", "usedFor": "Shows whether simulation covers the experimental sustained window.", "missingEffect": "Duration coverage is not compared."
   }
 } satisfies Record<CaseInputHelpKey, InputHelpDetails>;
 

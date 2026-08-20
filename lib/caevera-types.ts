@@ -12,6 +12,28 @@ export type CaseRelationship = {
   description: string;
 };
 
+export type RdePhysicsMeasurements = {
+  netThrustN: number;
+  specificImpulseS: number;
+  pressureGainPct: number;
+  injectorPressureRatio: number;
+  backflowFractionPct: number;
+  wallHeatFluxMWm2: number;
+  peakWallTemperatureK: number;
+  sustainedDurationS: number;
+};
+
+export const EMPTY_PHYSICS_MEASUREMENTS: RdePhysicsMeasurements = {
+  netThrustN: Number.NaN,
+  specificImpulseS: Number.NaN,
+  pressureGainPct: Number.NaN,
+  injectorPressureRatio: Number.NaN,
+  backflowFractionPct: Number.NaN,
+  wallHeatFluxMWm2: Number.NaN,
+  peakWallTemperatureK: Number.NaN,
+  sustainedDurationS: Number.NaN,
+};
+
 export type CaseMetadata = {
   name: string;
   annulusMeanDiameterMm: number;
@@ -59,6 +81,22 @@ export type CaseMetadata = {
   timingUncertaintyUs: number;
   cfdPressureUncertaintyPct: number;
   cfdTimingUncertaintyUs: number;
+  experimentNetThrustN?: number;
+  experimentSpecificImpulseS?: number;
+  experimentPressureGainPct?: number;
+  experimentInjectorPressureRatio?: number;
+  experimentBackflowFractionPct?: number;
+  experimentWallHeatFluxMWm2?: number;
+  experimentPeakWallTemperatureK?: number;
+  experimentSustainedDurationS?: number;
+  cfdNetThrustN?: number;
+  cfdSpecificImpulseS?: number;
+  cfdPressureGainPct?: number;
+  cfdInjectorPressureRatio?: number;
+  cfdBackflowFractionPct?: number;
+  cfdWallHeatFluxMWm2?: number;
+  cfdPeakWallTemperatureK?: number;
+  cfdSustainedDurationS?: number;
 };
 
 export type AnalysisCase = {
@@ -120,6 +158,22 @@ export const EMPTY_METADATA: CaseMetadata = {
   timingUncertaintyUs: Number.NaN,
   cfdPressureUncertaintyPct: Number.NaN,
   cfdTimingUncertaintyUs: Number.NaN,
+  experimentNetThrustN: Number.NaN,
+  experimentSpecificImpulseS: Number.NaN,
+  experimentPressureGainPct: Number.NaN,
+  experimentInjectorPressureRatio: Number.NaN,
+  experimentBackflowFractionPct: Number.NaN,
+  experimentWallHeatFluxMWm2: Number.NaN,
+  experimentPeakWallTemperatureK: Number.NaN,
+  experimentSustainedDurationS: Number.NaN,
+  cfdNetThrustN: Number.NaN,
+  cfdSpecificImpulseS: Number.NaN,
+  cfdPressureGainPct: Number.NaN,
+  cfdInjectorPressureRatio: Number.NaN,
+  cfdBackflowFractionPct: Number.NaN,
+  cfdWallHeatFluxMWm2: Number.NaN,
+  cfdPeakWallTemperatureK: Number.NaN,
+  cfdSustainedDurationS: Number.NaN,
 };
 
 export function cloneMetadata(metadata: CaseMetadata): CaseMetadata {

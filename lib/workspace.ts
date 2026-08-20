@@ -1,6 +1,7 @@
 import type { AnalysisCase } from "./caevera-types.ts";
 import { validateEngineDesign, validateOperatingPoint, type EngineDesign, type OperatingPoint } from "./design-workspace.ts";
 import { ANALYSIS_VERSION } from "./rde-analysis.ts";
+import { experimentPhysicsFromMetadata } from "./physics-evidence.ts";
 
 export const WORKSPACE_SCHEMA = "kythros-pressure-wave-workspace";
 export const LEGACY_WORKSPACE_SCHEMA = "caevera-pressure-wave-workspace";
@@ -246,6 +247,7 @@ export function deserializeWorkspace(text: string): WorkspaceState {
         experimentFilterCutoffKHz: baseline.metadata.experimentFilterCutoffKHz,
         pressureUncertaintyPct: baseline.metadata.pressureUncertaintyPct,
         timingUncertaintyUs: baseline.metadata.timingUncertaintyUs,
+        physics: experimentPhysicsFromMetadata(baseline.metadata),
       };
     }
     for (const run of cases.filter((item) => item.relationship?.baselineCaseId === baseline.id)) {

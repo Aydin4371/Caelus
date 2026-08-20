@@ -83,13 +83,23 @@ export function buildGe2022OperatingPoints(): OperatingPoint[] {
     publishedObservation: {
       sourceTitle: GE_2022_SOURCE.title,
       sourceUrl: GE_2022_SOURCE.url,
-      sourceLocator: `${GE_2022_SOURCE.locator}, Case #${row.caseNumber}`,
+      sourceLocator: row.caseNumber === 10
+        ? `${GE_2022_SOURCE.locator}, Case #10; long-duration repeat Case #14 in Sec. 3.5 and Figs. 23–25`
+        : `${GE_2022_SOURCE.locator}, Case #${row.caseNumber}`,
       reportedMode: row.reportedMode,
       classification: row.classification,
       waveCount: row.waveCount,
       waveFrequencyKHz: row.frequencyKHz,
       airMassFlowKgS: row.airMassFlowKgS,
       fuelMassFlowKgS: row.fuelMassFlowKgS,
+      waveSpeedMps: row.waveCount && Number.isFinite(row.frequencyKHz)
+        ? Math.PI * 0.185 * row.frequencyKHz * 1000 / row.waveCount
+        : null,
+      physics: row.caseNumber === 10 ? { sustainedDurationS: 3.13146 } : null,
+      evidenceNotes: row.caseNumber === 10 ? {
+        feed: "The Case 14 repeat at this same condition includes qualitative fuel-plenum and chamber pressure histories; no tabulated backflow fraction is reported.",
+        repeatability: "Case 14 repeated this condition for 3.13146 s with an average reported wave frequency of about 1.9223 kHz.",
+      } : undefined,
       limitation: "The paper reports operating conditions, dominant frequency, and propagation mode, but does not provide the underlying synchronized pressure files or a tabulated plenum pressure for this point.",
     },
   }));
