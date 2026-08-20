@@ -201,6 +201,10 @@ export function deserializeWorkspace(text: string): WorkspaceState {
     if (issues.length) throw new Error(`Operating point ${index + 1}: ${issues[0]}`);
     if (operatingPointIdentifiers.has(point.id as string)) throw new Error("The workspace contains duplicate operating-point identifiers.");
     if (!designIdentifiers.has(point.designId as string)) throw new Error(`Operating point ${index + 1} links to an engine design that is not present.`);
+    if (point.experiment) {
+      point.experiment.signals.forEach((signal, probe) => validateSignal(signal, `Operating point ${index + 1} experiment P${probe + 1}`));
+      if (point.experiment.importProvenance) validateImportProvenance(point.experiment.importProvenance, point.experiment.signals.length, `Operating point ${index + 1} experiment`);
+    }
     operatingPointIdentifiers.add(point.id as string);
   });
   const points = [...operatingPoints];
@@ -229,6 +233,21 @@ export function deserializeWorkspace(text: string): WorkspaceState {
     }
     baseline.operatingPointId = point.id;
     baseline.metadata.backPressureBar = point.backPressureBar;
+    if (!point.experiment) {
+      point.experiment = {
+        signals: baseline.testSignals,
+        importProvenance: baseline.imports?.experiment ?? null,
+        annulusMeanDiameterMm: baseline.metadata.annulusMeanDiameterMm,
+        annulusDiameterUncertaintyMm: baseline.metadata.annulusDiameterUncertaintyMm,
+        probePositionsDeg: [...baseline.metadata.probePositionsDeg],
+        maximumWaveCount: baseline.metadata.maximumWaveCount,
+        probeSynchronizationConfirmed: baseline.metadata.probeSynchronizationConfirmed,
+        experimentSensorBandwidthKHz: baseline.metadata.experimentSensorBandwidthKHz,
+        experimentFilterCutoffKHz: baseline.metadata.experimentFilterCutoffKHz,
+        pressureUncertaintyPct: baseline.metadata.pressureUncertaintyPct,
+        timingUncertaintyUs: baseline.metadata.timingUncertaintyUs,
+      };
+    }
     for (const run of cases.filter((item) => item.relationship?.baselineCaseId === baseline.id)) {
       run.operatingPointId = point.id;
       run.metadata.backPressureBar = point.backPressureBar;

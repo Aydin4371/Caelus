@@ -110,7 +110,7 @@ function predictor(points: EnvelopePoint[], domain: Domain) {
 }
 
 export function fitEnvelopeModel(allPoints: EnvelopePoint[], design: EngineDesign): EnvelopeModel {
-  const points = allPoints.filter((point) => point.source === "uploaded" && point.classification !== "Unclassified" && point.signalQuality === "Ready" && point.numericalStatus === "Converged");
+  const points = allPoints.filter((point) => point.source === "uploaded" && point.classification !== "Unclassified" && point.signalQuality === "Ready");
   const classes = new Set(points.map((point) => point.classification));
   const domain = envelopeModelDomain(design, points);
   const predictRaw = predictor(points, domain);
@@ -120,10 +120,10 @@ export function fitEnvelopeModel(allPoints: EnvelopePoint[], design: EngineDesig
     return prediction.supported && prediction.classification === point.classification;
   }).length;
   const accuracy = leaveOneOut.length ? correct / leaveOneOut.length : null;
-  let reason = "The exploratory model is available only after enough real, signal-ready, numerically converged operating points cover at least two observed stability classes.";
+  let reason = "The exploratory model is available only after enough real, signal-ready experimental operating points cover at least two observed stability classes.";
   let status: EnvelopeModel["status"] = "Blocked";
   if (points.length < ENVELOPE_MODEL_MINIMUM_POINTS) {
-    reason = `${points.length} of ${ENVELOPE_MODEL_MINIMUM_POINTS} required real, signal-ready, numerically converged operating points are available.`;
+    reason = `${points.length} of ${ENVELOPE_MODEL_MINIMUM_POINTS} required real, signal-ready experimental operating points are available.`;
   } else if (classes.size < 2) {
     reason = "At least two measured stability classes are required before Kythros can estimate a boundary.";
   } else if (accuracy === null || accuracy < 0.55) {

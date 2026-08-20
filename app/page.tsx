@@ -38,6 +38,11 @@ const TEST_COLOR = "#2588a2";
 const CFD_COLOR = "#6679bd";
 const RESIDUAL_COLOR = "#c8873d";
 const RERUN_ALWAYS_EDITABLE_FIELDS: (keyof CaseMetadata)[] = ["name", "solverRuntimeHours", "cfdPressureUncertaintyPct", "cfdTimingUncertaintyUs"];
+const EXPERIMENT_OWNED_FIELDS: (keyof CaseMetadata)[] = [
+  "annulusMeanDiameterMm", "annulusDiameterUncertaintyMm", "probePositionsDeg", "maximumWaveCount", "probeSynchronizationConfirmed",
+  "experimentSensorBandwidthKHz", "experimentFilterCutoffKHz", "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS",
+  "backPressureBar", "pressureUncertaintyPct", "timingUncertaintyUs",
+];
 
 function average(values: number[]) {
   const finite = values.filter(Number.isFinite);
@@ -496,6 +501,7 @@ export default function Home() {
   const [draftDesignId, setDraftDesignId] = useState<string | null>(null);
   const [draftOperatingPointId, setDraftOperatingPointId] = useState<string | null>(null);
   const [draftNewOperatingPoint, setDraftNewOperatingPoint] = useState<OperatingPoint | null>(null);
+  const [loaderMode, setLoaderMode] = useState<"measured-point" | "comparison-run">("comparison-run");
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
   const [caseBaselineId, setCaseBaselineId] = useState<string | null>(null);
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
@@ -562,6 +568,8 @@ export default function Home() {
     ? draftOperatingPointRuns.find((item) => item.id === (draftRelationship.referenceCaseId ?? draftRelationship.baselineCaseId)) ?? cases.find((item) => item.id === (draftRelationship.referenceCaseId ?? draftRelationship.baselineCaseId)) ?? null
     : null;
   const controlledRerunDraft = Boolean(draftReferenceCase && draftRelationship && !editingCaseId);
+  const measuredPointDraft = loaderMode === "measured-point";
+  const draftOperatingPoint = operatingPoints.find((item) => item.id === draftOperatingPointId) ?? null;
   const selectedRerunFields = draftRelationship ? CONTROLLED_RERUN_FIELDS[draftRelationship.changedVariable] : [];
   const changedRerunFields = draftReferenceCase
     ? selectedRerunFields.filter((field) => !metadataValueEqual(draftReferenceCase.metadata[field], draft[field]))
@@ -571,6 +579,7 @@ export default function Home() {
     ?? "Experiment data";
 
   function rerunFieldLocked(field: keyof CaseMetadata) {
+    if (!measuredPointDraft && EXPERIMENT_OWNED_FIELDS.includes(field)) return true;
     if (!controlledRerunDraft) return false;
     if (RERUN_ALWAYS_EDITABLE_FIELDS.includes(field)) return false;
     if (field === "meshConvergencePct") return draftRelationship?.changedVariable !== "mesh";
@@ -650,6 +659,7 @@ export default function Home() {
     setDraftDesignId(designId);
     setDraftOperatingPointId(operatingPointId);
     setDraftNewOperatingPoint(nextPoint);
+    setLoaderMode("measured-point");
     setEditingCaseId(null);
     setDraft(nextDraft);
     setDraftRelationship(null);
@@ -663,6 +673,7 @@ export default function Home() {
     setDraftDesignId(activeCase.designId ?? null);
     setDraftOperatingPointId(activeCase.operatingPointId ?? null);
     setDraftNewOperatingPoint(null);
+    setLoaderMode("comparison-run");
     setDraftRelationship(activeCase.relationship ?? null);
     setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
@@ -670,15 +681,47 @@ export default function Home() {
   function openNewRunForOperatingPoint() {
     if (!activeOperatingPointId) return;
     const baseline = operatingPointRuns.find((item) => !item.relationship) ?? operatingPointRuns[0];
-    if (!baseline) return;
+    if (!baseline) return openBaselineCfdForOperatingPoint(activeOperatingPointId);
     setEditingCaseId(null);
     setDraftOperatingPointId(activeOperatingPointId);
     setDraftNewOperatingPoint(null);
+    setLoaderMode("comparison-run");
     setDraftDesignId(baseline.designId ?? activeDesignId);
     setDraftRelationship({ baselineCaseId: baseline.id, referenceCaseId: baseline.id, changedVariable: "other", description: "" });
     const inherited = cloneMetadata(baseline.metadata);
     inherited.name = `${baseline.metadata.name} rerun`;
     setDraft(inherited);
+    setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
+  }
+
+  function openBaselineCfdForOperatingPoint(operatingPointId: string) {
+    const point = operatingPoints.find((item) => item.id === operatingPointId);
+    if (!point?.experiment) return;
+    const nextDraft = cloneMetadata(EMPTY_METADATA);
+    nextDraft.name = `${point.name} baseline CFD`;
+    nextDraft.annulusMeanDiameterMm = point.experiment.annulusMeanDiameterMm;
+    nextDraft.annulusDiameterUncertaintyMm = point.experiment.annulusDiameterUncertaintyMm;
+    nextDraft.probePositionsDeg = [...point.experiment.probePositionsDeg];
+    nextDraft.maximumWaveCount = point.experiment.maximumWaveCount;
+    nextDraft.probeSynchronizationConfirmed = point.experiment.probeSynchronizationConfirmed;
+    nextDraft.experimentSensorBandwidthKHz = point.experiment.experimentSensorBandwidthKHz;
+    nextDraft.experimentFilterCutoffKHz = point.experiment.experimentFilterCutoffKHz;
+    nextDraft.inletPressureBar = point.inletPressureBar;
+    nextDraft.inletTemperatureK = point.inletTemperatureK;
+    nextDraft.equivalenceRatio = point.equivalenceRatio;
+    nextDraft.massFlowKgS = point.massFlowKgS;
+    nextDraft.backPressureBar = point.backPressureBar;
+    nextDraft.pressureUncertaintyPct = point.experiment.pressureUncertaintyPct;
+    nextDraft.timingUncertaintyUs = point.experiment.timingUncertaintyUs;
+    setActiveDesignId(point.designId);
+    setActiveOperatingPointId(point.id);
+    setDraftDesignId(point.designId);
+    setDraftOperatingPointId(point.id);
+    setDraftNewOperatingPoint(null);
+    setLoaderMode("comparison-run");
+    setEditingCaseId(null);
+    setDraft(nextDraft);
+    setDraftRelationship(null);
     setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
 
@@ -772,6 +815,68 @@ export default function Home() {
     setReviewingRerun(true);
   }
 
+  function applyMeasuredOperatingPoint() {
+    if (!draft.name.trim()) return setError("Give this measured operating point a name.");
+    if (!draft.probeSynchronizationConfirmed) return setError("Confirm that every experimental probe uses one synchronized time base.");
+    if (!Number.isFinite(draft.annulusMeanDiameterMm) || draft.annulusMeanDiameterMm <= 0) return setError("Enter a positive annulus mean diameter.");
+    if (!Number.isFinite(draft.annulusDiameterUncertaintyMm) || draft.annulusDiameterUncertaintyMm < 0) return setError("Diameter uncertainty must be zero or greater.");
+    if (draft.probePositionsDeg.length < 3 || draft.probePositionsDeg.some((value) => !Number.isFinite(value))) return setError("Enter at least three valid probe angles.");
+    if (!Number.isInteger(draft.maximumWaveCount) || draft.maximumWaveCount < 1 || draft.maximumWaveCount > 12) return setError("Maximum expected wave count must be an integer from 1 to 12.");
+    const positiveInputs: Array<[string, number]> = [
+      ["Experiment sensor bandwidth", draft.experimentSensorBandwidthKHz], ["Experiment filter cutoff", draft.experimentFilterCutoffKHz],
+      ["Inlet pressure", draft.inletPressureBar], ["Back pressure", draft.backPressureBar], ["Inlet temperature", draft.inletTemperatureK], ["Equivalence ratio", draft.equivalenceRatio], ["Mass flow", draft.massFlowKgS],
+    ];
+    const invalidPositive = positiveInputs.find(([, value]) => !Number.isFinite(value) || value <= 0);
+    if (invalidPositive) return setError(`${invalidPositive[0]} must be a number greater than zero.`);
+    if (draft.inletPressureBar <= draft.backPressureBar) return setError("Inlet pressure must exceed back pressure.");
+    const uncertainties: Array<[string, number]> = [
+      ["Experiment pressure uncertainty", draft.pressureUncertaintyPct], ["Experiment timing uncertainty", draft.timingUncertaintyUs],
+    ];
+    const invalidUncertainty = uncertainties.find(([, value]) => !Number.isFinite(value) || value < 0);
+    if (invalidUncertainty) return setError(`${invalidUncertainty[0]} must be zero or greater.`);
+    if (!testPending) return setError("Upload and map the synchronized experimental pressure file.");
+    if (testPending.signals.length !== draft.probePositionsDeg.length) return setError(`The experiment file contains ${testPending.signals.length} probes, but ${draft.probePositionsDeg.length} probe angles were entered.`);
+    if (!draftOperatingPointId || !draftDesignId) return setError("Choose an engine design before adding an operating point.");
+    try {
+      analyzeRdeProbeSet(testPending.signals, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: true, sensorBandwidthKHz: draft.experimentSensorBandwidthKHz, filterCutoffKHz: draft.experimentFilterCutoffKHz });
+      const nextPoint: OperatingPoint = {
+        id: draftOperatingPointId,
+        designId: draftDesignId,
+        name: draft.name,
+        source: draftNewOperatingPoint?.source ?? "uploaded",
+        inletPressureBar: draft.inletPressureBar,
+        inletTemperatureK: draft.inletTemperatureK,
+        equivalenceRatio: draft.equivalenceRatio,
+        massFlowKgS: draft.massFlowKgS,
+        backPressureBar: draft.backPressureBar,
+        experiment: {
+          signals: testPending.signals,
+          importProvenance: testPending.provenance,
+          annulusMeanDiameterMm: draft.annulusMeanDiameterMm,
+          annulusDiameterUncertaintyMm: draft.annulusDiameterUncertaintyMm,
+          probePositionsDeg: [...draft.probePositionsDeg],
+          maximumWaveCount: draft.maximumWaveCount,
+          probeSynchronizationConfirmed: true,
+          experimentSensorBandwidthKHz: draft.experimentSensorBandwidthKHz,
+          experimentFilterCutoffKHz: draft.experimentFilterCutoffKHz,
+          pressureUncertaintyPct: draft.pressureUncertaintyPct,
+          timingUncertaintyUs: draft.timingUncertaintyUs,
+        },
+      };
+      setOperatingPoints((current) => [...current, nextPoint]);
+      setActiveDesignId(draftDesignId);
+      setActiveOperatingPointId(nextPoint.id);
+      setActiveCaseId(null);
+      setProductView("envelope");
+      setShowLoader(false);
+      setDraftNewOperatingPoint(null);
+      setTestPending(null);
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The experimental pressure data could not be analyzed.");
+    }
+  }
+
   function applyCase() {
     if (!draft.name.trim()) return setError("Give this operating point a name.");
     if (!draft.comparisonMatchConfirmed) return setError("Confirm that experiment and CFD use the same geometry, operating point, probe locations, and comparison window.");
@@ -810,7 +915,7 @@ export default function Home() {
       const effectiveRelationship = editingCase?.relationship ?? draftRelationship;
       const referenceId = effectiveRelationship?.referenceCaseId ?? effectiveRelationship?.baselineCaseId;
       const referenceCase = referenceId ? cases.find((item) => item.id === referenceId) ?? null : null;
-      const nextTest = testPending?.signals ?? editingCase?.testSignals ?? referenceCase?.testSignals;
+      const nextTest = testPending?.signals ?? editingCase?.testSignals ?? referenceCase?.testSignals ?? draftOperatingPoint?.experiment?.signals;
       const nextCfd = cfdPending?.signals ?? editingCase?.cfdSignals;
       if (!nextTest) return setError("Upload the experimental multi-probe file for this baseline case.");
       if (!nextCfd) return setError(effectiveRelationship ? "Upload the new CFD multi-probe result for this rerun." : "Upload the CFD multi-probe file for this case.");
@@ -823,7 +928,7 @@ export default function Home() {
       if (effectiveRelationship) {
         if (!referenceCase || referenceCase.id !== effectiveRelationship.baselineCaseId && referenceCase.relationship?.baselineCaseId !== effectiveRelationship.baselineCaseId) return setError("Choose a starting run from the selected operating point.");
       }
-      const experimentProvenance = testPending?.provenance ?? editingCase?.imports?.experiment ?? referenceCase?.imports?.experiment;
+      const experimentProvenance = testPending?.provenance ?? editingCase?.imports?.experiment ?? referenceCase?.imports?.experiment ?? draftOperatingPoint?.experiment?.importProvenance;
       const cfdProvenance = cfdPending?.provenance ?? editingCase?.imports?.cfd;
       const nextImports = experimentProvenance && cfdProvenance ? { experiment: experimentProvenance, cfd: cfdProvenance } : null;
       const nextRelationship = effectiveRelationship ? { ...effectiveRelationship, referenceCaseId: effectiveRelationship.referenceCaseId ?? effectiveRelationship.baselineCaseId } : null;
@@ -833,22 +938,36 @@ export default function Home() {
       if (!designId) return setError("Choose an engine design before adding an operating point.");
       const nextCase: AnalysisCase = { id, designId, operatingPointId, source: editingCase?.source ?? "uploaded", relationship: nextRelationship, metadata: cloneMetadata(draft), testSignals: nextTest, cfdSignals: nextCfd, imports: nextImports };
       if (!nextRelationship) {
+        const existingPoint = operatingPoints.find((item) => item.id === operatingPointId);
         const nextPoint: OperatingPoint = {
           id: operatingPointId,
           designId,
-          name: draft.name,
-          source: editingCase?.source === "demo" ? "demo" : draftNewOperatingPoint?.source ?? "uploaded",
-          inletPressureBar: draft.inletPressureBar,
-          inletTemperatureK: draft.inletTemperatureK,
-          equivalenceRatio: draft.equivalenceRatio,
-          massFlowKgS: draft.massFlowKgS,
-          backPressureBar: draft.backPressureBar,
+          name: existingPoint?.name ?? draft.name,
+          source: existingPoint?.source ?? (editingCase?.source === "demo" ? "demo" : draftNewOperatingPoint?.source ?? "uploaded"),
+          inletPressureBar: existingPoint?.inletPressureBar ?? draft.inletPressureBar,
+          inletTemperatureK: existingPoint?.inletTemperatureK ?? draft.inletTemperatureK,
+          equivalenceRatio: existingPoint?.equivalenceRatio ?? draft.equivalenceRatio,
+          massFlowKgS: existingPoint?.massFlowKgS ?? draft.massFlowKgS,
+          backPressureBar: existingPoint?.backPressureBar ?? draft.backPressureBar,
+          experiment: existingPoint?.experiment ?? {
+            signals: nextTest,
+            importProvenance: experimentProvenance ?? null,
+            annulusMeanDiameterMm: draft.annulusMeanDiameterMm,
+            annulusDiameterUncertaintyMm: draft.annulusDiameterUncertaintyMm,
+            probePositionsDeg: [...draft.probePositionsDeg],
+            maximumWaveCount: draft.maximumWaveCount,
+            probeSynchronizationConfirmed: draft.probeSynchronizationConfirmed,
+            experimentSensorBandwidthKHz: draft.experimentSensorBandwidthKHz,
+            experimentFilterCutoffKHz: draft.experimentFilterCutoffKHz,
+            pressureUncertaintyPct: draft.pressureUncertaintyPct,
+            timingUncertaintyUs: draft.timingUncertaintyUs,
+          },
         };
         setOperatingPoints((current) => current.some((item) => item.id === operatingPointId) ? current.map((item) => item.id === operatingPointId ? nextPoint : item) : [...current, nextPoint]);
       }
       setCases((current) => editingCaseId ? current.map((item) => item.id === editingCaseId ? nextCase : item) : [...current, nextCase]);
       if (!caseBaselineId) setCaseBaselineId(id);
-      setActiveDesignId(designId); setActiveOperatingPointId(operatingPointId); setActiveCaseId(id); setWorkspaceView("case"); setActiveProbe(0); setReviewingRerun(false); setShowLoader(false); setDraftNewOperatingPoint(null); setError("");
+      setActiveDesignId(designId); setActiveOperatingPointId(operatingPointId); setActiveCaseId(id); setWorkspaceView("case"); setProductView("comparison"); setActiveProbe(0); setReviewingRerun(false); setShowLoader(false); setDraftNewOperatingPoint(null); setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The two datasets could not be compared.");
     }
@@ -1107,11 +1226,11 @@ export default function Home() {
     {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
 
     <section className="content" id="top">
-      {productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onOpenDesign={() => setProductView("design")} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
-        <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>Welcome to Kythros</h1>
-        <p>Choose an engine, add an operating point, and compare its experiment with CFD. Controlled reruns stay attached to that same physical condition and feed the measured envelope.</p>
-        <span className="empty-status">No completed operating point has been selected</span>
-        <div className="empty-actions"><button className="button primary" onClick={openNewCase}>{activeDesignId ? "Add first operating point →" : "Define an engine first →"}</button><label className="button secondary workspace-file-button">Open saved workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary" onClick={loadExampleCaseHistory}>Load synthetic case history</button></div>
+      {productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onOpenDesign={() => setProductView("design")} onAddBaselineCfd={openBaselineCfdForOperatingPoint} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
+        <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>{activeOperatingPoint?.experiment ? "Measured operating point ready" : "Welcome to Kythros"}</h1>
+        <p>{activeOperatingPoint?.experiment ? "The experimental observation is already part of the measured envelope. Add a baseline CFD result only when you want to compare simulation with this measurement." : "Choose an engine and add a measured operating point. CFD comparisons are created separately and stay attached to that physical condition."}</p>
+        <span className="empty-status">{activeOperatingPoint?.experiment ? "No CFD comparison has been added for this operating point" : "No measured operating point has been selected"}</span>
+        <div className="empty-actions"><button className="button primary" onClick={() => activeOperatingPoint?.experiment ? openBaselineCfdForOperatingPoint(activeOperatingPoint.id) : openNewCase()}>{activeOperatingPoint?.experiment ? "Add baseline CFD comparison →" : activeDesignId ? "Add first measured operating point →" : "Define an engine first →"}</button><label className="button secondary workspace-file-button">Open saved workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary" onClick={loadExampleCaseHistory}>Load synthetic case history</button></div>
         <div className="empty-requirements"><span><b>1</b><i><strong>Compare</strong> matched experiment and CFD pressure traces</i></span><span><b>2</b><i><strong>Diagnose</strong> pressure and rotating-wave mismatches</i></span><span><b>3</b><i><strong>Run and update</strong> the adaptive CFD plan</i></span></div>
       </section> : <>
         <ComparisonHierarchy designs={designs} operatingPoints={operatingPoints} runs={cases} activeDesignId={activeDesignId} activeOperatingPointId={activeOperatingPointId} activeRunId={activeCaseId} onSelectDesign={selectDesign} onSelectOperatingPoint={selectOperatingPoint} onSelectRun={(id) => { setActiveCaseId(id); setActiveProbe(0); setWorkspaceView("case"); }} onAddOperatingPoint={() => activeDesignId && openOperatingPoint(activeDesignId)} onAddRun={openNewRunForOperatingPoint} onViewHistory={() => setWorkspaceView("compare")} onSaveWorkspace={downloadWorkspace} />
@@ -1190,7 +1309,7 @@ export default function Home() {
     </section>
 
     {showLoader && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowLoader(false)}><section className="loader-modal" role="dialog" aria-modal="true" aria-labelledby="loader-title" onMouseDown={(event) => event.stopPropagation()}>
-      <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close run inputs">×</button><div className="loader-intro"><div><span className="modal-kicker">RDE OPERATING POINT + RUN</span><h2 id="loader-title">{reviewingRerun ? "Review one-change rerun" : editingCaseId ? "Edit run" : draftRelationship ? "Add CFD rerun" : "Add operating point and first run"}</h2></div>{!reviewingRerun && <button className="input-help-button" onClick={() => setShowHelp(true)}>What does each input mean?</button>}</div>{!reviewingRerun && <p>The operating point stores the physical condition once. Its experiment, baseline CFD, and later CFD reruns stay grouped beneath it.</p>}
+      <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close inputs">×</button><div className="loader-intro"><div><span className="modal-kicker">{measuredPointDraft ? "MEASURED OPERATING POINT" : "CFD COMPARISON RUN"}</span><h2 id="loader-title">{measuredPointDraft ? "Add measured operating point" : reviewingRerun ? "Review one-change rerun" : editingCaseId ? "Edit run" : draftRelationship ? "Add CFD rerun" : "Add baseline CFD comparison"}</h2></div>{!reviewingRerun && !measuredPointDraft && <button className="input-help-button" onClick={() => setShowHelp(true)}>What does each input mean?</button>}</div>{!reviewingRerun && <p>{measuredPointDraft ? "Enter the physical condition and experimental pressure measurements. No CFD setup or result is required here." : "The experiment and physical condition are inherited from the operating point. Add CFD inputs here only for comparison and rerun planning."}</p>}
 
       {reviewingRerun && draftReferenceCase && draftRelationship && cfdPending ? <section className="rerun-review-step" aria-label="Controlled rerun review">
         <span>Ready to analyze</span>
@@ -1205,28 +1324,53 @@ export default function Home() {
         <div className="modal-actions"><button className="button secondary" onClick={() => setReviewingRerun(false)}>Back to inputs</button><button className="button primary" onClick={applyCase}>Analyze rerun →</button></div>
       </section> : <>
 
-      <div className="form-section"><h3>Engine, run, and geometry</h3><div className="form-grid four"><label><span>Engine / design</span><select disabled={Boolean(draftRelationship)} value={draftDesignId ?? ""} onChange={(event) => setDraftDesignId(event.target.value || null)}><option value="" disabled>Select engine</option>{designs.map((design) => <option key={design.id} value={design.id}>{design.name}</option>)}</select></label><label><span>{draftRelationship ? "Rerun name" : "Operating point and baseline run name"}</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label><label><span>Mean diameter (mm)</span><input disabled={rerunFieldLocked("annulusMeanDiameterMm")} type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label><label><span>Diameter uncertainty (mm)</span><input disabled={rerunFieldLocked("annulusDiameterUncertaintyMm")} type="number" step="0.01" value={numberValue(draft.annulusDiameterUncertaintyMm)} onChange={(event) => updateNumber("annulusDiameterUncertaintyMm", event.target.value)} /></label><label><span>Maximum expected waves</span><input disabled={rerunFieldLocked("maximumWaveCount")} type="number" min="1" max="12" value={numberValue(draft.maximumWaveCount)} onChange={(event) => updateNumber("maximumWaveCount", event.target.value)} /></label></div><label className="probe-angle-editor"><span>Probe angles (deg) · minimum 3, nonuniform preferred</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input disabled={rerunFieldLocked("probePositionsDeg")} key={index} type="number" aria-label={`Probe ${index + 1} angle`} placeholder={`P${index + 1}`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}<button disabled={controlledRerunDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: [...current.probePositionsDeg, Number.NaN] }))}>+ probe</button>{draft.probePositionsDeg.length > 3 && <button disabled={controlledRerunDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.slice(0, -1) }))}>Remove</button>}</div></label><label className="confirmation-check"><input disabled={rerunFieldLocked("probeSynchronizationConfirmed")} type="checkbox" checked={draft.probeSynchronizationConfirmed} onChange={(event) => setDraft((current) => ({ ...current, probeSynchronizationConfirmed: event.target.checked }))} /><span>I confirm every pressure probe in each file uses one synchronized acquisition time base.</span></label><label className="confirmation-check"><input disabled={rerunFieldLocked("comparisonMatchConfirmed")} type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label></div>
+      <div className="form-section">
+        <h3>{measuredPointDraft ? "Engine, operating point, and experiment geometry" : "Engine, run, and geometry"}</h3>
+        <div className="form-grid four">
+          <label><span>Engine / design</span><select disabled={!measuredPointDraft} value={draftDesignId ?? ""} onChange={(event) => setDraftDesignId(event.target.value || null)}><option value="" disabled>Select engine</option>{designs.map((design) => <option key={design.id} value={design.id}>{design.name}</option>)}</select></label>
+          <label><span>{measuredPointDraft ? "Operating point name" : draftRelationship ? "Rerun name" : "Baseline CFD run name"}</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label>
+          <label><span>Mean diameter (mm)</span><input disabled={rerunFieldLocked("annulusMeanDiameterMm")} type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label>
+          <label><span>Diameter uncertainty (mm)</span><input disabled={rerunFieldLocked("annulusDiameterUncertaintyMm")} type="number" step="0.01" value={numberValue(draft.annulusDiameterUncertaintyMm)} onChange={(event) => updateNumber("annulusDiameterUncertaintyMm", event.target.value)} /></label>
+          <label><span>Maximum expected waves</span><input disabled={rerunFieldLocked("maximumWaveCount")} type="number" min="1" max="12" value={numberValue(draft.maximumWaveCount)} onChange={(event) => updateNumber("maximumWaveCount", event.target.value)} /></label>
+        </div>
+        <label className="probe-angle-editor"><span>Probe angles (deg) · minimum 3, nonuniform preferred</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input disabled={rerunFieldLocked("probePositionsDeg")} key={index} type="number" aria-label={`Probe ${index + 1} angle`} placeholder={`P${index + 1}`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}<button disabled={controlledRerunDraft || !measuredPointDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: [...current.probePositionsDeg, Number.NaN] }))}>+ probe</button>{draft.probePositionsDeg.length > 3 && <button disabled={controlledRerunDraft || !measuredPointDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.slice(0, -1) }))}>Remove</button>}</div></label>
+        <label className="confirmation-check"><input disabled={rerunFieldLocked("probeSynchronizationConfirmed")} type="checkbox" checked={draft.probeSynchronizationConfirmed} onChange={(event) => setDraft((current) => ({ ...current, probeSynchronizationConfirmed: event.target.checked }))} /><span>I confirm every experimental pressure probe uses one synchronized acquisition time base.</span></label>
+        {!measuredPointDraft && <label className="confirmation-check"><input disabled={rerunFieldLocked("comparisonMatchConfirmed")} type="checkbox" checked={draft.comparisonMatchConfirmed} onChange={(event) => setDraft((current) => ({ ...current, comparisonMatchConfirmed: event.target.checked }))} /><span>I confirm experiment and CFD use the same geometry, operating point, probe locations, and comparison window.</span></label>}
+      </div>
 
-      {(draftOperatingPointRuns.length > 0 || draftRelationship) && <div className="form-section"><h3>{editingCaseId ? "Run relationship" : "Controlled CFD rerun"}</h3><p className="form-help">{editingCaseId ? "This relationship is locked because changing it would change the meaning of the saved result." : "This rerun inherits the engine, operating point, experiment, and probes. Choose exactly one CFD setting group to change."}</p><div className="form-grid four">
+      {!measuredPointDraft && (draftOperatingPointRuns.length > 0 || draftRelationship) && <div className="form-section"><h3>{editingCaseId ? "Run relationship" : "Controlled CFD rerun"}</h3><p className="form-help">{editingCaseId ? "This relationship is locked because changing it would change the meaning of the saved result." : "This rerun inherits the engine, operating point, experiment, and probes. Choose exactly one CFD setting group to change."}</p><div className="form-grid four">
         <label><span>Operating point baseline run</span><select disabled={Boolean(editingCaseId) || Boolean(draftRelationship)} value={draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseCaseFamily(event.target.value)}><option value="">Not a related rerun</option>{draftOperatingPointRuns.filter((item) => item.id !== editingCaseId && !item.relationship).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
         <label><span>Starting run</span><select disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.referenceCaseId ?? draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseStartingCase(event.target.value)}>{draftRelationship && draftOperatingPointRuns.filter((item) => item.id !== editingCaseId && (item.id === draftRelationship.baselineCaseId || item.relationship?.baselineCaseId === draftRelationship.baselineCaseId)).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
         <label><span>Single CFD change</span><select disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.changedVariable ?? "other"} onChange={(event) => chooseChangedVariable(event.target.value as SensitivityVariable)}><option value="mesh">Mesh / spatial method</option><option value="time-step">Time step / temporal method</option><option value="chemistry">Chemistry model</option><option value="inlet">Inlet treatment</option><option value="wall">Wall treatment</option><option value="initialization">Initialization</option><option value="unsteadiness">Measured unsteady forcing</option><option value="other">Choose one</option></select></label>
         <label><span>Change description</span><input disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.description ?? ""} onChange={(event) => setDraftRelationship((current) => current ? { ...current, description: event.target.value } : null)} placeholder="e.g. 50% front-cell refinement" /></label>
       </div>{editingCaseId ? <div className="rerun-inheritance"><strong>{draftRelationship ? "Controlled-rerun definition locked" : "Baseline definition locked"}</strong><span>Create a new run to test a different CFD variable.</span></div> : draftReferenceCase && <div className="rerun-inheritance"><strong>Starting run copied: {draftReferenceCase.metadata.name}</strong><span>{draftRelationship?.changedVariable === "other" ? "Choose the one CFD change being tested." : `Only ${changeLabel(draftRelationship!.changedVariable).toLowerCase()} settings are editable. The operating point and experiment are locked.`}</span></div>}</div>}
 
-      <div className="form-section"><div className="form-section-heading"><div><h3>Synchronized pressure probes</h3><p className="form-help">{draftReferenceCase && !editingCaseId ? "The exact experiment samples are inherited from the starting case. Upload and map only the new CFD result." : "Map the actual headers in each file. Kythros converts the selected units to milliseconds and MPa before analysis."}</p></div><button onClick={downloadExample}>Download example CSV</button></div><div className="file-mapper-grid">{draftReferenceCase && !editingCaseId ? <section className="inherited-experiment"><div><span>EXPERIMENT REUSED</span><strong>{inheritedExperimentName}</strong></div><p>Exact samples inherited from <b>{draftReferenceCase.metadata.name}</b>. No experiment re-upload is needed.</p></section> : <PressureFileMapper key={`experiment-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}-${draftRelationship?.referenceCaseId ?? "standalone"}`} kind="Experiment" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.testSignals[0]?.name.split(" · ")[0] : undefined} onMapped={setTestPending} />}<PressureFileMapper key={`cfd-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}-${draftRelationship?.referenceCaseId ?? "standalone"}`} kind="CFD" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.cfdSignals[0]?.name.split(" · ")[0] : undefined} onMapped={setCfdPending} /></div><div className="form-grid two measurement-chain"><label><span>Experiment sensor bandwidth (kHz)</span><input disabled={rerunFieldLocked("experimentSensorBandwidthKHz")} type="number" step="0.1" value={numberValue(draft.experimentSensorBandwidthKHz)} onChange={(event) => updateNumber("experimentSensorBandwidthKHz", event.target.value)} /></label><label><span>Experiment low-pass / anti-alias cutoff (kHz)</span><input disabled={rerunFieldLocked("experimentFilterCutoffKHz")} type="number" step="0.1" value={numberValue(draft.experimentFilterCutoffKHz)} onChange={(event) => updateNumber("experimentFilterCutoffKHz", event.target.value)} /></label></div></div>
+      <div className="form-section">
+        <div className="form-section-heading"><div><h3>{measuredPointDraft ? "Experimental pressure measurements" : "Synchronized pressure probes"}</h3><p className="form-help">{measuredPointDraft ? "Map the time column and one pressure column for each synchronized experimental probe." : "The operating point supplies the experimental measurements. Upload and map the CFD result for this comparison."}</p></div><button onClick={downloadExample}>Download example CSV</button></div>
+        <div className={`file-mapper-grid ${measuredPointDraft ? "single" : ""}`}>
+          {measuredPointDraft
+            ? <PressureFileMapper key={`experiment-new-${draft.probePositionsDeg.length}`} kind="Experiment" expectedProbeCount={draft.probePositionsDeg.length} onMapped={setTestPending} />
+            : draftReferenceCase && !editingCaseId
+              ? <section className="inherited-experiment"><div><span>EXPERIMENT REUSED</span><strong>{inheritedExperimentName}</strong></div><p>Exact samples inherited from <b>{draftReferenceCase.metadata.name}</b>. No experiment re-upload is needed.</p></section>
+              : draftOperatingPoint?.experiment && !editingCaseId
+                ? <section className="inherited-experiment"><div><span>MEASURED EXPERIMENT</span><strong>{draftOperatingPoint.experiment.importProvenance?.fileName ?? draftOperatingPoint.name}</strong></div><p>Experimental samples are inherited from this operating point. No re-upload is needed.</p></section>
+                : <PressureFileMapper key={`experiment-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}`} kind="Experiment" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.testSignals[0]?.name.split(" · ")[0] : undefined} onMapped={setTestPending} />}
+          {!measuredPointDraft && <PressureFileMapper key={`cfd-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}-${draftRelationship?.referenceCaseId ?? "standalone"}`} kind="CFD" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.cfdSignals[0]?.name.split(" · ")[0] : undefined} onMapped={setCfdPending} />}
+        </div>
+        <div className="form-grid two measurement-chain"><label><span>Experiment sensor bandwidth (kHz)</span><input disabled={!measuredPointDraft || rerunFieldLocked("experimentSensorBandwidthKHz")} type="number" step="0.1" value={numberValue(draft.experimentSensorBandwidthKHz)} onChange={(event) => updateNumber("experimentSensorBandwidthKHz", event.target.value)} /></label><label><span>Experiment low-pass / anti-alias cutoff (kHz)</span><input disabled={!measuredPointDraft || rerunFieldLocked("experimentFilterCutoffKHz")} type="number" step="0.1" value={numberValue(draft.experimentFilterCutoffKHz)} onChange={(event) => updateNumber("experimentFilterCutoffKHz", event.target.value)} /></label></div>
+      </div>
 
-      <div className="form-section"><h3>Operating point</h3><p className="form-help">These physical conditions are stored once and locked for every CFD rerun beneath this point.</p><div className="form-grid five"><label><span>Inlet / plenum pressure (bar)</span><input disabled={rerunFieldLocked("inletPressureBar")} type="number" value={numberValue(draft.inletPressureBar)} onChange={(event) => updateNumber("inletPressureBar", event.target.value)} /></label><label><span>Mass flow (kg/s)</span><input disabled={rerunFieldLocked("massFlowKgS")} type="number" step="0.001" value={numberValue(draft.massFlowKgS)} onChange={(event) => updateNumber("massFlowKgS", event.target.value)} /></label><label><span>Equivalence ratio</span><input disabled={rerunFieldLocked("equivalenceRatio")} type="number" step="0.01" value={numberValue(draft.equivalenceRatio)} onChange={(event) => updateNumber("equivalenceRatio", event.target.value)} /></label><label><span>Back pressure (bar)</span><input disabled={rerunFieldLocked("backPressureBar")} type="number" step="0.01" value={numberValue(draft.backPressureBar)} onChange={(event) => updateNumber("backPressureBar", event.target.value)} /></label><label><span>Inlet temperature (K)</span><input disabled={rerunFieldLocked("inletTemperatureK")} type="number" value={numberValue(draft.inletTemperatureK)} onChange={(event) => updateNumber("inletTemperatureK", event.target.value)} /></label></div></div>
+      <div className="form-section"><h3>Operating point</h3><p className="form-help">{measuredPointDraft ? "Enter the physical test condition. These values define one marker in the measured envelope." : "This physical condition is inherited from the measured operating point and cannot be changed by a CFD run."}</p><div className="form-grid five"><label><span>Inlet / plenum pressure (bar)</span><input disabled={!measuredPointDraft || rerunFieldLocked("inletPressureBar")} type="number" value={numberValue(draft.inletPressureBar)} onChange={(event) => updateNumber("inletPressureBar", event.target.value)} /></label><label><span>Mass flow (kg/s)</span><input disabled={!measuredPointDraft || rerunFieldLocked("massFlowKgS")} type="number" step="0.001" value={numberValue(draft.massFlowKgS)} onChange={(event) => updateNumber("massFlowKgS", event.target.value)} /></label><label><span>Equivalence ratio</span><input disabled={!measuredPointDraft || rerunFieldLocked("equivalenceRatio")} type="number" step="0.01" value={numberValue(draft.equivalenceRatio)} onChange={(event) => updateNumber("equivalenceRatio", event.target.value)} /></label><label><span>Back pressure (bar)</span><input disabled={!measuredPointDraft || rerunFieldLocked("backPressureBar")} type="number" step="0.01" value={numberValue(draft.backPressureBar)} onChange={(event) => updateNumber("backPressureBar", event.target.value)} /></label><label><span>Inlet temperature (K)</span><input disabled={!measuredPointDraft || rerunFieldLocked("inletTemperatureK")} type="number" value={numberValue(draft.inletTemperatureK)} onChange={(event) => updateNumber("inletTemperatureK", event.target.value)} /></label></div></div>
 
-      <div className="form-section"><h3>Solver + numerical schemes</h3><div className="form-grid four"><label><span>Solver</span><input disabled={rerunFieldLocked("solver")} value={draft.solver} onChange={(event) => updateText("solver", event.target.value)} /></label><label><span>Version</span><input disabled={rerunFieldLocked("solverVersion")} value={draft.solverVersion} onChange={(event) => updateText("solverVersion", event.target.value)} /></label><label><span>Dimensionality</span><select disabled={rerunFieldLocked("dimensionality")} value={draft.dimensionality} onChange={(event) => setDraft((current) => ({ ...current, dimensionality: event.target.value as Dimensionality }))}><option value="">Select</option><option value="2D">2D</option><option value="3D">3D</option></select></label><label><span>Runtime (hours) · optional</span><input disabled={rerunFieldLocked("solverRuntimeHours")} type="number" min="0" step="0.1" value={numberValue(draft.solverRuntimeHours)} onChange={(event) => updateNumber("solverRuntimeHours", event.target.value)} /></label><label><span>Spatial scheme</span><input disabled={rerunFieldLocked("spatialScheme")} value={draft.spatialScheme} onChange={(event) => updateText("spatialScheme", event.target.value)} /></label><label><span>Spatial order</span><input disabled={rerunFieldLocked("spatialOrder")} type="number" value={numberValue(draft.spatialOrder)} onChange={(event) => updateNumber("spatialOrder", event.target.value)} /></label><label><span>Numerical flux</span><input disabled={rerunFieldLocked("numericalFlux")} value={draft.numericalFlux} onChange={(event) => updateText("numericalFlux", event.target.value)} /></label><label><span>Limiter / filter / dissipation</span><input disabled={rerunFieldLocked("limiterFilter")} placeholder="Enter None if unused" value={draft.limiterFilter} onChange={(event) => updateText("limiterFilter", event.target.value)} /></label><label><span>Temporal scheme</span><input disabled={rerunFieldLocked("temporalScheme")} value={draft.temporalScheme} onChange={(event) => updateText("temporalScheme", event.target.value)} /></label><label><span>Temporal order</span><input disabled={rerunFieldLocked("temporalOrder")} type="number" value={numberValue(draft.temporalOrder)} onChange={(event) => updateNumber("temporalOrder", event.target.value)} /></label><label><span>Time step (µs)</span><input disabled={rerunFieldLocked("timeStepUs")} type="number" step="0.001" value={numberValue(draft.timeStepUs)} onChange={(event) => updateNumber("timeStepUs", event.target.value)} /></label><label><span>CFL</span><input disabled={rerunFieldLocked("cfl")} type="number" step="0.01" value={numberValue(draft.cfl)} onChange={(event) => updateNumber("cfl", event.target.value)} /></label></div></div>
+      {!measuredPointDraft && <div className="form-section"><h3>Solver + numerical schemes</h3><div className="form-grid four"><label><span>Solver</span><input disabled={rerunFieldLocked("solver")} value={draft.solver} onChange={(event) => updateText("solver", event.target.value)} /></label><label><span>Version</span><input disabled={rerunFieldLocked("solverVersion")} value={draft.solverVersion} onChange={(event) => updateText("solverVersion", event.target.value)} /></label><label><span>Dimensionality</span><select disabled={rerunFieldLocked("dimensionality")} value={draft.dimensionality} onChange={(event) => setDraft((current) => ({ ...current, dimensionality: event.target.value as Dimensionality }))}><option value="">Select</option><option value="2D">2D</option><option value="3D">3D</option></select></label><label><span>Runtime (hours) · optional</span><input disabled={rerunFieldLocked("solverRuntimeHours")} type="number" min="0" step="0.1" value={numberValue(draft.solverRuntimeHours)} onChange={(event) => updateNumber("solverRuntimeHours", event.target.value)} /></label><label><span>Spatial scheme</span><input disabled={rerunFieldLocked("spatialScheme")} value={draft.spatialScheme} onChange={(event) => updateText("spatialScheme", event.target.value)} /></label><label><span>Spatial order</span><input disabled={rerunFieldLocked("spatialOrder")} type="number" value={numberValue(draft.spatialOrder)} onChange={(event) => updateNumber("spatialOrder", event.target.value)} /></label><label><span>Numerical flux</span><input disabled={rerunFieldLocked("numericalFlux")} value={draft.numericalFlux} onChange={(event) => updateText("numericalFlux", event.target.value)} /></label><label><span>Limiter / filter / dissipation</span><input disabled={rerunFieldLocked("limiterFilter")} placeholder="Enter None if unused" value={draft.limiterFilter} onChange={(event) => updateText("limiterFilter", event.target.value)} /></label><label><span>Temporal scheme</span><input disabled={rerunFieldLocked("temporalScheme")} value={draft.temporalScheme} onChange={(event) => updateText("temporalScheme", event.target.value)} /></label><label><span>Temporal order</span><input disabled={rerunFieldLocked("temporalOrder")} type="number" value={numberValue(draft.temporalOrder)} onChange={(event) => updateNumber("temporalOrder", event.target.value)} /></label><label><span>Time step (µs)</span><input disabled={rerunFieldLocked("timeStepUs")} type="number" step="0.001" value={numberValue(draft.timeStepUs)} onChange={(event) => updateNumber("timeStepUs", event.target.value)} /></label><label><span>CFL</span><input disabled={rerunFieldLocked("cfl")} type="number" step="0.01" value={numberValue(draft.cfl)} onChange={(event) => updateNumber("cfl", event.target.value)} /></label></div></div>}
 
-      <div className="form-section"><h3>Resolution + convergence</h3><div className="form-grid four"><label><span>Total mesh cells</span><input disabled={rerunFieldLocked("meshCells")} type="number" value={numberValue(draft.meshCells)} onChange={(event) => updateNumber("meshCells", event.target.value)} /></label><label><span>Minimum front cell (mm)</span><input disabled={rerunFieldLocked("minimumCellSizeMm")} type="number" step="0.001" value={numberValue(draft.minimumCellSizeMm)} onChange={(event) => updateNumber("minimumCellSizeMm", event.target.value)} /></label><label><span>Cells / induction length</span><input disabled={rerunFieldLocked("cellsPerInductionLength")} type="number" step="0.1" value={numberValue(draft.cellsPerInductionLength)} onChange={(event) => updateNumber("cellsPerInductionLength", event.target.value)} /></label><label><span>Near-wall cell (mm)</span><input disabled={rerunFieldLocked("nearWallCellSizeMm")} type="number" step="0.001" value={numberValue(draft.nearWallCellSizeMm)} onChange={(event) => updateNumber("nearWallCellSizeMm", event.target.value)} /></label><label><span>Documented mesh-study change (%) · optional</span><input disabled={rerunFieldLocked("meshConvergencePct")} type="number" step="0.1" value={numberValue(draft.meshConvergencePct)} onChange={(event) => updateNumber("meshConvergencePct", event.target.value)} /></label><label><span>Documented time-step-study change (%) · optional</span><input disabled={rerunFieldLocked("timeStepConvergencePct")} type="number" step="0.1" value={numberValue(draft.timeStepConvergencePct)} onChange={(event) => updateNumber("timeStepConvergencePct", event.target.value)} /></label></div></div>
+      {!measuredPointDraft && <div className="form-section"><h3>Resolution + convergence</h3><div className="form-grid four"><label><span>Total mesh cells</span><input disabled={rerunFieldLocked("meshCells")} type="number" value={numberValue(draft.meshCells)} onChange={(event) => updateNumber("meshCells", event.target.value)} /></label><label><span>Minimum front cell (mm)</span><input disabled={rerunFieldLocked("minimumCellSizeMm")} type="number" step="0.001" value={numberValue(draft.minimumCellSizeMm)} onChange={(event) => updateNumber("minimumCellSizeMm", event.target.value)} /></label><label><span>Cells / induction length</span><input disabled={rerunFieldLocked("cellsPerInductionLength")} type="number" step="0.1" value={numberValue(draft.cellsPerInductionLength)} onChange={(event) => updateNumber("cellsPerInductionLength", event.target.value)} /></label><label><span>Near-wall cell (mm)</span><input disabled={rerunFieldLocked("nearWallCellSizeMm")} type="number" step="0.001" value={numberValue(draft.nearWallCellSizeMm)} onChange={(event) => updateNumber("nearWallCellSizeMm", event.target.value)} /></label><label><span>Documented mesh-study change (%) · optional</span><input disabled={rerunFieldLocked("meshConvergencePct")} type="number" step="0.1" value={numberValue(draft.meshConvergencePct)} onChange={(event) => updateNumber("meshConvergencePct", event.target.value)} /></label><label><span>Documented time-step-study change (%) · optional</span><input disabled={rerunFieldLocked("timeStepConvergencePct")} type="number" step="0.1" value={numberValue(draft.timeStepConvergencePct)} onChange={(event) => updateNumber("timeStepConvergencePct", event.target.value)} /></label></div></div>}
 
-      <div className="form-section"><h3>Physics + boundaries</h3><div className="form-grid four"><label><span>Chemical mechanism</span><input disabled={rerunFieldLocked("chemistryModel")} value={draft.chemistryModel} onChange={(event) => updateText("chemistryModel", event.target.value)} /></label><label><span>Species</span><input disabled={rerunFieldLocked("chemistrySpecies")} type="number" value={numberValue(draft.chemistrySpecies)} onChange={(event) => updateNumber("chemistrySpecies", event.target.value)} /></label><label><span>Reactions</span><input disabled={rerunFieldLocked("chemistryReactions")} type="number" value={numberValue(draft.chemistryReactions)} onChange={(event) => updateNumber("chemistryReactions", event.target.value)} /></label><label><span>Chemistry integration</span><input disabled={rerunFieldLocked("chemistryIntegrator")} value={draft.chemistryIntegrator} onChange={(event) => updateText("chemistryIntegrator", event.target.value)} /></label><label><span>Turbulence model</span><input disabled={rerunFieldLocked("turbulenceModel")} placeholder="Enter None if unused" value={draft.turbulenceModel} onChange={(event) => updateText("turbulenceModel", event.target.value)} /></label><label><span>Combustion model</span><input disabled={rerunFieldLocked("combustionModel")} placeholder="Enter None if unused" value={draft.combustionModel} onChange={(event) => updateText("combustionModel", event.target.value)} /></label><label><span>Wall thermal condition</span><input disabled={rerunFieldLocked("wallBoundaryCondition")} value={draft.wallBoundaryCondition} onChange={(event) => updateText("wallBoundaryCondition", event.target.value)} /></label><label><span>Inlet treatment</span><input disabled={rerunFieldLocked("inletBoundaryCondition")} value={draft.inletBoundaryCondition} onChange={(event) => updateText("inletBoundaryCondition", event.target.value)} /></label><label><span>Outlet treatment</span><input disabled={rerunFieldLocked("outletBoundaryCondition")} value={draft.outletBoundaryCondition} onChange={(event) => updateText("outletBoundaryCondition", event.target.value)} /></label><label><span>Ignition / initialization</span><input disabled={rerunFieldLocked("initializationMethod")} value={draft.initializationMethod} onChange={(event) => updateText("initializationMethod", event.target.value)} /></label></div></div>
+      {!measuredPointDraft && <div className="form-section"><h3>Physics + boundaries</h3><div className="form-grid four"><label><span>Chemical mechanism</span><input disabled={rerunFieldLocked("chemistryModel")} value={draft.chemistryModel} onChange={(event) => updateText("chemistryModel", event.target.value)} /></label><label><span>Species</span><input disabled={rerunFieldLocked("chemistrySpecies")} type="number" value={numberValue(draft.chemistrySpecies)} onChange={(event) => updateNumber("chemistrySpecies", event.target.value)} /></label><label><span>Reactions</span><input disabled={rerunFieldLocked("chemistryReactions")} type="number" value={numberValue(draft.chemistryReactions)} onChange={(event) => updateNumber("chemistryReactions", event.target.value)} /></label><label><span>Chemistry integration</span><input disabled={rerunFieldLocked("chemistryIntegrator")} value={draft.chemistryIntegrator} onChange={(event) => updateText("chemistryIntegrator", event.target.value)} /></label><label><span>Turbulence model</span><input disabled={rerunFieldLocked("turbulenceModel")} placeholder="Enter None if unused" value={draft.turbulenceModel} onChange={(event) => updateText("turbulenceModel", event.target.value)} /></label><label><span>Combustion model</span><input disabled={rerunFieldLocked("combustionModel")} placeholder="Enter None if unused" value={draft.combustionModel} onChange={(event) => updateText("combustionModel", event.target.value)} /></label><label><span>Wall thermal condition</span><input disabled={rerunFieldLocked("wallBoundaryCondition")} value={draft.wallBoundaryCondition} onChange={(event) => updateText("wallBoundaryCondition", event.target.value)} /></label><label><span>Inlet treatment</span><input disabled={rerunFieldLocked("inletBoundaryCondition")} value={draft.inletBoundaryCondition} onChange={(event) => updateText("inletBoundaryCondition", event.target.value)} /></label><label><span>Outlet treatment</span><input disabled={rerunFieldLocked("outletBoundaryCondition")} value={draft.outletBoundaryCondition} onChange={(event) => updateText("outletBoundaryCondition", event.target.value)} /></label><label><span>Ignition / initialization</span><input disabled={rerunFieldLocked("initializationMethod")} value={draft.initializationMethod} onChange={(event) => updateText("initializationMethod", event.target.value)} /></label></div></div>}
 
-      <div className="form-section"><h3>Experiment + CFD uncertainty</h3><div className="form-grid four"><label><span>Experiment pressure uncertainty (%)</span><input disabled={rerunFieldLocked("pressureUncertaintyPct")} type="number" step="0.1" value={numberValue(draft.pressureUncertaintyPct)} onChange={(event) => updateNumber("pressureUncertaintyPct", event.target.value)} /></label><label><span>Experiment timing uncertainty (µs)</span><input disabled={rerunFieldLocked("timingUncertaintyUs")} type="number" step="0.01" value={numberValue(draft.timingUncertaintyUs)} onChange={(event) => updateNumber("timingUncertaintyUs", event.target.value)} /></label><label><span>CFD pressure uncertainty (%)</span><input disabled={rerunFieldLocked("cfdPressureUncertaintyPct")} type="number" step="0.1" value={numberValue(draft.cfdPressureUncertaintyPct)} onChange={(event) => updateNumber("cfdPressureUncertaintyPct", event.target.value)} /></label><label><span>CFD timing uncertainty (µs)</span><input disabled={rerunFieldLocked("cfdTimingUncertaintyUs")} type="number" step="0.01" value={numberValue(draft.cfdTimingUncertaintyUs)} onChange={(event) => updateNumber("cfdTimingUncertaintyUs", event.target.value)} /></label></div></div>
+      <div className="form-section"><h3>{measuredPointDraft ? "Experiment uncertainty" : "Experiment + CFD uncertainty"}</h3><div className="form-grid four"><label><span>Experiment pressure uncertainty (%)</span><input disabled={!measuredPointDraft || rerunFieldLocked("pressureUncertaintyPct")} type="number" step="0.1" value={numberValue(draft.pressureUncertaintyPct)} onChange={(event) => updateNumber("pressureUncertaintyPct", event.target.value)} /></label><label><span>Experiment timing uncertainty (µs)</span><input disabled={!measuredPointDraft || rerunFieldLocked("timingUncertaintyUs")} type="number" step="0.01" value={numberValue(draft.timingUncertaintyUs)} onChange={(event) => updateNumber("timingUncertaintyUs", event.target.value)} /></label>{!measuredPointDraft && <><label><span>CFD pressure uncertainty (%)</span><input disabled={rerunFieldLocked("cfdPressureUncertaintyPct")} type="number" step="0.1" value={numberValue(draft.cfdPressureUncertaintyPct)} onChange={(event) => updateNumber("cfdPressureUncertaintyPct", event.target.value)} /></label><label><span>CFD timing uncertainty (µs)</span><input disabled={rerunFieldLocked("cfdTimingUncertaintyUs")} type="number" step="0.01" value={numberValue(draft.cfdTimingUncertaintyUs)} onChange={(event) => updateNumber("cfdTimingUncertaintyUs", event.target.value)} /></label></>}</div></div>
 
-      {error && <p className="error-message">{error}</p>}<div className="modal-actions"><button className="button secondary" onClick={() => setShowLoader(false)}>Cancel</button><button className="button primary" onClick={controlledRerunDraft ? reviewRerun : applyCase}>{controlledRerunDraft ? "Review rerun →" : draftRelationship ? "Analyze rerun →" : "Create point and analyze →"}</button></div>
+      {error && <p className="error-message">{error}</p>}<div className="modal-actions"><button className="button secondary" onClick={() => setShowLoader(false)}>Cancel</button><button className="button primary" onClick={measuredPointDraft ? applyMeasuredOperatingPoint : controlledRerunDraft ? reviewRerun : applyCase}>{measuredPointDraft ? "Add measured operating point →" : controlledRerunDraft ? "Review rerun →" : draftRelationship ? "Analyze rerun →" : "Analyze baseline CFD →"}</button></div>
       </>}
     </section></div>}
 
