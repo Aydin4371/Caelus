@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { RdeGeometrySchematic } from "@/components/rde-physics-visual";
 import {
   EMPTY_ENGINE_DESIGN,
   buildScreeningPlan,
@@ -160,6 +161,7 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
     </section>
 
     <div className="design-overview-grid">
+      <section className="design-card design-geometry-card"><div className="card-heading"><div><span>Generated from entered dimensions</span><h2>RDE geometry</h2></div><small>Schematic, not a CFD field</small></div><RdeGeometrySchematic design={activeDesign}/></section>
       <section className="design-card"><div className="card-heading"><div><span>Calculated from the design</span><h2>Geometry and flow quantities</h2></div><small>Not model predictions</small></div>{calculations && <dl className="design-calculations">
         <div><dt>Mean diameter</dt><dd>{compactNumber(calculations.meanDiameterMm, 2)} mm</dd></div>
         <div><dt>Annulus gap</dt><dd>{compactNumber(calculations.annulusGapMm, 2)} mm</dd></div>

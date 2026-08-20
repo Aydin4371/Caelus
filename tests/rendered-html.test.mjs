@@ -74,11 +74,15 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(logic, /evidenceType: baseline \? "Experiment \+ CFD" : "Experiment only"/);
   assert.match(page, /No CFD setup or result is required here/);
   assert.match(page, /Optional engine-physics comparison/);
+  assert.match(page, /Optional spatial wall evidence/);
+  assert.match(page, /<RdePhysicsVisual/);
   assert.match(page, /Kythros reports CFD minus experiment only when both values exist/);
   assert.match(page, /experimentNetThrustN/);
   assert.match(page, /cfdWallHeatFluxMWm2/);
   assert.match(page, /!measuredPointDraft && <div className="form-section"><h3>Solver \+ numerical schemes/);
   assert.match(logic, /stablePointCount/);
+  assert.match(envelope, /How a recommendation becomes trusted/);
+  assert.match(design, /RDE geometry/);
 });
 
 test("ships an installable Kythros app manifest and service worker", async () => {

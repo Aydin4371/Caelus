@@ -1,6 +1,6 @@
 import { buildCaseHistoryEvidence } from "./case-history.ts";
 import type { AnalysisCase } from "./caevera-types.ts";
-import type { OperatingPoint } from "./design-workspace.ts";
+import type { OperatingPoint, RecommendationSnapshot } from "./design-workspace.ts";
 import { assessSignalQuality } from "./rde-analysis.ts";
 import { analyzeRdeProbeSet } from "./wave-dynamics.ts";
 import { experimentPhysicsFromMetadata, physicsLayerCoverage, type PhysicsLayerStatus } from "./physics-evidence.ts";
@@ -42,6 +42,7 @@ export type EnvelopePoint = {
   sourceLocator: string | null;
   evidenceFactors: Array<{ label: string; result: string; status: "passed" | "review" | "not-available" }>;
   physicsLayers: Array<{ id: "wave" | "performance" | "feed" | "thermal" | "repeatability"; label: string; status: PhysicsLayerStatus; summary: string }>;
+  recommendation: RecommendationSnapshot | null;
 };
 
 export type EnvelopeDataset = {
@@ -156,6 +157,7 @@ export function buildEnvelopeDataset(operatingPoints: OperatingPoint[], allRuns:
             summary: observation.evidenceNotes?.[layer.id] ?? layer.summary,
           })),
         ],
+        recommendation: operatingPoint.recommendation ?? null,
       };
       return [point];
     }
@@ -209,6 +211,7 @@ export function buildEnvelopeDataset(operatingPoints: OperatingPoint[], allRuns:
         { id: "wave", label: "Wave response", status: identifiability === "Identified" ? "supported" : "partial", summary: identifiability === "Identified" ? `${mode.waveCount}-wave mode identified from synchronized probes` : `${identifiability}; review the probe evidence` },
         ...physicsLayerCoverage(experiment.physics),
       ],
+      recommendation: operatingPoint.recommendation ?? null,
     };
     point.modelUse = modelUse(point);
     return [point];

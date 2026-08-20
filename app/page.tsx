@@ -3,6 +3,8 @@
 import { ChangeEvent, useMemo, useState } from "react";
 import { PwaInstallButton } from "@/components/pwa-install-button";
 import { PressureFileMapper } from "@/components/pressure-file-mapper";
+import { SpatialFieldMapper } from "@/components/spatial-field-mapper";
+import { RdePhysicsVisual } from "@/components/rde-physics-visual";
 import { DesignPlanner } from "@/components/design-planner";
 import { OperatingEnvelope } from "@/components/operating-envelope";
 import { ComparisonHierarchy } from "@/components/comparison-hierarchy";
@@ -35,6 +37,7 @@ import {
 } from "@/lib/rde-analysis";
 import { analyzeRdeProbeSet, compareProbeSets, type RdeModeResult } from "@/lib/wave-dynamics";
 import { buildPhysicsComparison, cfdPhysicsFromMetadata, experimentPhysicsFromMetadata, PHYSICS_EVIDENCE_SOURCES, PHYSICS_MEASUREMENT_DEFINITIONS, PHYSICS_SOURCE_LIMITATION, physicsMetadataValues } from "@/lib/physics-evidence";
+import type { WallFieldImport } from "@/lib/spatial-field";
 
 const TEST_COLOR = "#2588a2";
 const CFD_COLOR = "#6679bd";
@@ -527,6 +530,8 @@ export default function Home() {
   const [draftRelationship, setDraftRelationship] = useState<CaseRelationship | null>(null);
   const [testPending, setTestPending] = useState<MappedProbeImport | null>(null);
   const [cfdPending, setCfdPending] = useState<MappedProbeImport | null>(null);
+  const [testWallPending, setTestWallPending] = useState<WallFieldImport | null>(null);
+  const [cfdWallPending, setCfdWallPending] = useState<WallFieldImport | null>(null);
   const [showLoader, setShowLoader] = useState(false);
   const [reviewingRerun, setReviewingRerun] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -539,6 +544,7 @@ export default function Home() {
 
   const activeCase = cases.find((item) => item.id === activeCaseId) ?? null;
   const activeOperatingPoint = operatingPoints.find((item) => item.id === activeOperatingPointId) ?? null;
+  const activeDesign = designs.find((item) => item.id === activeCase?.designId) ?? null;
   const operatingPointRuns = useMemo(() => cases.filter((item) => item.operatingPointId === activeOperatingPointId), [cases, activeOperatingPointId]);
   const draftOperatingPointRuns = useMemo(() => cases.filter((item) => item.operatingPointId === draftOperatingPointId), [cases, draftOperatingPointId]);
   const probeSetComparison = useMemo(() => activeCase ? compareProbeSets(activeCase.testSignals, activeCase.cfdSignals) : null, [activeCase]);
@@ -675,6 +681,7 @@ export default function Home() {
       equivalenceRatio: nextDraft.equivalenceRatio,
       massFlowKgS: nextDraft.massFlowKgS,
       backPressureBar: nextDraft.backPressureBar,
+      recommendation: point?.recommendation ?? null,
     };
     setActiveDesignId(designId);
     setDraftDesignId(designId);
@@ -684,7 +691,7 @@ export default function Home() {
     setEditingCaseId(null);
     setDraft(nextDraft);
     setDraftRelationship(null);
-    setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
+    setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
 
   function openCaseEditor() {
@@ -696,7 +703,7 @@ export default function Home() {
     setDraftNewOperatingPoint(null);
     setLoaderMode("comparison-run");
     setDraftRelationship(activeCase.relationship ?? null);
-    setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
+    setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
 
   function openNewRunForOperatingPoint() {
@@ -713,7 +720,7 @@ export default function Home() {
     inherited.name = `${baseline.metadata.name} rerun`;
     clearCfdPhysics(inherited);
     setDraft(inherited);
-    setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
+    setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
 
   function openBaselineCfdForOperatingPoint(operatingPointId: string) {
@@ -745,7 +752,7 @@ export default function Home() {
     setEditingCaseId(null);
     setDraft(nextDraft);
     setDraftRelationship(null);
-    setTestPending(null); setCfdPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
+    setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
 
   function selectDesign(designId: string) {
@@ -892,7 +899,9 @@ export default function Home() {
           pressureUncertaintyPct: draft.pressureUncertaintyPct,
           timingUncertaintyUs: draft.timingUncertaintyUs,
           physics: experimentPhysicsFromMetadata(draft),
+          wallField: testWallPending,
         },
+        recommendation: draftNewOperatingPoint?.recommendation ?? null,
       };
       setOperatingPoints((current) => [...current, nextPoint]);
       setActiveDesignId(draftDesignId);
@@ -902,6 +911,7 @@ export default function Home() {
       setShowLoader(false);
       setDraftNewOperatingPoint(null);
       setTestPending(null);
+      setTestWallPending(null);
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The experimental pressure data could not be analyzed.");
@@ -972,7 +982,9 @@ export default function Home() {
       if (!operatingPointId) return setError("Choose or create an operating point before adding a run.");
       const designId = editingCase?.designId ?? referenceCase?.designId ?? draftDesignId;
       if (!designId) return setError("Choose an engine design before adding an operating point.");
-      const nextCase: AnalysisCase = { id, designId, operatingPointId, source: editingCase?.source ?? "uploaded", relationship: nextRelationship, metadata: cloneMetadata(draft), testSignals: nextTest, cfdSignals: nextCfd, imports: nextImports };
+      const experimentWallField = testWallPending ?? editingCase?.wallFields?.experiment ?? referenceCase?.wallFields?.experiment ?? draftOperatingPoint?.experiment?.wallField ?? null;
+      const cfdWallField = cfdWallPending ?? editingCase?.wallFields?.cfd ?? null;
+      const nextCase: AnalysisCase = { id, designId, operatingPointId, source: editingCase?.source ?? "uploaded", relationship: nextRelationship, metadata: cloneMetadata(draft), testSignals: nextTest, cfdSignals: nextCfd, imports: nextImports, wallFields: { experiment: experimentWallField, cfd: cfdWallField } };
       if (!nextRelationship) {
         const existingPoint = operatingPoints.find((item) => item.id === operatingPointId);
         const nextPoint: OperatingPoint = {
@@ -998,13 +1010,15 @@ export default function Home() {
             pressureUncertaintyPct: draft.pressureUncertaintyPct,
             timingUncertaintyUs: draft.timingUncertaintyUs,
             physics: experimentPhysicsFromMetadata(draft),
+            wallField: experimentWallField,
           },
+          recommendation: existingPoint?.recommendation ?? draftNewOperatingPoint?.recommendation ?? null,
         };
         setOperatingPoints((current) => current.some((item) => item.id === operatingPointId) ? current.map((item) => item.id === operatingPointId ? nextPoint : item) : [...current, nextPoint]);
       }
       setCases((current) => editingCaseId ? current.map((item) => item.id === editingCaseId ? nextCase : item) : [...current, nextCase]);
       if (!caseBaselineId) setCaseBaselineId(id);
-      setActiveDesignId(designId); setActiveOperatingPointId(operatingPointId); setActiveCaseId(id); setWorkspaceView("case"); setProductView("comparison"); setActiveProbe(0); setReviewingRerun(false); setShowLoader(false); setDraftNewOperatingPoint(null); setError("");
+      setActiveDesignId(designId); setActiveOperatingPointId(operatingPointId); setActiveCaseId(id); setWorkspaceView("case"); setProductView("comparison"); setActiveProbe(0); setReviewingRerun(false); setShowLoader(false); setDraftNewOperatingPoint(null); setTestWallPending(null); setCfdWallPending(null); setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The two datasets could not be compared.");
     }
@@ -1312,6 +1326,8 @@ export default function Home() {
 
           <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} publishedSources={likelySources} researchClaims={likelyHypothesis?.researchClaims ?? []} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onSaveWorkspace={downloadWorkspace} onViewHistory={operatingPointRuns.length > 1 ? () => setWorkspaceView("compare") : null} />
 
+          <RdePhysicsVisual design={activeDesign} rows={physicsComparisons} experimentWallField={activeCase.wallFields?.experiment ?? activeOperatingPoint.experiment?.wallField} cfdWallField={activeCase.wallFields?.cfd} onEdit={openCaseEditor}/>
+
           {showDetailedEvidence && <>
           <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
             <div><span>COMPARISON CONCLUSION</span><h2>{assessment.validity.status === "Blocked" ? "Assessment blocked until experiment–CFD matching is confirmed" : totalReview ? `${totalReview} evidence check${totalReview === 1 ? "" : "s"} require review` : "No selected CFD-to-experiment difference exceeds current uncertainty"}</h2><p>{assessment.validity.status === "Blocked" ? "Do not change the CFD model from this pairing yet." : totalReview ? "The highlighted findings determine the ranked explanations and one-variable next-run plan below." : "This does not prove the CFD is valid for every output or operating point. It means this run contains no resolved pressure discrepancy."}</p></div>
@@ -1423,6 +1439,13 @@ export default function Home() {
         const cfdField = <label key={`cfd-${item.key}`}><span>CFD {item.label.toLowerCase()}{item.unit ? ` (${item.unit})` : ""} · optional</span><input disabled={rerunFieldLocked(item.cfdKey)} type="number" step="any" value={numberValue(draft[item.cfdKey] as number | undefined)} onChange={(event) => updateNumber(item.cfdKey, event.target.value)} /></label>;
         return [experimentField, cfdField];
       })}</div></div>
+
+      <div className="form-section"><h3>Optional spatial wall evidence</h3><p className="form-help">Upload axial position and circumferential angle with wall heat flux, wall temperature, or both. Kythros plots only mapped samples and does not turn a scalar peak into a field.</p><div className={`file-mapper-grid ${measuredPointDraft ? "single" : ""}`}>
+        {measuredPointDraft
+          ? <SpatialFieldMapper kind="Experiment" currentFileName={draftNewOperatingPoint?.experiment?.wallField?.fileName} onMapped={setTestWallPending}/>
+          : <section className="inherited-experiment"><div><span>EXPERIMENT WALL FIELD</span><strong>{draftOperatingPoint?.experiment?.wallField?.fileName ?? activeCase?.wallFields?.experiment?.fileName ?? "No spatial experiment field"}</strong></div><p>{draftOperatingPoint?.experiment?.wallField || activeCase?.wallFields?.experiment ? "Inherited from the measured operating point." : "No experimental wall map is available; scalar evidence remains separate."}</p></section>}
+        {!measuredPointDraft && <SpatialFieldMapper kind="CFD" currentFileName={editingCaseId ? activeCase?.wallFields?.cfd?.fileName : undefined} onMapped={setCfdWallPending}/>} 
+      </div></div>
 
       {!measuredPointDraft && <div className="form-section"><h3>Solver + numerical schemes</h3><div className="form-grid four"><label><span>Solver</span><input disabled={rerunFieldLocked("solver")} value={draft.solver} onChange={(event) => updateText("solver", event.target.value)} /></label><label><span>Version</span><input disabled={rerunFieldLocked("solverVersion")} value={draft.solverVersion} onChange={(event) => updateText("solverVersion", event.target.value)} /></label><label><span>Dimensionality</span><select disabled={rerunFieldLocked("dimensionality")} value={draft.dimensionality} onChange={(event) => setDraft((current) => ({ ...current, dimensionality: event.target.value as Dimensionality }))}><option value="">Select</option><option value="2D">2D</option><option value="3D">3D</option></select></label><label><span>Runtime (hours) · optional</span><input disabled={rerunFieldLocked("solverRuntimeHours")} type="number" min="0" step="0.1" value={numberValue(draft.solverRuntimeHours)} onChange={(event) => updateNumber("solverRuntimeHours", event.target.value)} /></label><label><span>Spatial scheme</span><input disabled={rerunFieldLocked("spatialScheme")} value={draft.spatialScheme} onChange={(event) => updateText("spatialScheme", event.target.value)} /></label><label><span>Spatial order</span><input disabled={rerunFieldLocked("spatialOrder")} type="number" value={numberValue(draft.spatialOrder)} onChange={(event) => updateNumber("spatialOrder", event.target.value)} /></label><label><span>Numerical flux</span><input disabled={rerunFieldLocked("numericalFlux")} value={draft.numericalFlux} onChange={(event) => updateText("numericalFlux", event.target.value)} /></label><label><span>Limiter / filter / dissipation</span><input disabled={rerunFieldLocked("limiterFilter")} placeholder="Enter None if unused" value={draft.limiterFilter} onChange={(event) => updateText("limiterFilter", event.target.value)} /></label><label><span>Temporal scheme</span><input disabled={rerunFieldLocked("temporalScheme")} value={draft.temporalScheme} onChange={(event) => updateText("temporalScheme", event.target.value)} /></label><label><span>Temporal order</span><input disabled={rerunFieldLocked("temporalOrder")} type="number" value={numberValue(draft.temporalOrder)} onChange={(event) => updateNumber("temporalOrder", event.target.value)} /></label><label><span>Time step (µs)</span><input disabled={rerunFieldLocked("timeStepUs")} type="number" step="0.001" value={numberValue(draft.timeStepUs)} onChange={(event) => updateNumber("timeStepUs", event.target.value)} /></label><label><span>CFL</span><input disabled={rerunFieldLocked("cfl")} type="number" step="0.01" value={numberValue(draft.cfl)} onChange={(event) => updateNumber("cfl", event.target.value)} /></label></div></div>}
 

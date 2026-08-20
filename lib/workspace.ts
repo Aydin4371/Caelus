@@ -2,10 +2,11 @@ import type { AnalysisCase } from "./caevera-types.ts";
 import { validateEngineDesign, validateOperatingPoint, type EngineDesign, type OperatingPoint } from "./design-workspace.ts";
 import { ANALYSIS_VERSION } from "./rde-analysis.ts";
 import { experimentPhysicsFromMetadata } from "./physics-evidence.ts";
+import { wallFieldImportIsValid } from "./spatial-field.ts";
 
 export const WORKSPACE_SCHEMA = "kythros-pressure-wave-workspace";
 export const LEGACY_WORKSPACE_SCHEMA = "caevera-pressure-wave-workspace";
-export const WORKSPACE_FORMAT_VERSION = 3;
+export const WORKSPACE_FORMAT_VERSION = 4;
 
 export type WorkspaceState = {
   cases: AnalysisCase[];
@@ -141,6 +142,11 @@ function validateCase(value: unknown, index: number): asserts value is AnalysisC
     validateImportProvenance(value.imports.experiment, value.testSignals.length, `Case ${index + 1} experiment`);
     validateImportProvenance(value.imports.cfd, value.cfdSignals.length, `Case ${index + 1} CFD`);
   }
+  if (value.wallFields != null) {
+    if (!isObject(value.wallFields)) throw new Error(`Case ${index + 1} spatial wall evidence is malformed.`);
+    if (value.wallFields.experiment != null && !wallFieldImportIsValid(value.wallFields.experiment)) throw new Error(`Case ${index + 1} experiment wall field is malformed.`);
+    if (value.wallFields.cfd != null && !wallFieldImportIsValid(value.wallFields.cfd)) throw new Error(`Case ${index + 1} CFD wall field is malformed.`);
+  }
 }
 
 export function serializeWorkspace(state: WorkspaceState) {
@@ -162,7 +168,7 @@ export function deserializeWorkspace(text: string): WorkspaceState {
     throw new Error("This is not valid JSON.");
   }
   if (!isObject(parsed) || parsed.schema !== WORKSPACE_SCHEMA && parsed.schema !== LEGACY_WORKSPACE_SCHEMA) throw new Error("This is not a Kythros pressure-and-wave workspace.");
-  if (parsed.formatVersion !== 1 && parsed.formatVersion !== 2 && parsed.formatVersion !== WORKSPACE_FORMAT_VERSION) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
+  if (parsed.formatVersion !== 1 && parsed.formatVersion !== 2 && parsed.formatVersion !== 3 && parsed.formatVersion !== WORKSPACE_FORMAT_VERSION) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
   if (!isObject(parsed.state) || !Array.isArray(parsed.state.cases)) throw new Error("The workspace does not contain a case list.");
   parsed.state.cases.forEach(validateCase);
   const cases = parsed.state.cases as AnalysisCase[];
