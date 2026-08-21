@@ -1028,8 +1028,17 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 /* Geometry and spatial multi-physics evidence */
 .design-geometry-card { grid-column: 1 / -1; }
 .rde-schematic { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcf8; }
-.rde-schematic svg { display: block; width: 100%; min-height: 245px; }
+.rde-schematic svg { display: block; width: 100%; height: auto; min-height: 0; }
 .rde-schematic text { fill: #486875; font-size: 11px; }
+.schematic-views { display: grid; grid-template-columns: minmax(290px, .72fr) minmax(500px, 1.28fr); gap: 12px; }
+.schematic-view { min-width: 0; margin: 0; overflow: hidden; border: 1px solid #cfdfdf; border-radius: 9px; background: #fffefa; }
+.schematic-view figcaption { min-height: 46px; padding: 9px 12px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #dce8e7; background: #f4f8f6; }
+.schematic-view figcaption > span { width: 27px; height: 27px; display: grid; flex: 0 0 auto; place-content: center; border-radius: 50%; background: #173b49; color: #fff; font-size: 9px; font-weight: 800; }
+.schematic-view figcaption > div { min-width: 0; display: grid; gap: 1px; }
+.schematic-view figcaption strong { color: var(--text); font-size: 12px; }
+.schematic-view figcaption small { color: var(--quiet); font-size: 9px; }
+.head-end-panel svg { max-height: 330px; padding: 6px 8px 0; }
+.axial-panel svg { padding: 5px 8px 0; }
 .schematic-view-title { fill: #173b49 !important; font-size: 10px !important; font-weight: 800; letter-spacing: .12em; }
 .schematic-wall { fill: #dbe6e4; stroke: #264e5d; stroke-width: 2; }
 .schematic-core { fill: #fffaf0; stroke: #264e5d; stroke-width: 2; }
@@ -1038,22 +1047,49 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 .schematic-wave { fill: none; stroke: #c84f58; stroke-width: 4; stroke-linecap: round; }
 .schematic-wave-marker { fill: #c84f58; }
 .schematic-flow-marker { fill: #2588a2; }
-.schematic-core-label { font-size: 10px !important; }
+.schematic-product-marker { fill: #d88732; }
+.schematic-core-label { fill: #45616c !important; font-size: 9px !important; font-weight: 800; letter-spacing: .08em; }
+.schematic-action-label { fill: #af404b !important; font-size: 8px !important; font-weight: 800; letter-spacing: .08em; }
+.schematic-part-name { fill: #173b49 !important; font-size: 8px !important; font-weight: 800; letter-spacing: .08em; }
+.schematic-part-name.inverse { fill: #285d6d !important; font-size: 7px !important; }
+.schematic-zone-label { fill: #237b91 !important; font-size: 7px !important; font-weight: 800; letter-spacing: .06em; }
+.schematic-zone-label.hot { fill: #a86125 !important; }
 .schematic-leader { fill: none; stroke: #66808a; stroke-width: 1; }
 .schematic-section-shell { fill: #eef3f1; stroke: #264e5d; stroke-width: 2; }
 .schematic-section-core { fill: #fffaf0; stroke: #264e5d; stroke-width: 1.5; }
 .schematic-section-annulus { stroke: #2588a2; stroke-width: 1.5; }
+.schematic-products, .schematic-fresh-zone { stroke: #2588a2; stroke-width: 1.5; }
 .schematic-plenum { fill: #e5eeec; stroke: #63808a; stroke-width: 1; }
 .schematic-injector-face { stroke: #c84f58; stroke-width: 3; }
+.schematic-detonation-front { stroke: #d8484f; stroke-width: 7; }
 .schematic-exhaust { fill: #f7efe1; stroke: #264e5d; stroke-width: 1.5; }
 .schematic-hot-wall { stroke: #c84f58; stroke-width: 3; }
 .schematic-flow { fill: none; stroke: #2588a2; stroke-width: 2.5; }
+.schematic-product-flow { fill: none; stroke: #d88732; stroke-width: 2.5; }
 .schematic-dimension { stroke: #526d77; stroke-width: 1; stroke-dasharray: 3 3; }
-.schematic-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 6px 8px 2px; color: var(--quiet); font-size: 10px; }
+.schematic-dimension.solid { stroke-dasharray: none; }
+.schematic-dimension-label { fill: #526d77 !important; font-size: 8px !important; font-weight: 750; letter-spacing: .05em; }
+.schematic-number circle { fill: #173b49; stroke: #fff; stroke-width: 2; }
+.schematic-number.hot circle { fill: #c84f58; }
+.schematic-number text { fill: #fff !important; font-size: 9px !important; font-weight: 800; }
+.schematic-metrics { padding: 0 10px 10px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.schematic-metrics span { padding: 7px 6px; display: grid; gap: 2px; border: 1px solid #dce8e7; border-radius: 6px; color: #486875; font-size: 9px; text-align: center; }
+.schematic-metrics b { color: #173b49; font-size: 8px; }
+.cutaway-steps { margin: 0; padding: 0 10px 10px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; list-style: none; }
+.cutaway-steps li { min-width: 0; padding: 7px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 5px; border: 1px solid #dce8e7; border-radius: 6px; background: #fbfcf8; }
+.cutaway-steps li > b { width: 19px; height: 19px; display: grid; place-content: center; border-radius: 50%; background: #173b49; color: #fff; font-size: 8px; }
+.cutaway-steps li:nth-child(3) > b { background: #c84f58; }
+.cutaway-steps span { min-width: 0; display: grid; gap: 2px; color: var(--quiet); font-size: 7px; line-height: 1.35; }
+.cutaway-steps strong { color: #173b49; font-size: 8px; }
+.cutaway-clarifier { margin: 10px 2px 2px; padding: 9px 10px; border-left: 3px solid #c84f58; background: #fff9ef; color: #55717c; font-size: 9px; line-height: 1.45; }
+.cutaway-clarifier strong { color: #173b49; }
+.schematic-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 9px 8px 2px; color: var(--quiet); font-size: 9px; }
 .schematic-legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 99px; background: #7aa9b5; }
 .schematic-legend .legend-injector::before { background: #c27b2a; }
 .schematic-legend .legend-thermal::before { background: #c84f58; }
 .schematic-legend .legend-flow::before { background: #2588a2; }
+.schematic-legend .legend-detonation::before { background: #c84f58; }
+.schematic-legend .legend-products::before { background: #d88732; }
 .schematic-unavailable { min-height: 210px; display: grid; place-content: center; gap: 6px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; color: var(--quiet); }
 .schematic-unavailable strong { color: var(--text); }
 .physics-visual-workspace { margin-bottom: 22px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
@@ -1132,7 +1168,8 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 @media (max-width: 980px) {
   .system-evidence-strip, .physical-wall-grid, .wall-map-grid-layout { grid-template-columns: 1fr; }
   .prediction-validation-panel ol { grid-template-columns: 1fr 1fr; }
-  .rde-schematic svg { min-height: 200px; }
+  .schematic-views { grid-template-columns: 1fr; }
+  .head-end-panel svg { max-height: 360px; }
 }
 
 @media (max-width: 620px) {
@@ -1142,4 +1179,6 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
   .spatial-mapping-grid { grid-template-columns: 1fr; }
   .physics-visual-workspace > .evidence-heading, .system-evidence-strip, .field-comparison { padding-left: 14px; padding-right: 14px; }
   .physical-wall-heading, .physical-wall-note { align-items: start; flex-direction: column; }
+  .cutaway-steps { grid-template-columns: 1fr 1fr; }
+  .schematic-metrics { grid-template-columns: 1fr; }
 }

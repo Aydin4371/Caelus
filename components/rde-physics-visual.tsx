@@ -11,6 +11,7 @@ function format(value: number, digits = 1) { return finite(value) ? value.toFixe
 export function RdeGeometrySchematic({ design, compact = false }: { design: EngineDesign; compact?: boolean }) {
   const waveMarkerId = useId().replaceAll(":", "-");
   const flowMarkerId = `${waveMarkerId}-flow`;
+  const productMarkerId = `${waveMarkerId}-product`;
   const inner = design.annulusInnerDiameterMm;
   const outer = design.annulusOuterDiameterMm;
   const drawable = finite(inner) && finite(outer) && outer > inner && finite(design.chamberLengthMm);
@@ -19,31 +20,73 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
   const innerRadius = 54 * inner / outer;
   const gap = (outer - inner) / 2;
   return <div className={`rde-schematic ${compact ? "compact" : ""}`}>
-    <svg viewBox="0 0 720 330" role="img" aria-label="Front view and labelled axial cutaway of the entered rotating detonation engine geometry">
-      <defs><marker id={waveMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-wave-marker" d="M0,0 L0,6 L7,3 z" /></marker><marker id={flowMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-flow-marker" d="M0,0 L0,6 L7,3 z" /></marker><linearGradient id={`${waveMarkerId}-annulus`} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#bfe8f0"/><stop offset="1" stopColor="#e5f5f7"/></linearGradient></defs>
-      <text x="145" y="24" textAnchor="middle" className="schematic-view-title">HEAD-END VIEW</text>
-      <g transform="translate(145 166)">
-        <circle r="91" className="schematic-wall"/><circle r={innerRadius} className="schematic-core"/><circle r={(91 + innerRadius) / 2} className="schematic-annulus"/>
-        {Array.from({ length: injectorCount }, (_, index) => { const angle = index / Math.max(injectorCount, 1) * Math.PI * 2; const radius = (91 + innerRadius) / 2; return <circle key={index} cx={Math.cos(angle) * radius} cy={Math.sin(angle) * radius} r="2.3" className="schematic-injector"/>; })}
-        <path d="M -60 -57 A 82 82 0 0 1 63 -54" className="schematic-wave" markerEnd={`url(#${waveMarkerId})`}/><text x="0" y="-108" textAnchor="middle">Rotating detonation direction</text><text x="0" y="5" textAnchor="middle" className="schematic-core-label">centrebody</text>
-        <path d="M-84 75 L-120 102" className="schematic-leader"/><text x="-126" y="112" textAnchor="start">outer annulus wall</text>
-        <path d={`M${innerRadius * .72} ${innerRadius * .72} L100 106`} className="schematic-leader"/><text x="104" y="116" textAnchor="start">inner annulus wall</text>
-      </g>
-      <text x="505" y="24" textAnchor="middle" className="schematic-view-title">AXIAL CUTAWAY</text>
-      <g transform="translate(315 44)">
-        <path d="M12 42 H230 L292 82 V218 L230 258 H12 Z" className="schematic-section-shell"/>
-        <rect x="12" y="68" width="52" height="164" rx="4" className="schematic-plenum"/>
-        <path d="M64 108 H220 L264 138 L220 168 H64 Z" className="schematic-section-core"/>
-        <path d="M64 82 H220 L264 116 L220 108 H64 Z" fill={`url(#${waveMarkerId}-annulus)`} className="schematic-section-annulus"/>
-        <path d="M64 168 H220 L264 160 L220 194 H64 Z" fill={`url(#${waveMarkerId}-annulus)`} className="schematic-section-annulus"/>
-        <line x1="64" x2="64" y1="82" y2="194" className="schematic-injector-face"/>
-        {[94, 182].map((y) => <g key={y}><circle cx="64" cy={y} r="3" className="schematic-injector"/><path d={`M76 ${y} H119`} className="schematic-flow" markerEnd={`url(#${flowMarkerId})`}/></g>)}
-        <line x1="64" x2="220" y1="280" y2="280" className="schematic-dimension"/><line x1="64" x2="64" y1="273" y2="287" className="schematic-dimension"/><line x1="220" x2="220" y1="273" y2="287" className="schematic-dimension"/><text x="142" y="303" textAnchor="middle">chamber length {format(design.chamberLengthMm, 0)} mm</text>
-        <line x1="64" x2="100" y1="70" y2="70" className="schematic-dimension"/><text x="82" y="61" textAnchor="middle">gap {format(gap, 2)} mm</text>
-        <text x="38" y="252" textAnchor="middle">plenum</text><text x="64" y="32" textAnchor="middle">injector face</text><text x="145" y="74" textAnchor="middle">annular chamber</text><text x="142" y="142" textAnchor="middle" className="schematic-core-label">centrebody</text><text x="260" y="238" textAnchor="middle">exhaust / nozzle</text>
-      </g>
-    </svg>
-    <div className="schematic-legend"><span className="legend-injector">{finite(design.injectorCount) ? `${Math.round(design.injectorCount)} injectors` : "Injector count not entered"}</span><span className="legend-flow">Propellant flow through both annular passages</span><span>{format(inner, 1)} / {format(outer, 1)} mm inner / outer diameters</span></div>
+    <div className="schematic-views">
+      <figure className="schematic-view head-end-panel">
+        <figcaption><span>01</span><div><strong>Head-end view</strong><small>Looking downstream through the injector face</small></div></figcaption>
+        <svg viewBox="0 0 360 300" role="img" aria-label="Head-end view showing the annulus, injector ring, centrebody, and circumferential detonation-wave direction">
+          <defs><marker id={waveMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-wave-marker" d="M0,0 L0,6 L7,3 z" /></marker></defs>
+          <g transform="translate(180 146)">
+            <circle r="102" className="schematic-wall"/><circle r={innerRadius} className="schematic-core"/><circle r={(102 + innerRadius) / 2} className="schematic-annulus"/>
+            {Array.from({ length: injectorCount }, (_, index) => { const angle = index / Math.max(injectorCount, 1) * Math.PI * 2; const radius = (102 + innerRadius) / 2; return <circle key={index} cx={Math.cos(angle) * radius} cy={Math.sin(angle) * radius} r="2.5" className="schematic-injector"/>; })}
+            <path d="M -70 -66 A 96 96 0 0 1 73 -62" className="schematic-wave" markerEnd={`url(#${waveMarkerId})`}/>
+            <text x="0" y="5" textAnchor="middle" className="schematic-part-name">CENTREBODY</text>
+            <text x="0" y="-116" textAnchor="middle" className="schematic-action-label">WAVE ROTATES AROUND ANNULUS</text>
+            <text x="0" y="88" textAnchor="middle" className="schematic-part-name inverse">ANNULAR CHANNEL</text>
+          </g>
+        </svg>
+        <div className="schematic-metrics"><span><b>Inner diameter</b>{format(inner, 1)} mm</span><span><b>Outer diameter</b>{format(outer, 1)} mm</span><span><b>Radial gap</b>{format(gap, 2)} mm</span></div>
+      </figure>
+
+      <figure className="schematic-view axial-panel">
+        <figcaption><span>02</span><div><strong>Axial cutaway</strong><small>Section through the centreline, from feed system to exhaust</small></div></figcaption>
+        <svg viewBox="0 0 620 310" role="img" aria-label="Axial cutaway showing propellant entering the plenum and injectors, refilling the annulus behind the rotating detonation, and hot products exhausting through the nozzle">
+          <defs>
+            <marker id={flowMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-flow-marker" d="M0,0 L0,6 L7,3 z" /></marker>
+            <marker id={productMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-product-marker" d="M0,0 L0,6 L7,3 z" /></marker>
+            <linearGradient id={`${waveMarkerId}-fresh`} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#bfe8f0"/><stop offset="1" stopColor="#dff3f5"/></linearGradient>
+            <linearGradient id={`${waveMarkerId}-products`} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#f4c979"/><stop offset=".58" stopColor="#f5ddb3"/><stop offset="1" stopColor="#f7efe1"/></linearGradient>
+          </defs>
+          <path d="M36 58 H484 L574 113 V197 L484 252 H36 Z" className="schematic-section-shell"/>
+          <rect x="36" y="83" width="92" height="144" rx="6" className="schematic-plenum"/>
+          <line x1="128" x2="128" y1="72" y2="238" className="schematic-injector-face"/>
+
+          <path d="M128 90 H486 L546 119 V142 L486 128 H128 Z" className="schematic-products" fill={`url(#${waveMarkerId}-products)`}/>
+          <path d="M128 182 H486 L546 168 V191 L486 220 H128 Z" className="schematic-products" fill={`url(#${waveMarkerId}-products)`}/>
+          <path d="M128 128 H466 L526 150 L466 182 H128 Z" className="schematic-section-core"/>
+          <path d="M128 90 H205 V128 H128 Z" className="schematic-fresh-zone" fill={`url(#${waveMarkerId}-fresh)`}/>
+          <path d="M128 182 H205 V220 H128 Z" className="schematic-fresh-zone" fill={`url(#${waveMarkerId}-fresh)`}/>
+          <line x1="205" x2="205" y1="90" y2="128" className="schematic-detonation-front"/>
+          <line x1="205" x2="205" y1="182" y2="220" className="schematic-detonation-front"/>
+
+          {[103, 207].map((y) => <g key={y}><circle cx="128" cy={y} r="4" className="schematic-injector"/><path d={`M72 ${y} H174`} className="schematic-flow" markerEnd={`url(#${flowMarkerId})`}/></g>)}
+          {[112, 199].map((y) => <path key={y} d={`M242 ${y} H433`} className="schematic-product-flow" markerEnd={`url(#${productMarkerId})`}/>)}
+
+          <g className="schematic-number"><circle cx="75" cy="154" r="12"/><text x="75" y="158" textAnchor="middle">1</text></g>
+          <g className="schematic-number"><circle cx="128" cy="66" r="12"/><text x="128" y="70" textAnchor="middle">2</text></g>
+          <g className="schematic-number hot"><circle cx="205" cy="80" r="12"/><text x="205" y="84" textAnchor="middle">3</text></g>
+          <g className="schematic-number"><circle cx="422" cy="154" r="12"/><text x="422" y="158" textAnchor="middle">4</text></g>
+          <g className="schematic-number"><circle cx="540" cy="96" r="12"/><text x="540" y="100" textAnchor="middle">5</text></g>
+
+          <text x="166" y="108" textAnchor="middle" className="schematic-zone-label">FRESH MIXTURE</text>
+          <text x="346" y="108" textAnchor="middle" className="schematic-zone-label hot">HOT PRODUCTS</text>
+          <text x="300" y="159" textAnchor="middle" className="schematic-core-label">CENTREBODY</text>
+          <text x="76" y="246" textAnchor="middle" className="schematic-part-name">PLENUM</text>
+          <text x="128" y="46" textAnchor="middle" className="schematic-part-name">INJECTOR FACE</text>
+          <text x="536" y="231" textAnchor="middle" className="schematic-part-name">NOZZLE / EXHAUST</text>
+
+          <line x1="128" x2="486" y1="277" y2="277" className="schematic-dimension solid"/><line x1="128" x2="128" y1="269" y2="285" className="schematic-dimension solid"/><line x1="486" x2="486" y1="269" y2="285" className="schematic-dimension solid"/><text x="307" y="299" textAnchor="middle" className="schematic-dimension-label">CHAMBER LENGTH {format(design.chamberLengthMm, 0)} mm</text>
+        </svg>
+        <ol className="cutaway-steps">
+          <li><b>1</b><span><strong>Feed</strong>Propellant enters the plenum.</span></li>
+          <li><b>2</b><span><strong>Inject</strong>Jets refill the annular gap.</span></li>
+          <li><b>3</b><span><strong>Detonate</strong>The wave rotates around the annulus.</span></li>
+          <li><b>4</b><span><strong>Expand</strong>Hot products move downstream.</span></li>
+          <li><b>5</b><span><strong>Exhaust</strong>The nozzle converts pressure to thrust.</span></li>
+        </ol>
+      </figure>
+    </div>
+    <p className="cutaway-clarifier"><strong>How to read the cutaway:</strong> the detonation wave travels circumferentially around the engine, so the red front shows where that rotating wave intersects this axial section. The bulk exhaust flow moves left to right.</p>
+    <div className="schematic-legend"><span className="legend-injector">{finite(design.injectorCount) ? `${Math.round(design.injectorCount)} injectors` : "Injector count not entered"}</span><span className="legend-flow">Fresh propellant</span><span className="legend-detonation">Rotating detonation front</span><span className="legend-products">Hot combustion products</span></div>
   </div>;
 }
 

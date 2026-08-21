@@ -86,6 +86,10 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(design, /RDE geometry/);
   assert.match(design, /<RdeGeometrySchematic design=\{activeDesign\}/);
   assert.doesNotMatch(physicsVisual, /<RdeGeometrySchematic design=\{design\}/);
+  assert.match(physicsVisual, /schematic-view head-end-panel/);
+  assert.match(physicsVisual, /schematic-view axial-panel/);
+  assert.match(physicsVisual, /WAVE ROTATES AROUND ANNULUS/);
+  assert.match(physicsVisual, /How to read the cutaway/);
   assert.match(physicsVisual, /PHYSICAL ANNULUS WALL/);
   assert.match(physicsVisual, /Show exact circumferential angle × axial position maps/);
   assert.match(physicsVisual, /full engine definition stays in Design &amp; Plan/);
