@@ -1,14 +1,17 @@
 # Kythros by Caelus
 
-Kythros is a browser-based RDE simulation-to-test research application. It
-compares three or more synchronized experimental pressure traces with matching
-CFD virtual probes, determines whether differences are resolved beyond the stated
-uncertainty, orders traceable diagnostic hypotheses by evidence state, and recommends one
-controlled next simulation. When a related rerun is added, Kythros classifies
-the calculated response as supporting, converged, unsupported, or inconclusive and
-updates the next recommendation. It also aggregates comparable controlled
-reruns already analyzed in the workspace, showing observed outcome counts,
-metric-error improvement, and runtime multiplier without inventing precedent.
+Kythros is a browser-based RDE evidence and simulation-to-test research
+application. Its Operating Envelope records experiment-only operating points
+and keeps published summaries visibly separate from uploaded raw signals. Its
+Comparison module pairs three or more synchronized experimental pressure
+traces with matching CFD virtual probes, determines whether differences are
+resolved beyond the stated uncertainty, orders traceable diagnostic hypotheses
+by evidence state, and recommends one controlled next simulation. When a
+related rerun is added, Kythros classifies the calculated response as
+supporting, converged, unsupported, or inconclusive and updates the next
+recommendation. It also aggregates comparable controlled reruns already
+analyzed in the workspace, showing observed outcome counts, metric-error
+improvement, and runtime multiplier without inventing precedent.
 The interface leads with the engineering conclusion and keeps the underlying
 case counts available as a disclosure rather than presenting unexplained raw
 statistics.
@@ -16,9 +19,10 @@ Diagnosis, next action, expected result, comparable-case history, and input
 provenance now appear in one engineering-decision card. Technical ranking and
 conditional branches remain available under disclosures.
 
-The application starts as an empty case workspace and accepts multiple
-operating points. It does not run CFD. Uploaded data and deterministic analysis
-remain in the browser session.
+The application starts as an empty workspace and accepts multiple operating
+points. It does not run CFD. Work remains in memory until the user downloads a
+versioned workspace file; refreshing the page does not provide durable browser
+storage.
 
 The header Help guide defines every case-loader input. Pressure, spectrum,
 residual, propagation-phase, and cycle-stability graphs remain absent until a
@@ -43,10 +47,17 @@ prove the cause of a discrepancy.
 - Uses an explicit 2D slice with inlet pressure and mass flow as the default
   axes. The two remaining variables are shown as held-fixed controls, while
   geometry, injector, propellants, and walls are fixed by the engine record.
-- Gates the first exploratory local-kernel classifier on at least 12 real,
-  signal-ready, numerically converged points, at least two measured stability classes, and at least
-  55% leave-one-out accuracy. A prediction also requires three nearby
-  observations; unsupported space stays blank.
+- Gates the first exploratory local-kernel classifier on at least 12 uploaded,
+  signal-ready experimental points, at least two measured stability classes,
+  60% buffered-holdout balanced accuracy, and 70% supported-holdout coverage.
+  A prediction also requires three nearby observations; unsupported space stays
+  blank. These counts and score limits are versioned prototype policies, not
+  accepted RDE standards.
+- Freezes each model-recommended prediction before the experiment and scores
+  later outcomes. Five sequential blind recommendations, 60% accuracy, and a
+  three-class Brier score no higher than 0.22 pass only Kythros's prototype
+  prospective gate; they do not establish external validation or deployment
+  readiness.
 - Selects an uncertainty-aware next operating point only inside measured
   support. Until the model gate passes, the recommendation remains the
   transparent coverage-based screening point.
@@ -54,8 +65,8 @@ prove the cause of a discrepancy.
   explicit operating-point records from older engine-linked baselines.
 - Defines the matching durable-storage target in
   `docs/kythros-data-model.sql`. Cloud persistence is not enabled until an
-  authenticated owner boundary is available; the current browser workspace
-  remains the source of persistence for this release.
+  authenticated owner boundary is available; downloaded workspace files are
+  the persistence mechanism for this release.
 
 ## v1.7.0 design and screening workspace
 
@@ -321,7 +332,10 @@ No LLM is used in v0.7.
   multimode analyzer used for user-provided cases. These are analyzer regression
   tests, never paired experiment-CFD evidence or independent case-family evidence.
 
-No heat, thrust, LLM, or automatic CFD execution is included in v1.0.
+The historical v1.0 release did not include heat or thrust evidence, an LLM, or
+automatic CFD execution. The current release can store and compare documented
+scalar and spatial thermal/performance evidence, but it still does not predict
+those quantities or execute CFD.
 
 ## v1.1 adaptive CFD run plan
 

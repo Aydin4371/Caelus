@@ -28,7 +28,7 @@ export type EnvelopeModel = {
   prospectiveCount: number;
   prospectiveAccuracy: number | null;
   prospectiveBrierScore: number | null;
-  validationLevel: "Not fitted" | "Retrospective only" | "Prospective validation in progress" | "Prospectively validated";
+  validationLevel: "Not fitted" | "Retrospective only" | "Prospective gate in progress" | "Prototype prospective gate passed";
   gates: Array<{ id: "observations" | "classes" | "validation" | "prospective"; label: string; value: string; passed: boolean; detail: string }>;
   points: EnvelopePoint[];
   predict: (features: EnvelopeFeatures) => EnvelopePrediction;
@@ -171,12 +171,12 @@ export function fitEnvelopeModel(allPoints: EnvelopePoint[], design: EngineDesig
     prospectiveCount: prospective.length,
     prospectiveAccuracy,
     prospectiveBrierScore,
-    validationLevel: status !== "Exploratory model ready" ? "Not fitted" : prospectivePassed ? "Prospectively validated" : prospective.length ? "Prospective validation in progress" : "Retrospective only",
+    validationLevel: status !== "Exploratory model ready" ? "Not fitted" : prospectivePassed ? "Prototype prospective gate passed" : prospective.length ? "Prospective gate in progress" : "Retrospective only",
     gates: [
       { id: "observations", label: "Signal-ready measured points", value: `${points.length} / ${ENVELOPE_MODEL_MINIMUM_POINTS}`, passed: points.length >= ENVELOPE_MODEL_MINIMUM_POINTS, detail: "Only uploaded synchronized pressure data with an identified mode count here; published summaries and synthetic data do not." },
       { id: "classes", label: "Observed stability classes", value: `${classes.size} / 2`, passed: classes.size >= 2, detail: "At least two classes are needed to estimate a boundary instead of only describing one regime." },
       { id: "validation", label: "Buffered holdout validation", value: accuracy === null ? "Not tested" : `${(accuracy * 100).toFixed(0)}% accuracy · ${(points.length ? leaveOneOut.length / points.length * 100 : 0).toFixed(0)}% coverage`, passed: retrospectivePassed, detail: "Each condition is predicted without itself. The exploratory gate requires at least 60% balanced accuracy and 70% supported holdouts." },
-      { id: "prospective", label: "Blind recommended tests", value: `${prospective.length} / ${PROSPECTIVE_VALIDATION_MINIMUM_POINTS}`, passed: prospectivePassed, detail: prospective.length ? `Predictions were saved before measurement. Accuracy ${prospectiveAccuracy === null ? "not available" : `${(prospectiveAccuracy * 100).toFixed(0)}%`}; Brier score ${prospectiveBrierScore === null ? "not available" : prospectiveBrierScore.toFixed(3)}.` : "Run model-recommended points after the model snapshot is saved. These results must not be used to rewrite the prediction they test." },
+      { id: "prospective", label: "Blind recommended tests", value: `${prospective.length} / ${PROSPECTIVE_VALIDATION_MINIMUM_POINTS}`, passed: prospectivePassed, detail: prospective.length ? `Predictions were saved before measurement. Accuracy ${prospectiveAccuracy === null ? "not available" : `${(prospectiveAccuracy * 100).toFixed(0)}%`}; three-class Brier score ${prospectiveBrierScore === null ? "not available" : prospectiveBrierScore.toFixed(3)} (0 best; 0.667 worst).` : "Run model-recommended points after the model snapshot is saved. These results must not be used to rewrite the prediction they test." },
     ],
     points,
     predict: status === "Exploratory model ready" ? (features) => predictRaw(features) : () => emptyPrediction(),

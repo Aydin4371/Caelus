@@ -1158,6 +1158,8 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 .prediction-validation-panel ol li > b { width: 24px; height: 24px; display: grid; place-content: center; border-radius: 50%; background: var(--test); color: white; }
 .prediction-validation-panel ol span { display: grid; gap: 4px; }
 .prediction-validation-panel ol small { color: var(--quiet); line-height: 1.35; }
+.prototype-gate-note { margin: 14px 0 0; padding: 11px 13px; border-left: 3px solid var(--warning); background: #fff8e9; color: var(--quiet); font-size: 12px; line-height: 1.5; }
+.prototype-gate-note strong { color: var(--ink); }
 .prediction-validation-panel details { margin-top: 14px; }
 .prediction-validation-panel details ul { padding-left: 20px; display: grid; gap: 9px; }
 .prediction-validation-panel details li span { display: block; color: var(--quiet); font-size: 11px; }

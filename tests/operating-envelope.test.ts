@@ -83,6 +83,8 @@ test("keeps the empty operating-envelope state safe when no engine design exists
   const component = await readFile(new URL("../components/operating-envelope.tsx", import.meta.url), "utf8");
   assert.match(component, /publishedPhiTemperatureSweep = activeDesign\?\.source === "published"/);
   assert.match(component, /if \(!activeDesign\) return <section className="envelope-empty"/);
+  assert.match(component, /not accepted RDE standards/);
+  assert.doesNotMatch(component, /Prospectively validated/);
 });
 
 test("does not convert an observed map into an unvalidated prediction", () => {
@@ -174,13 +176,22 @@ test("gates the exploratory envelope model and leaves unsupported space blank", 
   const validated = fitEnvelopeModel(prospectivelyTested, design);
   assert.equal(validated.prospectiveCount, 5);
   assert.equal(validated.prospectiveAccuracy, 1);
-  assert.equal(validated.validationLevel, "Prospectively validated");
+  assert.equal(validated.validationLevel, "Prototype prospective gate passed");
+
+  const uniformForecasts = prospectivelyTested.map((point, index) => index < 5 && point.recommendation ? {
+    ...point,
+    recommendation: { ...point.recommendation, stabilityProbabilities: { Stable: 1 / 3, Transitional: 1 / 3, Unstable: 1 / 3 } },
+  } : point);
+  const uniform = fitEnvelopeModel(uniformForecasts, design);
+  assert.ok(Math.abs((uniform.prospectiveBrierScore ?? 0) - 2 / 9) < 1e-12);
+  assert.equal(uniform.validationLevel, "Prospective gate in progress");
 });
 
 test("loads published operating conditions without pretending summary rows are raw pressure data", () => {
   const points = buildGe2022OperatingPoints();
   const dataset = buildEnvelopeDataset(points, []);
   assert.equal(points.length, 13);
+  assert.equal(GE_2022_DESIGN.oxidizer, "High-total-temperature air; oxygen mass fraction restored after the heater");
   assert.equal(dataset.physicalPointCount, 13);
   assert.equal(dataset.publishedPointCount, 13);
   assert.equal(dataset.signalReadyPointCount, 0);
