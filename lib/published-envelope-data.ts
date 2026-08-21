@@ -17,7 +17,7 @@ export const GE_2022_DESIGN: EngineDesign = {
   source: "published",
   application: "Air-breathing",
   fuel: "Gasoline",
-  oxidizer: "Heated oxygen-enriched air",
+  oxidizer: "High-total-temperature air; oxygen mass fraction restored after the heater",
   annulusInnerDiameterMm: 166,
   annulusOuterDiameterMm: 204,
   chamberLengthMm: 155,

@@ -82,7 +82,8 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(page, /cfdWallHeatFluxMWm2/);
   assert.match(page, /!measuredPointDraft && <div className="form-section"><h3>Solver \+ numerical schemes/);
   assert.match(logic, /stablePointCount/);
-  assert.match(envelope, /How a recommendation becomes trusted/);
+  assert.match(envelope, /How a recommendation earns evidence/);
+  assert.match(envelope, /not accepted RDE standards/);
   assert.match(design, /RDE geometry/);
   assert.match(design, /<RdeGeometrySchematic design=\{activeDesign\}/);
   assert.doesNotMatch(physicsVisual, /<RdeGeometrySchematic design=\{design\}/);

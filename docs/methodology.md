@@ -2,9 +2,12 @@
 
 ## Scope
 
-Version 2.0 analyzes matched RDE operating points using at least three
-synchronized experimental pressure traces and matching CFD virtual probes. It
-asks:
+Version 2.0 has two distinct evidence paths. The Operating Envelope accepts an
+experiment-only operating point and does not require CFD. Published summary
+observations may be displayed with explicit provenance, but they are excluded
+from raw-signal analysis and model fitting. The Comparison module analyzes a
+matched operating point using at least three synchronized experimental pressure
+traces and matching CFD virtual probes. It asks:
 
 > Does the CFD reproduce the measured rotating-wave and pressure behavior,
 > which differences are resolved beyond uncertainty, and what single controlled
@@ -19,7 +22,10 @@ time-step, chemistry, boundary, or initialization reruns remain evidence for
 that marker and do not create new operating conditions. Marker position comes
 from the entered equivalence ratio, inlet pressure, or mass flow. Marker color,
 wave count, frequency, propagation speed, and stability come from the analyzed
-experimental pressure probes.
+experimental pressure probes. For a published-summary point, the marker
+preserves the author's reported mode and Kythros shows any Stable,
+Transitional, or Unstable label as a transparent display grouping rather than a
+raw-signal reanalysis.
 
 Version 2.0 uses an explicit three-level hierarchy.
 One engine design fixes the propellant pair, annulus, injector, plenum, wall,
@@ -42,14 +48,28 @@ and inlet pressure are each scaled by the entered design range. This tolerance
 is used only to track plan coverage; it does not merge or alter analyzed cases.
 
 Kythros does not draw a boundary until the exploratory-model gates pass. The
-gate requires at least 12 real, signal-ready, numerically converged observations, at least two
-measured stability classes, and at least 55% leave-one-out accuracy. The local
-kernel model then requires at least three nearby observations for an individual
+gate requires at least 12 uploaded, signal-ready experimental observations, at
+least two measured stability classes, 60% buffered leave-one-condition-out
+balanced accuracy, and 70% supported-holdout coverage. CFD numerical
+convergence is not part of this experiment-only model gate. The local kernel
+model then requires at least three nearby observations for an individual
 prediction. Unsupported space remains blank, and displayed color fades with
 uncertainty. The next-test recommendation searches only supported space for a
-high-uncertainty class boundary. Kythros still does not infer injector backflow
-from annulus pressure traces; that requires an explicit reverse-flow channel
-and a separately validated calculation.
+high-uncertainty class boundary.
+
+Before the result is measured, Kythros freezes the recommended condition,
+predicted class, three class probabilities, uncertainty, and training count.
+Five sequential blind recommendations with at least 60% accuracy and a
+three-class Brier score no higher than 0.22 pass the product's prototype
+prospective gate. Here the Brier score is the mean squared probability error
+across Stable, Transitional, and Unstable: 0 is perfect, 2/3 is worst, and
+uniform one-third probabilities score 2/9. These point counts and score limits
+are development policies rather than published RDE acceptance standards, so a
+passed gate is not external validation or deployment certification.
+
+Kythros still does not infer injector backflow from annulus pressure traces;
+that requires an explicit reverse-flow channel and a separately validated
+calculation.
 
 ## Required assumptions
 
