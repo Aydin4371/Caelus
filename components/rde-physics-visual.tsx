@@ -1,14 +1,16 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useState } from "react";
 import type { PhysicsComparisonRow } from "@/lib/physics-evidence";
 import type { EngineDesign } from "@/lib/design-workspace";
 import { wallField, type WallField, type WallFieldImport, type WallFieldQuantity } from "@/lib/spatial-field";
+import animationStyles from "./rde-geometry-animation.module.css";
 
 function finite(value: number) { return Number.isFinite(value); }
 function format(value: number, digits = 1) { return finite(value) ? value.toFixed(digits) : "Not entered"; }
 
 export function RdeGeometrySchematic({ design, compact = false }: { design: EngineDesign; compact?: boolean }) {
+  const [animationPaused, setAnimationPaused] = useState(false);
   const waveMarkerId = useId().replaceAll(":", "-");
   const flowMarkerId = `${waveMarkerId}-flow`;
   const productMarkerId = `${waveMarkerId}-product`;
@@ -19,7 +21,22 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
   if (!drawable) return <div className="schematic-unavailable"><strong>Geometry drawing unavailable</strong><span>Enter inner diameter, outer diameter, and chamber length.</span></div>;
   const innerRadius = 54 * inner / outer;
   const gap = (outer - inner) / 2;
-  return <div className={`rde-schematic ${compact ? "compact" : ""}`}>
+  return <div className={`rde-schematic ${compact ? "compact" : ""} ${animationPaused ? animationStyles.paused : ""}`}>
+    <div className={animationStyles.animationToolbar}>
+      <div>
+        <strong>Conceptual flow animation</strong>
+        <span className={animationStyles.motionEnabledLabel}>Slowed for explanation; it is not time-accurate and is not a CFD result.</span>
+        <span className={animationStyles.reducedMotionLabel}>Motion is disabled by your reduced-motion setting. This remains a schematic, not a CFD result.</span>
+      </div>
+      <button
+        type="button"
+        className={animationStyles.animationButton}
+        aria-pressed={animationPaused}
+        onClick={() => setAnimationPaused((paused) => !paused)}
+      >
+        {animationPaused ? "Play animation" : "Pause animation"}
+      </button>
+    </div>
     <div className="schematic-views">
       <figure className="schematic-view head-end-panel">
         <figcaption><span>01</span><div><strong>Head-end view</strong><small>Looking downstream through the injector face</small></div></figcaption>
@@ -28,7 +45,10 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
           <g transform="translate(190 157)">
             <circle r="102" className="schematic-wall"/><circle r={innerRadius} className="schematic-core"/><circle r={(102 + innerRadius) / 2} className="schematic-annulus"/>
             {Array.from({ length: injectorCount }, (_, index) => { const angle = index / Math.max(injectorCount, 1) * Math.PI * 2; const radius = (102 + innerRadius) / 2; return <circle key={index} cx={Math.cos(angle) * radius} cy={Math.sin(angle) * radius} r="2.5" className="schematic-injector"/>; })}
-            <path d="M -70 -66 A 96 96 0 0 1 73 -62" className="schematic-wave" markerEnd={`url(#${waveMarkerId})`}/>
+            <g className={animationStyles.rotatingWave}>
+              <circle r="102" className={animationStyles.waveOrbitAnchor}/>
+              <path d="M -70 -66 A 96 96 0 0 1 73 -62" className="schematic-wave" markerEnd={`url(#${waveMarkerId})`}/>
+            </g>
             <text x="0" y="5" textAnchor="middle" className="schematic-part-name">CENTREBODY</text>
             <text x="0" y="-116" textAnchor="middle" className="schematic-action-label">WAVE ROTATES AROUND ANNULUS</text>
             <text x="0" y="88" textAnchor="middle" className="schematic-part-name inverse">ANNULAR CHANNEL</text>
@@ -69,11 +89,18 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
           <path d="M128 128 H466 L526 150 L466 182 H128 Z" className="schematic-section-core"/>
           <path d="M128 90 H205 V128 H128 Z" className="schematic-fresh-zone" fill={`url(#${waveMarkerId}-fresh)`}/>
           <path d="M128 182 H205 V220 H128 Z" className="schematic-fresh-zone" fill={`url(#${waveMarkerId}-fresh)`}/>
-          <line x1="205" x2="205" y1="90" y2="128" className="schematic-detonation-front"/>
-          <line x1="205" x2="205" y1="182" y2="220" className="schematic-detonation-front"/>
+          <line x1="205" x2="205" y1="90" y2="128" className={`schematic-detonation-front ${animationStyles.frontPulse}`}/>
+          <line x1="205" x2="205" y1="182" y2="220" className={`schematic-detonation-front ${animationStyles.frontPulse}`}/>
 
-          {[103, 207].map((y) => <g key={y}><circle cx="128" cy={y} r="4" className="schematic-injector"/><path d={`M72 ${y} H174`} className="schematic-flow" markerEnd={`url(#${flowMarkerId})`}/></g>)}
-          {[112, 199].map((y) => <path key={y} d={`M242 ${y} H433`} className="schematic-product-flow" markerEnd={`url(#${productMarkerId})`}/>)}
+          {[103, 207].map((y) => <g key={y}>
+            <circle cx="128" cy={y} r="4" className="schematic-injector"/>
+            <path d={`M72 ${y} H174`} className="schematic-flow" markerEnd={`url(#${flowMarkerId})`}/>
+            <path d={`M72 ${y} H174`} className={animationStyles.mixtureStream}/>
+          </g>)}
+          {[112, 199].map((y) => <g key={y}>
+            <path d={`M242 ${y} H433`} className="schematic-product-flow" markerEnd={`url(#${productMarkerId})`}/>
+            <path d={`M242 ${y} H433`} className={animationStyles.productStream}/>
+          </g>)}
 
           <g className="schematic-number"><circle cx="75" cy="154" r="12"/><text x="75" y="158" textAnchor="middle">1</text></g>
           <g className="schematic-number"><circle cx="128" cy="66" r="12"/><text x="128" y="70" textAnchor="middle">2</text></g>
@@ -98,7 +125,7 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
           <line x1="222" x2="238" y1="128" y2="128" className="schematic-dimension solid on-geometry"/>
           <text x="246" y="82" textAnchor="start" className="schematic-dimension-label halo">RADIAL GAP {format(gap, 2)} mm</text>
         </svg>
-        <ol className="cutaway-steps">
+        <ol className={`cutaway-steps ${animationStyles.processSteps}`}>
           <li><b>1</b><span><strong>Feed</strong>Propellant enters the plenum.</span></li>
           <li><b>2</b><span><strong>Inject</strong>Jets refill the annular gap.</span></li>
           <li><b>3</b><span><strong>Detonate</strong>The wave rotates around the annulus.</span></li>

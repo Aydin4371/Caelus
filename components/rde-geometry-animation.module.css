@@ -1,0 +1,153 @@
+.animationToolbar {
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #cfdfdf;
+  border-radius: 8px;
+  background: #f4f8f6;
+}
+
+.animationToolbar > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.animationToolbar strong {
+  color: #173b49;
+  font-size: 12px;
+}
+
+.animationToolbar span {
+  color: #55717c;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.animationButton {
+  flex: 0 0 auto;
+  padding: 7px 11px;
+  border: 1px solid #7aa9b5;
+  border-radius: 6px;
+  background: #fffefa;
+  color: #173b49;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.animationButton:hover {
+  border-color: #2588a2;
+  background: #edf8f8;
+}
+
+.animationButton:focus-visible {
+  outline: 3px solid rgba(37, 136, 162, .28);
+  outline-offset: 2px;
+}
+
+.reducedMotionLabel {
+  display: none;
+}
+
+.rotatingWave {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: rotate-wave 5.5s linear infinite;
+}
+
+.waveOrbitAnchor {
+  fill: transparent;
+  stroke: none;
+}
+
+.mixtureStream,
+.productStream {
+  fill: none;
+  stroke-width: 5;
+  stroke-linecap: round;
+  pointer-events: none;
+  animation: move-stream 1.25s linear infinite;
+}
+
+.mixtureStream {
+  stroke: #62bfd0;
+  stroke-dasharray: 3 19;
+}
+
+.productStream {
+  stroke: #e2a04c;
+  stroke-dasharray: 4 23;
+  animation-duration: 1.55s;
+}
+
+.frontPulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: front-pulse 1.15s ease-in-out infinite;
+}
+
+.processSteps li {
+  animation: stage-emphasis 5s ease-in-out infinite;
+}
+
+.processSteps li:nth-child(2) { animation-delay: 1s; }
+.processSteps li:nth-child(3) { animation-delay: 2s; }
+.processSteps li:nth-child(4) { animation-delay: 3s; }
+.processSteps li:nth-child(5) { animation-delay: 4s; }
+
+.paused .rotatingWave,
+.paused .mixtureStream,
+.paused .productStream,
+.paused .frontPulse,
+.paused .processSteps li {
+  animation-play-state: paused;
+}
+
+@keyframes rotate-wave {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes move-stream {
+  to { stroke-dashoffset: -22; }
+}
+
+@keyframes front-pulse {
+  0%, 100% { opacity: .62; transform: scaleX(.82); }
+  50% { opacity: 1; transform: scaleX(1.25); }
+}
+
+@keyframes stage-emphasis {
+  0%, 14%, 100% { border-color: #dce8e7; background: #fbfcf8; }
+  5%, 9% { border-color: #8ec4cf; background: #eef8f7; }
+}
+
+@media (max-width: 620px) {
+  .animationToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rotatingWave,
+  .mixtureStream,
+  .productStream,
+  .frontPulse,
+  .processSteps li {
+    animation: none;
+  }
+
+  .animationButton,
+  .motionEnabledLabel {
+    display: none;
+  }
+
+  .reducedMotionLabel {
+    display: block;
+  }
+}
