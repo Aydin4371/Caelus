@@ -23,23 +23,37 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
     <div className="schematic-views">
       <figure className="schematic-view head-end-panel">
         <figcaption><span>01</span><div><strong>Head-end view</strong><small>Looking downstream through the injector face</small></div></figcaption>
-        <svg viewBox="0 0 360 300" role="img" aria-label="Head-end view showing the annulus, injector ring, centrebody, and circumferential detonation-wave direction">
+        <svg viewBox="0 0 380 330" role="img" aria-label="Head-end view showing the annulus, injector ring, centrebody, circumferential detonation-wave direction, and entered diameters">
           <defs><marker id={waveMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-wave-marker" d="M0,0 L0,6 L7,3 z" /></marker></defs>
-          <g transform="translate(180 146)">
+          <g transform="translate(190 157)">
             <circle r="102" className="schematic-wall"/><circle r={innerRadius} className="schematic-core"/><circle r={(102 + innerRadius) / 2} className="schematic-annulus"/>
             {Array.from({ length: injectorCount }, (_, index) => { const angle = index / Math.max(injectorCount, 1) * Math.PI * 2; const radius = (102 + innerRadius) / 2; return <circle key={index} cx={Math.cos(angle) * radius} cy={Math.sin(angle) * radius} r="2.5" className="schematic-injector"/>; })}
             <path d="M -70 -66 A 96 96 0 0 1 73 -62" className="schematic-wave" markerEnd={`url(#${waveMarkerId})`}/>
             <text x="0" y="5" textAnchor="middle" className="schematic-part-name">CENTREBODY</text>
             <text x="0" y="-116" textAnchor="middle" className="schematic-action-label">WAVE ROTATES AROUND ANNULUS</text>
             <text x="0" y="88" textAnchor="middle" className="schematic-part-name inverse">ANNULAR CHANNEL</text>
+
+            <line x1="-126" x2="-126" y1="-102" y2="102" className="schematic-dimension solid"/>
+            <line x1="-132" x2="-102" y1="-102" y2="-102" className="schematic-dimension solid"/>
+            <line x1="-132" x2="-102" y1="102" y2="102" className="schematic-dimension solid"/>
+            <text x="-142" y="0" textAnchor="middle" transform="rotate(-90 -142 0)" className="schematic-dimension-label halo">OUTER Ø {format(outer, 1)} mm</text>
+
+            <line x1="126" x2="126" y1={-innerRadius} y2={innerRadius} className="schematic-dimension solid"/>
+            <line x1={innerRadius} x2="132" y1={-innerRadius} y2={-innerRadius} className="schematic-dimension solid"/>
+            <line x1={innerRadius} x2="132" y1={innerRadius} y2={innerRadius} className="schematic-dimension solid"/>
+            <text x="142" y="0" textAnchor="middle" transform="rotate(90 142 0)" className="schematic-dimension-label halo">INNER Ø {format(inner, 1)} mm</text>
+
+            <line x1={innerRadius} x2="102" y1="0" y2="0" className="schematic-dimension solid on-geometry"/>
+            <line x1={innerRadius} x2={innerRadius} y1="-6" y2="6" className="schematic-dimension solid on-geometry"/>
+            <line x1="102" x2="102" y1="-6" y2="6" className="schematic-dimension solid on-geometry"/>
+            <text x={(innerRadius + 102) / 2} y="-12" textAnchor="middle" className="schematic-dimension-label halo">GAP {format(gap, 2)} mm</text>
           </g>
         </svg>
-        <div className="schematic-metrics"><span><b>Inner diameter</b>{format(inner, 1)} mm</span><span><b>Outer diameter</b>{format(outer, 1)} mm</span><span><b>Radial gap</b>{format(gap, 2)} mm</span></div>
       </figure>
 
       <figure className="schematic-view axial-panel">
         <figcaption><span>02</span><div><strong>Axial cutaway</strong><small>Section through the centreline, from feed system to exhaust</small></div></figcaption>
-        <svg viewBox="0 0 620 310" role="img" aria-label="Axial cutaway showing propellant entering the plenum and injectors, refilling the annulus behind the rotating detonation, and hot products exhausting through the nozzle">
+        <svg viewBox="0 0 620 330" role="img" aria-label="Axial cutaway showing propellant entering the plenum and injectors, refilling the annulus behind the rotating detonation, hot products exhausting through the nozzle, and entered chamber dimensions">
           <defs>
             <marker id={flowMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-flow-marker" d="M0,0 L0,6 L7,3 z" /></marker>
             <marker id={productMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-product-marker" d="M0,0 L0,6 L7,3 z" /></marker>
@@ -67,14 +81,22 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
           <g className="schematic-number"><circle cx="422" cy="154" r="12"/><text x="422" y="158" textAnchor="middle">4</text></g>
           <g className="schematic-number"><circle cx="540" cy="96" r="12"/><text x="540" y="100" textAnchor="middle">5</text></g>
 
-          <text x="166" y="108" textAnchor="middle" className="schematic-zone-label">FRESH MIXTURE</text>
-          <text x="346" y="108" textAnchor="middle" className="schematic-zone-label hot">HOT PRODUCTS</text>
+          <text x="166" y="122" textAnchor="middle" className="schematic-zone-label halo">FRESH MIXTURE</text>
+          <text x="365" y="101" textAnchor="middle" className="schematic-zone-label hot halo">HOT PRODUCTS</text>
           <text x="300" y="159" textAnchor="middle" className="schematic-core-label">CENTREBODY</text>
           <text x="76" y="246" textAnchor="middle" className="schematic-part-name">PLENUM</text>
           <text x="128" y="46" textAnchor="middle" className="schematic-part-name">INJECTOR FACE</text>
-          <text x="536" y="231" textAnchor="middle" className="schematic-part-name">NOZZLE / EXHAUST</text>
+          <text x="535" y="266" textAnchor="middle" className="schematic-part-name">NOZZLE / EXHAUST</text>
 
-          <line x1="128" x2="486" y1="277" y2="277" className="schematic-dimension solid"/><line x1="128" x2="128" y1="269" y2="285" className="schematic-dimension solid"/><line x1="486" x2="486" y1="269" y2="285" className="schematic-dimension solid"/><text x="307" y="299" textAnchor="middle" className="schematic-dimension-label">CHAMBER LENGTH {format(design.chamberLengthMm, 0)} mm</text>
+          <line x1="128" x2="486" y1="282" y2="282" className="schematic-dimension solid"/>
+          <line x1="128" x2="128" y1="272" y2="292" className="schematic-dimension solid"/>
+          <line x1="486" x2="486" y1="272" y2="292" className="schematic-dimension solid"/>
+          <text x="307" y="308" textAnchor="middle" className="schematic-dimension-label halo">CHAMBER LENGTH {format(design.chamberLengthMm, 0)} mm</text>
+
+          <line x1="230" x2="230" y1="90" y2="128" className="schematic-dimension solid on-geometry"/>
+          <line x1="222" x2="238" y1="90" y2="90" className="schematic-dimension solid on-geometry"/>
+          <line x1="222" x2="238" y1="128" y2="128" className="schematic-dimension solid on-geometry"/>
+          <text x="246" y="82" textAnchor="start" className="schematic-dimension-label halo">RADIAL GAP {format(gap, 2)} mm</text>
         </svg>
         <ol className="cutaway-steps">
           <li><b>1</b><span><strong>Feed</strong>Propellant enters the plenum.</span></li>

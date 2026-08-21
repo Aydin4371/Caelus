@@ -89,6 +89,10 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(physicsVisual, /schematic-view head-end-panel/);
   assert.match(physicsVisual, /schematic-view axial-panel/);
   assert.match(physicsVisual, /WAVE ROTATES AROUND ANNULUS/);
+  assert.match(physicsVisual, /OUTER Ø/);
+  assert.match(physicsVisual, /INNER Ø/);
+  assert.match(physicsVisual, /RADIAL GAP/);
+  assert.match(physicsVisual, /CHAMBER LENGTH/);
   assert.match(physicsVisual, /How to read the cutaway/);
   assert.match(physicsVisual, /PHYSICAL ANNULUS WALL/);
   assert.match(physicsVisual, /Show exact circumferential angle × axial position maps/);
