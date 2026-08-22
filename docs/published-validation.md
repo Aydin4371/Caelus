@@ -64,19 +64,56 @@ the published pressure geometry has only four unique circumferential angles;
 it validates the more conservative requirement that Kythros not force one
 identified rotating mode from a strong multi-component spectrum.
 
+## Published paired experiment-CFD values
+
+The public-data ledger also contains three matched Case A values from:
+
+J. R. Tobias, A. K. Agrawal, and D. E. Paxson, “Experimental and
+Computational Analysis of a Rotating Detonation Combustor,” *AIAA SciTech
+2022*. NASA manuscript:
+[20210024138](https://ntrs.nasa.gov/api/citations/20210024138/downloads/AIAA_SciTech_2022_UA_Tobias_final.pdf).
+
+The paper prints measured and simulated wave frequency plus measured and
+simulated static pressure at CTAP 1 and CTAP 3. Kythros stores only those source
+values, then calculates signed percent differences at runtime. The source
+ledger is `public/data/published-paired-validation.csv`.
+
+These values validate paired-comparison arithmetic and its presentation. They
+do not validate waveform alignment, pressure-amplitude extraction, or spatial
+mode identification because the paper does not release matched numeric pressure
+arrays.
+
+## Retrospective one-factor rerun
+
+The same ledger records the 0.5 mm comparison from:
+
+P. A. Strakey, C. R. Bedick, and D. H. Ferguson, “Computational Fluid Dynamics
+Combustion Modeling for Rotating Detonation Engines,” AIAA SciTech 2021.
+OSTI manuscript: [1765177](https://www.osti.gov/servlets/purl/1765177).
+
+The paper reports a one-wave, 1740 m/s experiment; a two-wave, 1790 m/s CFD
+case without turbulence-chemistry interaction; and a one-wave, 1844 m/s PaSR
+case using the same numerical settings. Kythros computes the before-and-after
+wave-count error and wave-speed error. The mode error improves while the
+wave-speed error worsens, so the runtime result is classified as mixed rather
+than as an overall success.
+
+This checks one-factor outcome classification on real published values. It is
+retrospective because the same paper supplies the intervention and its outcome;
+it does not prove that Kythros selected the intervention before seeing the
+result.
+
 ## Current claim boundary
 
-Published tests currently verify five wave-speed calculations and three
-pressure-record behaviors. They validate the analyzer, not a customer case.
-Production recommendations are recalculated from the active uploaded
-experiment and CFD arrays, entered metadata, declared uncertainty, and any
-qualifying controlled company reruns. Complete paired experiment–CFD validation
-still requires numeric pressure arrays from both sides at matching probe
-locations and operating conditions.
+Published checks now verify five wave-speed calculations, three raw
+pressure-record behaviors, one paired scalar comparison, and one retrospective
+controlled rerun. The homepage reports these checks without creating a separate
+validation workspace.
 
-These pressure fixtures remain internal regression tests; they are not exposed
-as a separate product workspace. The Comparison view instead offers a clearly
-labelled synthetic thermal example whose coordinate arrays exercise the same
-wall-field mapper used for uploaded experiment and CFD files. It demonstrates
-rendering and comparison only and does not count as experimental evidence,
-CFD validation, or a prerecorded conclusion.
+Production recommendations remain recalculated from the active uploaded
+experiment and CFD arrays, entered metadata, declared uncertainty, and any
+qualifying controlled company reruns. Complete paired waveform validation still
+requires numeric pressure arrays from both sides at matching probe locations
+and operating conditions. Prospective recommendation validation additionally
+requires that the follow-up CFD result be withheld until after Kythros records
+its recommendation.

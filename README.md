@@ -32,6 +32,14 @@ case rather than embedded examples.
 The current release is a research prototype. It does not certify a model or
 prove the cause of a discrepancy.
 
+The homepage exposes the current public proof boundary. Existing Zenodo raw
+pressure records exercise the production analyzer, Tobias et al. Case A values
+exercise paired comparison arithmetic, and the Strakey et al. combustion-model
+rerun exercises before-and-after outcome classification. The paired sources are
+tabulated in `public/data/published-paired-validation.csv`; calculated errors
+and outcome labels are not stored in that file. The retrospective rerun does
+not count as prospective validation of the next-run recommendation.
+
 ## v2.0.0 Kythros hierarchy and evidence-learning envelope
 
 - Renames the product to Kythros by Caelus.
