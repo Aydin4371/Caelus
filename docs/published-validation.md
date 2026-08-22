@@ -74,7 +74,9 @@ qualifying controlled company reruns. Complete paired experiment–CFD validatio
 still requires numeric pressure arrays from both sides at matching probe
 locations and operating conditions.
 
-The browser-facing public validation workspace and its thermal evidence levels
-are documented in `docs/public-data-validation.md`. Runtime results are derived
-from the downloadable arrays; the product does not ship prerecorded Kythros
-conclusions for those fixtures.
+These pressure fixtures remain internal regression tests; they are not exposed
+as a separate product workspace. The Comparison view instead offers a clearly
+labelled synthetic thermal example whose coordinate arrays exercise the same
+wall-field mapper used for uploaded experiment and CFD files. It demonstrates
+rendering and comparison only and does not count as experimental evidence,
+CFD validation, or a prerecorded conclusion.

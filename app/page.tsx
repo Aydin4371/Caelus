@@ -4,7 +4,6 @@ import { ChangeEvent, useMemo, useState } from "react";
 import { PwaInstallButton } from "@/components/pwa-install-button";
 import { PressureFileMapper } from "@/components/pressure-file-mapper";
 import { SpatialFieldMapper } from "@/components/spatial-field-mapper";
-import { PublicValidation } from "@/components/public-validation";
 import { RdePhysicsVisual } from "@/components/rde-physics-visual";
 import { DesignPlanner } from "@/components/design-planner";
 import { OperatingEnvelope } from "@/components/operating-envelope";
@@ -39,6 +38,7 @@ import {
 import { analyzeRdeProbeSet, compareProbeSets, type RdeModeResult } from "@/lib/wave-dynamics";
 import { buildPhysicsComparison, cfdPhysicsFromMetadata, experimentPhysicsFromMetadata, PHYSICS_EVIDENCE_SOURCES, PHYSICS_MEASUREMENT_DEFINITIONS, PHYSICS_SOURCE_LIMITATION, physicsMetadataValues } from "@/lib/physics-evidence";
 import type { WallFieldImport } from "@/lib/spatial-field";
+import { makeThermalComparisonExample } from "@/lib/thermal-comparison-example";
 
 const TEST_COLOR = "#2588a2";
 const CFD_COLOR = "#6679bd";
@@ -541,7 +541,7 @@ export default function Home() {
   const [activeView, setActiveView] = useState<"signals" | "spectrum" | "residual" | "phase" | "cycles">("signals");
   const [activeProbe, setActiveProbe] = useState(0);
   const [workspaceView, setWorkspaceView] = useState<"case" | "compare">("case");
-  const [productView, setProductView] = useState<"design" | "envelope" | "comparison" | "validation">("design");
+  const [productView, setProductView] = useState<"design" | "envelope" | "comparison">("design");
 
   const activeCase = cases.find((item) => item.id === activeCaseId) ?? null;
   const activeOperatingPoint = operatingPoints.find((item) => item.id === activeOperatingPointId) ?? null;
@@ -1027,6 +1027,7 @@ export default function Home() {
 
   function loadExampleCaseHistory() {
     const demo = makeDemoProbeSignals();
+    const thermal = makeThermalComparisonExample();
     const stamp = Date.now().toString(36);
     const baselineId = `demo-${stamp}-baseline`;
     const meshId = `demo-${stamp}-mesh`;
@@ -1106,6 +1107,10 @@ export default function Home() {
         timingUncertaintyUs: 0.5,
         cfdPressureUncertaintyPct: 2,
         cfdTimingUncertaintyUs: 0.25,
+        experimentWallHeatFluxMWm2: Math.max(...thermal.experiment.fields.find((item) => item.quantity === "wallHeatFluxMWm2")!.samples.map((sample) => sample.value)),
+        experimentPeakWallTemperatureK: Math.max(...thermal.experiment.fields.find((item) => item.quantity === "wallTemperatureK")!.samples.map((sample) => sample.value)),
+        cfdWallHeatFluxMWm2: Math.max(...thermal.cfd.fields.find((item) => item.quantity === "wallHeatFluxMWm2")!.samples.map((sample) => sample.value)),
+        cfdPeakWallTemperatureK: Math.max(...thermal.cfd.fields.find((item) => item.quantity === "wallTemperatureK")!.samples.map((sample) => sample.value)),
     };
     const cloneSignals = (signals: Signal[]) => signals.map((signal) => ({ ...signal, time: [...signal.time], pressure: [...signal.pressure] }));
     const blendTowardExperiment = (factor: number) => demo.cfd.map((signal, probe) => ({ ...signal, pressure: signal.pressure.map((value, index) => value + factor * (demo.test[probe].pressure[index] - value)) }));
@@ -1113,18 +1118,18 @@ export default function Home() {
     const fineSignals = blendTowardExperiment(0.95);
     const wallSignals = fineSignals.map((signal, probe) => ({ ...signal, pressure: signal.pressure.map((value, index) => value + 0.001 * (demo.test[probe].pressure[index] - value)) }));
     const examples: AnalysisCase[] = [
-      { id: baselineId, designId, operatingPointId, source: "demo", relationship: null, metadata: baseMetadata, testSignals: cloneSignals(demo.test), cfdSignals: cloneSignals(demo.cfd) },
+      { id: baselineId, designId, operatingPointId, source: "demo", relationship: null, metadata: baseMetadata, testSignals: cloneSignals(demo.test), cfdSignals: cloneSignals(demo.cfd), wallFields: thermal },
       {
         id: meshId, designId, operatingPointId, source: "demo",
         relationship: { baselineCaseId: baselineId, referenceCaseId: baselineId, changedVariable: "mesh", description: "50% front-region cell-size refinement" },
         metadata: fineMetadata,
-        testSignals: cloneSignals(demo.test), cfdSignals: fineSignals,
+        testSignals: cloneSignals(demo.test), cfdSignals: fineSignals, wallFields: thermal,
       },
       {
         id: wallId, designId, operatingPointId, source: "demo",
         relationship: { baselineCaseId: baselineId, referenceCaseId: meshId, changedVariable: "wall", description: "Adjacent wall thermal boundary" },
         metadata: { ...cloneMetadata(fineMetadata), name: "Synthetic wall sensitivity", wallBoundaryCondition: "Adiabatic", solverRuntimeHours: 18.5 },
-        testSignals: cloneSignals(demo.test), cfdSignals: wallSignals,
+        testSignals: cloneSignals(demo.test), cfdSignals: wallSignals, wallFields: thermal,
       },
     ];
     const demoOperatingPoint: OperatingPoint = { id: operatingPointId, designId, name: "Synthetic baseline", source: "demo", inletPressureBar: 8, inletTemperatureK: 300, equivalenceRatio: 1, massFlowKgS: 0.62, backPressureBar: 1 };
@@ -1134,7 +1139,7 @@ export default function Home() {
     setActiveDesignId(designId);
     setActiveOperatingPointId(operatingPointId);
     setCaseBaselineId(examples[0].id);
-    setActiveCaseId(examples[0].id); setWorkspaceView("case"); setActiveProbe(0);
+    setActiveCaseId(examples[0].id); setWorkspaceView("case"); setProductView("comparison"); setActiveProbe(0);
   }
 
   function loadPublishedEnvelopeExample() {
@@ -1288,17 +1293,17 @@ export default function Home() {
     <header className="product-header">
       <a className="brand" href="#top" aria-label="Return to empty home workspace" onClick={(event) => { event.preventDefault(); returnToEmptyWorkspace(); }}><span className="brand-mark">K</span><span><strong>KYTHROS</strong><small>BY CAELUS</small></span></a>
       <p>RDE simulation-to-test intelligence</p>
-      <nav className="product-tabs" aria-label="Kythros workspaces"><button className={productView === "design" ? "active" : ""} aria-current={productView === "design" ? "page" : undefined} onClick={() => setProductView("design")}>Design &amp; plan</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Operating Envelope</button><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Comparison</button><button className={productView === "validation" ? "active" : ""} aria-current={productView === "validation" ? "page" : undefined} onClick={() => setProductView("validation")}>Validation data</button></nav>
+      <nav className="product-tabs" aria-label="Kythros workspaces"><button className={productView === "design" ? "active" : ""} aria-current={productView === "design" ? "page" : undefined} onClick={() => setProductView("design")}>Design &amp; plan</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Operating Envelope</button><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Comparison</button></nav>
       <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><PwaInstallButton /><label className="button secondary workspace-file-button">Open workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Measured point</button></div>
     </header>
     {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
 
     <section className="content" id="top">
-      {productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onLoadPublished={loadPublishedEnvelopeExample} onOpenDesign={() => setProductView("design")} onAddBaselineCfd={openBaselineCfdForOperatingPoint} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : productView === "validation" ? <PublicValidation onLoadPublished={loadPublishedEnvelopeExample} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
-        <span className="empty-kicker">RDE PRESSURE + WAVE VALIDATION</span><h1>{activeOperatingPoint?.experiment ? "Measured operating point ready" : "Welcome to Kythros"}</h1>
+      {productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onLoadPublished={loadPublishedEnvelopeExample} onOpenDesign={() => setProductView("design")} onAddBaselineCfd={openBaselineCfdForOperatingPoint} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
+        <span className="empty-kicker">RDE EXPERIMENT + CFD COMPARISON</span><h1>{activeOperatingPoint?.experiment ? "Measured operating point ready" : "Welcome to Kythros"}</h1>
         <p>{activeOperatingPoint?.experiment ? "The experimental observation is already part of the measured envelope. Add a baseline CFD result only when you want to compare simulation with this measurement." : "Choose an engine and add a measured operating point. CFD comparisons are created separately and stay attached to that physical condition."}</p>
         <span className="empty-status">{activeOperatingPoint?.experiment ? "No CFD comparison has been added for this operating point" : "No measured operating point has been selected"}</span>
-        <div className="empty-actions"><button className="button primary" onClick={() => activeOperatingPoint?.experiment ? openBaselineCfdForOperatingPoint(activeOperatingPoint.id) : openNewCase()}>{activeOperatingPoint?.experiment ? "Add baseline CFD comparison →" : activeDesignId ? "Add first measured operating point →" : "Define an engine first →"}</button><label className="button secondary workspace-file-button">Open saved workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary" onClick={loadExampleCaseHistory}>Load synthetic case history</button></div>
+        <div className="empty-actions"><button className="button primary" onClick={() => activeOperatingPoint?.experiment ? openBaselineCfdForOperatingPoint(activeOperatingPoint.id) : openNewCase()}>{activeOperatingPoint?.experiment ? "Add baseline CFD comparison →" : activeDesignId ? "Add first measured operating point →" : "Define an engine first →"}</button><label className="button secondary workspace-file-button">Open saved workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary" onClick={loadExampleCaseHistory}>Load thermal comparison example</button></div>
         <div className="empty-requirements"><span><b>1</b><i><strong>Compare</strong> matched experiment and CFD pressure traces</i></span><span><b>2</b><i><strong>Diagnose</strong> pressure and rotating-wave mismatches</i></span><span><b>3</b><i><strong>Run and update</strong> the adaptive CFD plan</i></span></div>
       </section> : <>
         <ComparisonHierarchy designs={designs} operatingPoints={operatingPoints} runs={cases} activeDesignId={activeDesignId} activeOperatingPointId={activeOperatingPointId} activeRunId={activeCaseId} onSelectDesign={selectDesign} onSelectOperatingPoint={selectOperatingPoint} onSelectRun={(id) => { setActiveCaseId(id); setActiveProbe(0); setWorkspaceView("case"); }} onAddOperatingPoint={() => activeDesignId && openOperatingPoint(activeDesignId)} onAddRun={openNewRunForOperatingPoint} onViewHistory={() => setWorkspaceView("compare")} onSaveWorkspace={downloadWorkspace} />

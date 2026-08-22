@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { RAW_DATASET_VALIDATION_CASES } from "../lib/published-benchmarks.ts";
-import { evaluatePublicPressureFixture, type PublicPressureFixture } from "../lib/public-pressure-validation.ts";
 import type { Signal } from "../lib/rde-analysis.ts";
 import { analyzeRdeProbeSet, circumferentialWaveSpeedMps } from "../lib/wave-dynamics.ts";
 
@@ -22,7 +21,7 @@ type PublishedFixture = {
 };
 
 function loadFixture(id: "bd0041" | "bd0038" | "ce2029") {
-  return JSON.parse(readFileSync(new URL(`./fixtures/zenodo-${id}.json`, import.meta.url), "utf8")) as PublishedFixture & PublicPressureFixture;
+  return JSON.parse(readFileSync(new URL(`./fixtures/zenodo-${id}.json`, import.meta.url), "utf8")) as PublishedFixture;
 }
 
 function fixtureHash(id: "bd0041" | "bd0038" | "ce2029") {
@@ -109,15 +108,6 @@ test("published CE2029 record exposes a second component without inventing uniqu
   assert.equal(result.identifiability, "Not identifiable");
   assert.ok(!Number.isFinite(result.waveSpeedMps), "speed must not be reported for the unresolved multi-component mode");
   assert.ok(result.warnings.some((warning) => /second non-harmonic pressure component/i.test(warning)));
-});
-
-test("the browser-facing public validator derives all fixture outcomes from the arrays", () => {
-  for (const id of ["bd0041", "bd0038", "ce2029"] as const) {
-    const result = evaluatePublicPressureFixture(loadFixture(id));
-    assert.equal(result.passed, true, `${result.caseId} public runtime check failed`);
-    assert.equal(result.samplesPerChannel, 4096);
-    assert.ok(result.checks.every((item) => item.passed));
-  }
 });
 
 test("published Xue et al. frequency and annulus values reproduce tabulated wave speeds", () => {
