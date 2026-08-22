@@ -154,32 +154,49 @@ function title(quantity: WallFieldQuantity) { return quantity === "wallHeatFluxM
 
 function PhysicalWallMap({ field, source, sharedLimits, chamberLengthMm }: { field: WallField | null; source: "Experiment" | "CFD"; sharedLimits: readonly [number, number]; chamberLengthMm: number }) {
   const fieldId = useId().replaceAll(":", "-");
+  const axialProfile = field?.coverage === "axial-profile" || !!field && field.samples.every((sample) => sample.angleDeg === null);
   const dataLimits = extent(field?.samples.map((sample) => sample.axialMm) ?? [], [0, finite(chamberLengthMm) && chamberLengthMm > 0 ? chamberLengthMm : 1]);
   const axialLimits: readonly [number, number] = finite(chamberLengthMm) && chamberLengthMm > 0 ? [0, chamberLengthMm] : dataLimits;
-  const projected = (field?.samples ?? []).map((sample) => {
-    const angle = sample.angleDeg * Math.PI / 180;
+  const projected = (field?.samples ?? []).filter((sample) => sample.angleDeg !== null).map((sample) => {
+    const angle = sample.angleDeg! * Math.PI / 180;
     const depth = Math.cos(angle);
     const axialFraction = Math.max(0, Math.min(1, (sample.axialMm - axialLimits[0]) / Math.max(axialLimits[1] - axialLimits[0], 1e-12)));
     return { sample, depth, x: 120 + axialFraction * 368 + depth * 14, y: 135 + Math.sin(angle) * 67 };
   }).sort((left, right) => left.depth - right.depth);
-  return <article className="physical-wall-map"><div className="physical-wall-heading"><strong>{source}</strong><span>{field ? `${field.samples.length.toLocaleString()} mapped location${field.samples.length === 1 ? "" : "s"}` : "No spatial field loaded"}</span></div><svg viewBox="0 0 620 275" role="img" aria-label={`${source} ${field ? title(field.quantity) : "thermal data"} mapped onto the physical annular chamber wall`}>
+  const profileX = (value: number) => 107 + Math.max(0, Math.min(1, (value - axialLimits[0]) / Math.max(axialLimits[1] - axialLimits[0], 1e-12))) * 395;
+  const profileXs = [...new Set((field?.samples ?? []).map((sample) => sample.axialMm))].sort((left, right) => left - right);
+  const profileWidth = profileXs.length > 1 ? Math.max(5, Math.min(58, Math.min(...profileXs.slice(1).map((value, index) => value - profileXs[index])) / Math.max(axialLimits[1] - axialLimits[0], 1e-12) * 395)) : 16;
+  return <article className="physical-wall-map"><div className="physical-wall-heading"><strong>{source}</strong><span>{field ? `${field.samples.length.toLocaleString()} ${axialProfile ? "axial" : "mapped"} location${field.samples.length === 1 ? "" : "s"}` : "No thermal field loaded"}</span></div><svg viewBox="0 0 620 275" role="img" aria-label={`${source} ${field ? title(field.quantity) : "thermal data"} mapped onto the physical annular chamber wall`}>
     <defs><linearGradient id={`${fieldId}-shell`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#eaf4f3"/><stop offset=".5" stopColor="#cfe4e4"/><stop offset="1" stopColor="#f8fbf8"/></linearGradient></defs>
     <path d="M62 73 H107 V198 H62 Z" className="physical-plenum"/><line x1="107" x2="107" y1="66" y2="205" className="physical-injector-face"/>
     <rect x="107" y="66" width="395" height="139" rx="3" fill={`url(#${fieldId}-shell)`} className="physical-cylinder-body"/><ellipse cx="107" cy="135" rx="29" ry="69" className="physical-cylinder-end"/><ellipse cx="502" cy="135" rx="29" ry="69" className="physical-cylinder-end"/><path d="M502 75 L582 102 V168 L502 195 Z" className="physical-nozzle"/>
+    {axialProfile && field?.samples.map((sample, index) => <rect key={`profile-${index}`} x={profileX(sample.axialMm) - profileWidth / 2} y="67" width={profileWidth} height="137" fill={color(sample.value, sharedLimits)} opacity=".72"><title>{sample.axialMm.toFixed(2)} mm axial · circumferentially averaged profile · {sample.value.toFixed(3)} {unit(field.quantity)}</title></rect>)}
     {projected.map(({ sample, depth, x, y }, index) => source === "Experiment"
-      ? <circle key={index} cx={x} cy={y} r={depth >= 0 ? 7 : 5} fill={color(sample.value, sharedLimits)} opacity={depth >= 0 ? .98 : .42} className="physical-experiment-point"><title>{sample.axialMm.toFixed(2)} mm axial · {sample.angleDeg.toFixed(1)}° · {sample.value.toFixed(3)} {unit(field!.quantity)}{depth < 0 ? " · far side" : " · near side"}</title></circle>
-      : <rect key={index} x={x - (depth >= 0 ? 6 : 4)} y={y - (depth >= 0 ? 6 : 4)} width={depth >= 0 ? 12 : 8} height={depth >= 0 ? 12 : 8} rx="3" fill={color(sample.value, sharedLimits)} opacity={depth >= 0 ? .86 : .34}><title>{sample.axialMm.toFixed(2)} mm axial · {sample.angleDeg.toFixed(1)}° · {sample.value.toFixed(3)} {unit(field!.quantity)}{depth < 0 ? " · far side" : " · near side"}</title></rect>)}
-    {!field && <g className="physical-map-empty-label"><text x="305" y="127" textAnchor="middle">No {source.toLowerCase()} wall field</text><text x="305" y="147" textAnchor="middle">Upload axial position + angle + thermal value</text></g>}
+      ? <circle key={index} cx={x} cy={y} r={depth >= 0 ? 7 : 5} fill={color(sample.value, sharedLimits)} opacity={depth >= 0 ? .98 : .42} className="physical-experiment-point"><title>{sample.axialMm.toFixed(2)} mm axial · {sample.angleDeg!.toFixed(1)}° · {sample.value.toFixed(3)} {unit(field!.quantity)}{depth < 0 ? " · far side" : " · near side"}</title></circle>
+      : <rect key={index} x={x - (depth >= 0 ? 6 : 4)} y={y - (depth >= 0 ? 6 : 4)} width={depth >= 0 ? 12 : 8} height={depth >= 0 ? 12 : 8} rx="3" fill={color(sample.value, sharedLimits)} opacity={depth >= 0 ? .86 : .34}><title>{sample.axialMm.toFixed(2)} mm axial · {sample.angleDeg!.toFixed(1)}° · {sample.value.toFixed(3)} {unit(field!.quantity)}{depth < 0 ? " · far side" : " · near side"}</title></rect>)}
+    {!field && <g className="physical-map-empty-label"><text x="305" y="127" textAnchor="middle">No {source.toLowerCase()} thermal field</text><text x="305" y="147" textAnchor="middle">Upload axial profile or axial + angle samples</text></g>}
     <path d="M126 225 H471" className="physical-axial-arrow"/><path d="M471 225 l-10 -5 v10 z" className="physical-axial-arrow-head"/><text x="299" y="246" textAnchor="middle" className="physical-axis-label">Axial position: injector face → chamber exit</text>
     <text x="84" y="43" textAnchor="middle" className="physical-part-label">injector face</text><text x="304" y="43" textAnchor="middle" className="physical-part-label">annular chamber wall</text><text x="548" y="43" textAnchor="middle" className="physical-part-label">exhaust</text>
-  </svg><div className="physical-wall-note"><span>Near-side wall</span><span className="far-side">Far-side samples are translucent</span></div></article>;
+  </svg><div className="physical-wall-note"><span>{axialProfile ? "Circumferentially averaged axial bands" : "Near-side wall"}</span><span className="far-side">{axialProfile ? "No angular variation claimed" : "Far-side samples are translucent"}</span></div></article>;
 }
 
 function SpatialMap({ field, source, sharedLimits }: { field: WallField | null; source: "Experiment" | "CFD"; sharedLimits: readonly [number, number] }) {
   if (!field) return <div className="wall-map-empty"><div className="empty-grid"/><strong>{source}: no spatial field loaded</strong><span>A scalar peak value cannot create a wall map.</span></div>;
   const xLimits = extent(field.samples.map((sample) => sample.axialMm), [0, 1]);
+  if (field.coverage === "axial-profile" || field.samples.every((sample) => sample.angleDeg === null)) {
+    const yLimits = extent(field.samples.map((sample) => sample.value), sharedLimits);
+    const sx = (value: number) => 62 + (value - xLimits[0]) / Math.max(xLimits[1] - xLimits[0], 1e-12) * 520;
+    const sy = (value: number) => 218 - (value - yLimits[0]) / Math.max(yLimits[1] - yLimits[0], 1e-12) * 174;
+    const ordered = [...field.samples].sort((left, right) => left.axialMm - right.axialMm);
+    return <div className="wall-map axial-profile-map"><div className="wall-map-heading"><strong>{source}</strong><span>{field.samples.length.toLocaleString()} axial locations · no angle column</span></div><svg viewBox="0 0 620 270" role="img" aria-label={`${source} ${title(field.quantity)} axial profile`}>
+      {[0, .25, .5, .75, 1].map((fraction) => { const xValue = xLimits[0] + fraction * (xLimits[1] - xLimits[0]); const yValue = yLimits[0] + fraction * (yLimits[1] - yLimits[0]); return <g key={fraction}><line x1={sx(xValue)} x2={sx(xValue)} y1="44" y2="218" className="wall-map-grid"/><text x={sx(xValue)} y="244" textAnchor="middle">{xValue.toFixed(0)}</text><line x1="62" x2="582" y1={sy(yValue)} y2={sy(yValue)} className="wall-map-grid"/><text x="52" y={sy(yValue) + 4} textAnchor="end">{yValue.toFixed(1)}</text></g>; })}
+      <polyline points={ordered.map((sample) => `${sx(sample.axialMm)},${sy(sample.value)}`).join(" ")} fill="none" className="axial-profile-line"/>
+      {ordered.map((sample, index) => <circle key={index} cx={sx(sample.axialMm)} cy={sy(sample.value)} r="5" fill={color(sample.value, sharedLimits)}><title>{sample.axialMm.toFixed(2)} mm · {sample.value.toFixed(3)} {unit(field.quantity)}</title></circle>)}
+      <text x="322" y="266" textAnchor="middle" className="wall-map-axis">Axial position (mm)</text><text x="13" y="132" textAnchor="middle" transform="rotate(-90 13 132)" className="wall-map-axis">{title(field.quantity)} ({unit(field.quantity)})</text>
+    </svg></div>;
+  }
   const uniqueX = [...new Set(field.samples.map((sample) => sample.axialMm))].sort((a, b) => a - b);
-  const uniqueY = [...new Set(field.samples.map((sample) => sample.angleDeg))].sort((a, b) => a - b);
+  const uniqueY = [...new Set(field.samples.map((sample) => sample.angleDeg).filter((value): value is number => value !== null))].sort((a, b) => a - b);
   const dx = uniqueX.length > 1 ? Math.min(...uniqueX.slice(1).map((value, index) => value - uniqueX[index])) : xLimits[1] - xLimits[0];
   const dy = uniqueY.length > 1 ? Math.min(...uniqueY.slice(1).map((value, index) => value - uniqueY[index])) : 20;
   const sx = (value: number) => 58 + (value - xLimits[0]) / Math.max(xLimits[1] - xLimits[0], 1e-12) * 528;
@@ -190,8 +207,8 @@ function SpatialMap({ field, source, sharedLimits }: { field: WallField | null; 
     {[0, 90, 180, 270, 360].map((angle) => <g key={angle}><line x1="58" x2="586" y1={sy(angle)} y2={sy(angle)} className="wall-map-grid"/><text x="48" y={sy(angle) + 4} textAnchor="end">{angle}°</text></g>)}
     {[0, 0.25, 0.5, 0.75, 1].map((fraction) => { const value = xLimits[0] + fraction * (xLimits[1] - xLimits[0]); return <g key={fraction}><line x1={sx(value)} x2={sx(value)} y1="30" y2="232" className="wall-map-grid"/><text x={sx(value)} y="253" textAnchor="middle">{value.toFixed(0)}</text></g>; })}
     {field.samples.map((sample, index) => source === "CFD"
-      ? <rect key={index} x={sx(sample.axialMm) - cellWidth / 2} y={sy(sample.angleDeg) - cellHeight / 2} width={cellWidth + 0.5} height={cellHeight + 0.5} fill={color(sample.value, sharedLimits)}><title>{sample.axialMm.toFixed(2)} mm · {sample.angleDeg.toFixed(1)}° · {sample.value.toFixed(3)} {unit(field.quantity)}</title></rect>
-      : <circle key={index} cx={sx(sample.axialMm)} cy={sy(sample.angleDeg)} r="5" fill={color(sample.value, sharedLimits)} className="experiment-field-point"><title>{sample.axialMm.toFixed(2)} mm · {sample.angleDeg.toFixed(1)}° · {sample.value.toFixed(3)} {unit(field.quantity)}</title></circle>)}
+      ? <rect key={index} x={sx(sample.axialMm) - cellWidth / 2} y={sy(sample.angleDeg!) - cellHeight / 2} width={cellWidth + 0.5} height={cellHeight + 0.5} fill={color(sample.value, sharedLimits)}><title>{sample.axialMm.toFixed(2)} mm · {sample.angleDeg!.toFixed(1)}° · {sample.value.toFixed(3)} {unit(field.quantity)}</title></rect>
+      : <circle key={index} cx={sx(sample.axialMm)} cy={sy(sample.angleDeg!)} r="5" fill={color(sample.value, sharedLimits)} className="experiment-field-point"><title>{sample.axialMm.toFixed(2)} mm · {sample.angleDeg!.toFixed(1)}° · {sample.value.toFixed(3)} {unit(field.quantity)}</title></circle>)}
     <text x="322" y="268" textAnchor="middle" className="wall-map-axis">Axial position (mm)</text><text x="13" y="132" textAnchor="middle" transform="rotate(-90 13 132)" className="wall-map-axis">Circumferential angle</text>
   </svg></div>;
 }
@@ -200,7 +217,7 @@ function FieldComparison({ quantity, experiment, cfd, chamberLengthMm }: { quant
   const experimentField = wallField(experiment, quantity); const cfdField = wallField(cfd, quantity);
   const values = [...(experimentField?.samples ?? []), ...(cfdField?.samples ?? [])].map((sample) => sample.value);
   const limits = extent(values, [0, 1]);
-  return <section className="field-comparison"><div className="field-comparison-heading"><div><span>PHYSICAL ANNULUS WALL</span><h3>{title(quantity)}</h3><p>Colors are projected onto the entered chamber length. Hover a mapped location for its exact axial position, angle and value.</p></div><div className="field-scale"><i style={{ background: "linear-gradient(90deg,hsl(205 72% 48%),hsl(5 72% 55%))" }}/><span>{values.length ? `${limits[0].toFixed(2)}–${limits[1].toFixed(2)} ${unit(quantity)}` : "No mapped values"}</span></div></div><div className="physical-wall-grid"><PhysicalWallMap field={experimentField} source="Experiment" sharedLimits={limits} chamberLengthMm={chamberLengthMm}/><PhysicalWallMap field={cfdField} source="CFD" sharedLimits={limits} chamberLengthMm={chamberLengthMm}/></div><details className="unwrapped-wall-details"><summary>Show exact circumferential angle × axial position maps</summary><p>The physical projection makes location intuitive. This unwrapped view preserves the exact uploaded coordinates without hiding the far side of the annulus.</p><div className="wall-map-grid-layout"><SpatialMap field={experimentField} source="Experiment" sharedLimits={limits}/><SpatialMap field={cfdField} source="CFD" sharedLimits={limits}/></div></details></section>;
+  return <section className="field-comparison"><div className="field-comparison-heading"><div><span>PHYSICAL ANNULUS WALL</span><h3>{title(quantity)}</h3><p>Surface samples are projected at their axial and angular coordinates. Axial-only profiles appear as circumferentially averaged bands and never imply angular resolution.</p></div><div className="field-scale"><i style={{ background: "linear-gradient(90deg,hsl(205 72% 48%),hsl(5 72% 55%))" }}/><span>{values.length ? `${limits[0].toFixed(2)}–${limits[1].toFixed(2)} ${unit(quantity)}` : "No mapped values"}</span></div></div><div className="physical-wall-grid"><PhysicalWallMap field={experimentField} source="Experiment" sharedLimits={limits} chamberLengthMm={chamberLengthMm}/><PhysicalWallMap field={cfdField} source="CFD" sharedLimits={limits} chamberLengthMm={chamberLengthMm}/></div><details className="unwrapped-wall-details"><summary>Show exact coordinate plots</summary><p>The physical projection makes location intuitive. The expanded plot preserves the exact uploaded coordinates; axial-only data remain a one-dimensional profile.</p><div className="wall-map-grid-layout"><SpatialMap field={experimentField} source="Experiment" sharedLimits={limits}/><SpatialMap field={cfdField} source="CFD" sharedLimits={limits}/></div></details></section>;
 }
 
 function metricRow(rows: PhysicsComparisonRow[], key: PhysicsComparisonRow["key"]) { return rows.find((row) => row.key === key)!; }

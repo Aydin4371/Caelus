@@ -102,8 +102,8 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
       { key: "cfdPeakWallTemperatureK", label: "CFD peak wall temperature (K) · optional", definition: "Highest simulated wall temperature over the matching surface and time window." },
       { key: "experimentSustainedDurationS", label: "Experiment sustained run duration (s) · optional", definition: "Continuous duration for which the reported rotating-wave response was observed under the stated condition." },
       { key: "cfdSustainedDurationS", label: "CFD sustained duration (s) · optional", definition: "Physical flow time represented after startup transients for which the simulated response remains sustained." },
-      { key: "experimentWallFieldCsv", label: "Experiment spatial wall field · optional", definition: "Measured axial and circumferential locations with wall heat flux, wall temperature, or both. Each row is one documented sensor or reconstructed surface location." },
-      { key: "cfdWallFieldCsv", label: "CFD spatial wall field · optional", definition: "CFD surface samples using the same axial origin, circumferential convention, wall selection, and averaging window as the experiment." },
+      { key: "experimentWallFieldCsv", label: "Experiment thermal profile or wall field · optional", definition: "Measured axial locations with wall heat flux, wall temperature, or both. Circumferential angle is optional: omit it for an axial profile, or include it for sparse sensors or a surface field. Each value must be a documented measurement or reconstruction." },
+      { key: "cfdWallFieldCsv", label: "CFD thermal profile or wall field · optional", definition: "CFD wall samples using the same axial origin, wall selection, and averaging window as the experiment. Include circumferential angle only when it exists in both datasets or when the CFD field is being inspected independently." },
     ],
   },
   {

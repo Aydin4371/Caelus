@@ -6,6 +6,7 @@ import { EMPTY_ENGINE_DESIGN } from "../lib/design-workspace.ts";
 import { ENVELOPE_MODEL_MINIMUM_POINTS, fitEnvelopeModel } from "../lib/envelope-model.ts";
 import { buildEnvelopeDataset, pointMatchesEnvelopeSlice } from "../lib/operating-envelope.ts";
 import { GE_2022_DESIGN, buildGe2022OperatingPoints } from "../lib/published-envelope-data.ts";
+import { classifyPublishedPropagationMode } from "../lib/published-mode-classification.ts";
 import { buildPhysicsComparison } from "../lib/physics-evidence.ts";
 import { makeDemoProbeSignals } from "../lib/rde-analysis.ts";
 
@@ -214,6 +215,13 @@ test("loads published operating conditions without pretending summary rows are r
   assert.equal(model.status, "Not ready yet");
   assert.equal(model.observationCount, 0);
   assert.equal(model.gates[0].value, `0 / ${ENVELOPE_MODEL_MINIMUM_POINTS}`);
+});
+
+test("derives published display groupings from the authors' mode strings", () => {
+  assert.equal(classifyPublishedPropagationMode("Single wave"), "Stable");
+  assert.equal(classifyPublishedPropagationMode("Intermittent detonation"), "Transitional");
+  assert.equal(classifyPublishedPropagationMode("Failure"), "Unstable");
+  assert.throws(() => classifyPublishedPropagationMode("Operator says fine"), /not mapped/i);
 });
 
 test("compares optional engine-physics values only when both sides are documented", () => {

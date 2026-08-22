@@ -2,6 +2,7 @@ import type { FileImportProvenance } from "./data-import.ts";
 import type { Signal } from "./rde-analysis.ts";
 import type { RdePhysicsMeasurements } from "./caevera-types.ts";
 import { wallFieldImportIsValid, type WallFieldImport } from "./spatial-field.ts";
+import { classifyPublishedPropagationMode } from "./published-mode-classification.ts";
 
 export type RdeApplication = "Rocket" | "Air-breathing";
 
@@ -61,7 +62,6 @@ export type PublishedOperatingPointObservation = {
   sourceUrl: string;
   sourceLocator: string;
   reportedMode: string;
-  classification: "Stable" | "Transitional" | "Unstable";
   waveCount: number | null;
   waveFrequencyKHz: number;
   airMassFlowKgS: number;
@@ -181,7 +181,10 @@ export function validateOperatingPoint(point: OperatingPoint) {
     const observation = point.publishedObservation;
     if (!observation?.sourceTitle.trim() || !observation.sourceUrl.trim() || !observation.sourceLocator.trim()) issues.push("Published operating points require a traceable source citation.");
     if (!observation?.reportedMode.trim()) issues.push("Published operating points require the mode reported by the source.");
-    if (!observation || !["Stable", "Transitional", "Unstable"].includes(observation.classification)) issues.push("Published operating points require a mapped stability class.");
+    if (observation?.reportedMode) {
+      try { classifyPublishedPropagationMode(observation.reportedMode); }
+      catch { issues.push("The published propagation mode has no transparent display mapping."); }
+    }
   }
   if (point.experiment?.wallField != null && !wallFieldImportIsValid(point.experiment.wallField)) issues.push("The experimental spatial wall field is malformed.");
   if (point.recommendation) {
