@@ -54,13 +54,14 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   const envelope = await readFile(new URL("../components/operating-envelope.tsx", import.meta.url), "utf8");
   const design = await readFile(new URL("../components/design-planner.tsx", import.meta.url), "utf8");
   const physicsVisual = await readFile(new URL("../components/rde-physics-visual.tsx", import.meta.url), "utf8");
-  const publicValidation = await readFile(new URL("../components/public-validation.tsx", import.meta.url), "utf8");
+  const thermalExample = await readFile(new URL("../lib/thermal-comparison-example.ts", import.meta.url), "utf8");
   const logic = await readFile(new URL("../lib/operating-envelope.ts", import.meta.url), "utf8");
   assert.match(page, /productView/);
   assert.match(page, /<DesignPlanner designs=\{designs\}/);
   assert.match(page, /<OperatingEnvelope designs=\{designs\}/);
-  assert.match(page, /Validation data/);
-  assert.match(page, /<PublicValidation/);
+  assert.doesNotMatch(page, /Validation data/);
+  assert.doesNotMatch(page, /<PublicValidation/);
+  assert.match(page, /Load thermal comparison example/);
   assert.match(envelope, /Observed propagation mode by operating point/);
   assert.match(envelope, /Predictive layer/);
   assert.match(envelope, /raw-data and validation gates pass/);
@@ -102,10 +103,10 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(physicsVisual, /Show exact coordinate plots/);
   assert.match(physicsVisual, /circumferentially averaged bands/);
   assert.match(physicsVisual, /full engine definition stays in Design &amp; Plan/);
-  assert.match(publicValidation, /No prerecorded Kythros conclusions/);
-  assert.match(publicValidation, /Run public pressure checks/);
-  assert.match(publicValidation, /evaluatePublicPressureFixture/);
-  assert.match(publicValidation, /Thermal ranges remain ranges/);
+  assert.match(thermalExample, /Deterministic synthetic arrays used only to exercise the Comparison renderer/);
+  assert.match(thermalExample, /surface-field/);
+  assert.match(physicsVisual, /Synthetic visualization inputs/);
+  assert.match(physicsVisual, /not experimental evidence or CFD validation/);
 });
 
 test("ships an installable Kythros app manifest and service worker", async () => {
