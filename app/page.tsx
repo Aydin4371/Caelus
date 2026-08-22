@@ -540,7 +540,7 @@ export default function Home() {
   const [activeView, setActiveView] = useState<"signals" | "spectrum" | "residual" | "phase" | "cycles">("signals");
   const [activeProbe, setActiveProbe] = useState(0);
   const [workspaceView, setWorkspaceView] = useState<"case" | "compare">("case");
-  const [productView, setProductView] = useState<"design" | "envelope" | "comparison">("design");
+  const [productView, setProductView] = useState<"home" | "design" | "envelope" | "comparison">("home");
 
   const activeCase = cases.find((item) => item.id === activeCaseId) ?? null;
   const activeOperatingPoint = operatingPoints.find((item) => item.id === activeOperatingPointId) ?? null;
@@ -1239,6 +1239,7 @@ export default function Home() {
       setActiveProbe(0);
       setActiveView("signals");
       setWorkspaceView("case");
+      setProductView(restored.activeCaseId ? "comparison" : restored.activeDesignId ? "design" : "home");
     } catch (reason) {
       setWorkspaceError(reason instanceof Error ? reason.message : "The workspace could not be opened.");
     }
@@ -1255,45 +1256,30 @@ export default function Home() {
     setActiveDesignId(design.id);
   }
 
-  function returnToEmptyWorkspace() {
-    setCases([]);
-    setDesigns([]);
-    setOperatingPoints([]);
-    setActiveDesignId(null);
-    setActiveOperatingPointId(null);
-    setDraftDesignId(null);
-    setDraftOperatingPointId(null);
-    setDraftNewOperatingPoint(null);
-    setActiveCaseId(null);
-    setCaseBaselineId(null);
-    setEditingCaseId(null);
-    setDraft(cloneMetadata(EMPTY_METADATA));
-    setDraftRelationship(null);
-    setTestPending(null);
-    setCfdPending(null);
-    setShowLoader(false);
-    setShowHelp(false);
-    setError("");
-    setWorkspaceError("");
-    setActiveProbe(0);
-    setActiveView("signals");
-    setWorkspaceView("case");
-    setProductView("design");
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
-    requestAnimationFrame(() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth", block: "start" }));
-  }
-
   return <main className="app-shell">
     <header className="product-header">
-      <a className="brand" href="#top" aria-label="Return to empty home workspace" onClick={(event) => { event.preventDefault(); returnToEmptyWorkspace(); }}><span className="brand-mark">K</span><span><strong>KYTHROS</strong><small>BY CAELUS</small></span></a>
+      <a className="brand" href="#top" aria-label="Go to Kythros home" onClick={(event) => { event.preventDefault(); setProductView("home"); requestAnimationFrame(() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth", block: "start" })); }}><span className="brand-mark">K</span><span><strong>KYTHROS</strong><small>BY CAELUS</small></span></a>
       <p>RDE simulation-to-test intelligence</p>
-      <nav className="product-tabs" aria-label="Kythros workspaces"><button className={productView === "design" ? "active" : ""} aria-current={productView === "design" ? "page" : undefined} onClick={() => setProductView("design")}>Design &amp; plan</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Operating Envelope</button><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Comparison</button></nav>
+      <nav className="product-tabs" aria-label="Kythros workspaces"><button className={productView === "home" ? "active" : ""} aria-current={productView === "home" ? "page" : undefined} onClick={() => setProductView("home")}>Home</button><button className={productView === "design" ? "active" : ""} aria-current={productView === "design" ? "page" : undefined} onClick={() => setProductView("design")}>Design &amp; plan</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Operating Envelope</button><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Comparison</button></nav>
       <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><PwaInstallButton /><label className="button secondary workspace-file-button">Open workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={openNewCase}>+ Measured point</button></div>
     </header>
     {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
 
     <section className="content" id="top">
-      {productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onLoadPublished={loadPublishedEnvelopeExample} onOpenDesign={() => setProductView("design")} onAddBaselineCfd={openBaselineCfdForOperatingPoint} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
+      {productView === "home" ? <section className="home-workspace" aria-labelledby="home-title">
+        <div className="home-hero">
+          <span className="empty-kicker">FROM ENGINE RANGE TO NEXT CFD RUN</span>
+          <h1 id="home-title">From engine definition to the next CFD run</h1>
+          <p>Kythros first creates nine coverage candidates from the operating ranges you enter. They are not predicted stable operating points. You choose one to test, load its measured data, add CFD for that same condition, and Kythros recommends one specific CFD change.</p>
+          <div className="home-actions"><button className="button primary" onClick={() => setProductView("design")}>{designs.length ? "Continue in Design & plan →" : "Define the engine →"}</button><label className="button secondary workspace-file-button">Open saved workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label></div>
+        </div>
+
+        <section className="home-workflow-card" aria-label="Intended Kythros workflow">
+          <div className="card-heading"><div><span>INTENDED WORKFLOW</span><h2>Nine candidate conditions, not operating predictions</h2><p>A candidate exists because it covers the centre or a boundary of your entered range. It does not mean the engine is stable, safe, or expected to perform successfully there.</p></div></div>
+          <div className="screening-workflow"><article><b>1</b><span><strong>Define the engine</strong><small>Enter geometry and the operating limits you want to investigate.</small></span></article><article><b>2</b><span><strong>Choose a candidate</strong><small>Kythros places the centre and range boundaries into the screening table.</small></span></article><article><b>3</b><span><strong>Load the experiment</strong><small>Test that physical condition and add its measured pressure evidence.</small></span></article><article><b>4</b><span><strong>Add matched CFD</strong><small>In Comparison, upload CFD for the same engine and operating condition.</small></span></article><article><b>5</b><span><strong>Get the next run</strong><small>Kythros compares the evidence and recommends one specific CFD change to run next.</small></span></article></div>
+          <div className="home-evidence-boundary"><article><span>BEFORE EVIDENCE</span><strong>Coverage candidates only</strong><p>The nine rows are starting conditions for investigation. Kythros has not yet determined whether any row is operable.</p></article><article><span>AFTER EXPERIMENT + MATCHED CFD</span><strong>Diagnosis and next-run recommendation</strong><p>Kythros compares the uploaded evidence, ranks the supported mismatch explanations, and recommends the next controlled CFD rerun.</p></article></div>
+        </section>
+      </section> : productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onLoadPublished={loadPublishedEnvelopeExample} onOpenDesign={() => setProductView("design")} onAddBaselineCfd={openBaselineCfdForOperatingPoint} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
         <span className="empty-kicker">RDE EXPERIMENT + CFD COMPARISON</span><h1>{activeOperatingPoint?.experiment ? "Measured operating point ready" : "Welcome to Kythros"}</h1>
         <p>{activeOperatingPoint?.experiment ? "The experimental observation is already part of the measured envelope. Add a baseline CFD result only when you want to compare simulation with this measurement." : "Choose an engine and add a measured operating point. CFD comparisons are created separately and stay attached to that physical condition."}</p>
         <span className="empty-status">{activeOperatingPoint?.experiment ? "No CFD comparison has been added for this operating point" : "No measured operating point has been selected"}</span>
