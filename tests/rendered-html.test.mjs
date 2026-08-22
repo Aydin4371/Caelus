@@ -37,11 +37,9 @@ test("renders development preview metadata", async () => {
   assert.match(html, /Nine candidate conditions, not operating predictions/);
   assert.match(html, /Coverage candidates only/);
   assert.match(html, /Diagnosis and next-run recommendation/);
-  assert.match(html, /What Kythros has actually reproduced/);
-  assert.match(html, /real pressure records/);
-  assert.match(html, /matched published values/);
-  assert.match(html, /Mixed result/);
-  assert.match(html, /do not yet prove that Kythros can prospectively choose the correct next CFD run/);
+  assert.doesNotMatch(html, /Published checks/);
+  assert.doesNotMatch(html, /What Kythros has actually reproduced/);
+  assert.doesNotMatch(html, /Download audit values/);
   assert.match(html, /Design &amp; plan/);
   assert.match(html, />Comparison</);
   assert.match(html, /Operating Envelope/);

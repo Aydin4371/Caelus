@@ -34,7 +34,7 @@ export const PUBLISHED_PAIRED_SOURCES: Record<PublishedPairedSource["id"], Publi
     year: 2021,
     url: "https://www.osti.gov/servlets/purl/1765177",
     provenance: "Values transcribed from the 0.5 mm combustion-model comparison in the Results and Discussion section of the OSTI-hosted manuscript.",
-    limitation: "This is a retrospective one-factor result from the same publication used to interpret it. It is not a blind or prospective recommendation test.",
+    limitation: "The paper reports experiment and CFD outcomes but does not release matched raw pressure arrays. This retrospective one-factor result is not a loadable Comparison case or a blind recommendation test.",
   },
 };
 
@@ -104,4 +104,3 @@ export function evaluatePublishedControlledRerun(input = STRAKEY_COMBUSTION_INPU
 
 export const TOBIAS_CASE_A_RESULT = evaluatePublishedPairedComparison(TOBIAS_CASE_A_INPUT.measurements);
 export const STRAKEY_COMBUSTION_RESULT = evaluatePublishedControlledRerun();
-

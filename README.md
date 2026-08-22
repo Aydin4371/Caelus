@@ -32,13 +32,17 @@ case rather than embedded examples.
 The current release is a research prototype. It does not certify a model or
 prove the cause of a discrepancy.
 
-The homepage exposes the current public proof boundary. Existing Zenodo raw
-pressure records exercise the production analyzer, Tobias et al. Case A values
-exercise paired comparison arithmetic, and the Strakey et al. combustion-model
-rerun exercises before-and-after outcome classification. The paired sources are
-tabulated in `public/data/published-paired-validation.csv`; calculated errors
-and outcome labels are not stored in that file. The retrospective rerun does
-not count as prospective validation of the next-run recommendation.
+Automated regression tests use public evidence without presenting partial
+checks as customer-facing workflow demonstrations. Existing Zenodo raw pressure
+records exercise the production analyzer but have no matched CFD files. Tobias
+et al. Case A includes experiment and CFD results in the paper, so its printed
+values exercise paired-comparison arithmetic, but the source does not release
+matched numeric pressure arrays. The Strakey et al. combustion-model rerun
+similarly exercises before-and-after outcome classification from reported
+values. The source values are tabulated in
+`public/data/published-paired-validation.csv`; calculated errors and outcome
+labels are not stored in that file. None of these checks appears on the homepage
+or counts as an end-to-end Comparison demonstration.
 
 ## v2.0.0 Kythros hierarchy and evidence-learning envelope
 
