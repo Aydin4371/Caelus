@@ -2,12 +2,13 @@ export type WallFieldQuantity = "wallHeatFluxMWm2" | "wallTemperatureK";
 
 export type WallFieldSample = {
   axialMm: number;
-  angleDeg: number;
+  angleDeg: number | null;
   value: number;
 };
 
 export type WallField = {
   quantity: WallFieldQuantity;
+  coverage: "axial-profile" | "surface-field";
   samples: WallFieldSample[];
 };
 
@@ -17,7 +18,7 @@ export type WallFieldImport = {
   validRows: number;
   droppedRows: number;
   axialColumn: string;
-  angleColumn: string;
+  angleColumn: string | null;
   heatFluxColumn: string | null;
   temperatureColumn: string | null;
   fields: WallField[];
@@ -75,7 +76,7 @@ export function parseSpatialTable(text: string, fileName: string): SpatialTable 
     .map((candidate) => ({ candidate, count: splitLine(lines[0], candidate).length }))
     .sort((left, right) => right.count - left.count)[0].candidate;
   const headers = splitLine(lines[0], delimiter);
-  if (headers.length < 3) throw new Error("The wall-field file needs axial position, circumferential angle, and at least one measured quantity.");
+  if (headers.length < 2) throw new Error("The thermal file needs axial position and at least one measured quantity. Circumferential angle is optional for an axial profile.");
   return { fileName, delimiter, headers, rows: lines.slice(1).map((line) => splitLine(line, delimiter)) };
 }
 
@@ -106,14 +107,14 @@ function normalizedAngle(value: number) {
 
 export function mapWallFieldTable(table: SpatialTable, mapping: WallFieldMapping): WallFieldImport {
   if (!table.headers[mapping.axialColumnIndex]) throw new Error("Choose the axial-position column.");
-  if (!table.headers[mapping.angleColumnIndex]) throw new Error("Choose the circumferential-angle column.");
-  if (mapping.axialColumnIndex === mapping.angleColumnIndex) throw new Error("Axial position and angle must use different columns.");
+  const hasAngle = !!table.headers[mapping.angleColumnIndex];
+  if (hasAngle && mapping.axialColumnIndex === mapping.angleColumnIndex) throw new Error("Axial position and angle must use different columns.");
   const quantities = [
     { quantity: "wallHeatFluxMWm2" as const, index: mapping.heatFluxColumnIndex },
     { quantity: "wallTemperatureK" as const, index: mapping.temperatureColumnIndex },
   ].filter((item) => table.headers[item.index]);
   if (!quantities.length) throw new Error("Choose a wall-heat-flux or wall-temperature column.");
-  const duplicate = quantities.some((item) => item.index === mapping.axialColumnIndex || item.index === mapping.angleColumnIndex)
+  const duplicate = quantities.some((item) => item.index === mapping.axialColumnIndex || hasAngle && item.index === mapping.angleColumnIndex)
     || quantities.length === 2 && quantities[0].index === quantities[1].index;
   if (duplicate) throw new Error("Each mapped coordinate and quantity must use a different column.");
 
@@ -122,9 +123,9 @@ export function mapWallFieldTable(table: SpatialTable, mapping: WallFieldMapping
   let validRows = 0;
   for (const row of table.rows) {
     const axial = Number(row[mapping.axialColumnIndex]);
-    const angle = Number(row[mapping.angleColumnIndex]);
+    const angle = hasAngle ? Number(row[mapping.angleColumnIndex]) : Number.NaN;
     const rawValues = quantities.map((item) => Number(row[item.index]));
-    if (!Number.isFinite(axial) || !Number.isFinite(angle) || rawValues.some((value) => !Number.isFinite(value))) continue;
+    if (!Number.isFinite(axial) || hasAngle && !Number.isFinite(angle) || rawValues.some((value) => !Number.isFinite(value))) continue;
     validRows += 1;
     quantities.forEach((item, index) => {
       const raw = rawValues[index];
@@ -133,7 +134,7 @@ export function mapWallFieldTable(table: SpatialTable, mapping: WallFieldMapping
         : mapping.temperatureUnit === "°C" ? raw + 273.15 : raw;
       samples.get(item.quantity)!.push({
         axialMm: axial * AXIAL_FACTORS_MM[mapping.axialUnit],
-        angleDeg: normalizedAngle(mapping.angleUnit === "rad" ? angle * 180 / Math.PI : angle),
+        angleDeg: hasAngle ? normalizedAngle(mapping.angleUnit === "rad" ? angle * 180 / Math.PI : angle) : null,
         value,
       });
     });
@@ -145,15 +146,17 @@ export function mapWallFieldTable(table: SpatialTable, mapping: WallFieldMapping
     validRows,
     droppedRows: table.rows.length - validRows,
     axialColumn: table.headers[mapping.axialColumnIndex],
-    angleColumn: table.headers[mapping.angleColumnIndex],
+    angleColumn: table.headers[mapping.angleColumnIndex] ?? null,
     heatFluxColumn: table.headers[mapping.heatFluxColumnIndex] ?? null,
     temperatureColumn: table.headers[mapping.temperatureColumnIndex] ?? null,
-    fields: quantities.map((item) => ({ quantity: item.quantity, samples: samples.get(item.quantity)! })),
+    fields: quantities.map((item) => ({ quantity: item.quantity, coverage: hasAngle ? "surface-field" : "axial-profile", samples: samples.get(item.quantity)! })),
   };
 }
 
 export function wallField(imported: WallFieldImport | null | undefined, quantity: WallFieldQuantity) {
-  return imported?.fields.find((field) => field.quantity === quantity) ?? null;
+  const field = imported?.fields.find((candidate) => candidate.quantity === quantity) ?? null;
+  if (field && !field.coverage) field.coverage = field.samples.every((sample) => Number.isFinite(sample.angleDeg)) ? "surface-field" : "axial-profile";
+  return field;
 }
 
 export function wallFieldImportIsValid(value: unknown): value is WallFieldImport {
@@ -161,6 +164,7 @@ export function wallFieldImportIsValid(value: unknown): value is WallFieldImport
   const item = value as Partial<WallFieldImport>;
   if (typeof item.fileName !== "string" || !item.fileName || !Array.isArray(item.fields) || !item.fields.length) return false;
   return item.fields.every((field) => field && (field.quantity === "wallHeatFluxMWm2" || field.quantity === "wallTemperatureK")
+    && (!field.coverage || field.coverage === "surface-field" || field.coverage === "axial-profile")
     && Array.isArray(field.samples) && field.samples.length >= 4
-    && field.samples.every((sample) => Number.isFinite(sample?.axialMm) && Number.isFinite(sample?.angleDeg) && Number.isFinite(sample?.value)));
+    && field.samples.every((sample) => Number.isFinite(sample?.axialMm) && (sample?.angleDeg === null || Number.isFinite(sample?.angleDeg)) && Number.isFinite(sample?.value)));
 }

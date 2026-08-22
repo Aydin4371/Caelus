@@ -1,0 +1,14 @@
+case_number,equivalence_ratio,inlet_temperature_K,air_mass_flow_kg_s,fuel_mass_flow_kg_s,total_mass_flow_kg_s,dominant_frequency_kHz,reported_propagation_mode,wave_count,source_locator,source_url
+1,1.19,483,1.1100,0.0857,1.1957,,Failure,,"Table 1, Case 1",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+2,1.19,573,1.1100,0.0857,1.1957,1.6724,Intermittent detonation,1,"Table 1, Case 2",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+3,1.19,643,1.1100,0.0857,1.1957,1.7822,Single wave,1,"Table 1, Case 3",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+4,1.19,713,1.1100,0.0857,1.1957,1.9009,Single wave,1,"Table 1, Case 4",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+5,1.19,793,1.1100,0.0857,1.1957,1.8355,Double-wave collision / single wave,,"Table 1, Case 5",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+6,0.53,713,1.1100,0.0384,1.1484,,Failure,,"Table 1, Case 6",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+7,0.61,713,1.1100,0.0442,1.1542,1.4520,Sporadic detonation,,"Table 1, Case 7",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+8,0.66,713,1.1100,0.0479,1.1579,1.5217,Intermittent detonation,,"Table 1, Case 8",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+9,0.79,713,1.1100,0.0573,1.1673,1.6137,Double-wave collision / single wave,,"Table 1, Case 9",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+10,0.84,713,1.1100,0.0624,1.1724,1.8182,Double-wave collision / single wave,,"Table 1, Case 10; Case 14 repeat",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+11,0.97,713,1.1100,0.0703,1.1803,1.8273,Double-wave collision / single wave,,"Table 1, Case 11",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+12,1.06,713,1.1100,0.0763,1.1863,1.8491,Single wave,1,"Table 1, Case 12",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf
+13,1.25,713,1.1100,0.0906,1.2006,1.8784,Single wave,1,"Table 1, Case 13",https://www.jafmonline.net/article_2078_f410588e48dc83f2822a880a68f78923.pdf

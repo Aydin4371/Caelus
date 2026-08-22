@@ -4,6 +4,7 @@ import type { OperatingPoint, RecommendationSnapshot } from "./design-workspace.
 import { assessSignalQuality } from "./rde-analysis.ts";
 import { analyzeRdeProbeSet } from "./wave-dynamics.ts";
 import { experimentPhysicsFromMetadata, physicsLayerCoverage, type PhysicsLayerStatus } from "./physics-evidence.ts";
+import { classifyPublishedPropagationMode } from "./published-mode-classification.ts";
 
 export type EnvelopeAxisKey = "equivalenceRatio" | "inletPressureBar" | "massFlowKgS" | "backPressureBar" | "inletTemperatureK";
 export type EnvelopeClassification = "Stable" | "Transitional" | "Unstable" | "Unclassified";
@@ -123,7 +124,7 @@ export function buildEnvelopeDataset(operatingPoints: OperatingPoint[], allRuns:
         massFlowKgS: operatingPoint.massFlowKgS,
         backPressureBar: operatingPoint.backPressureBar,
         inletTemperatureK: operatingPoint.inletTemperatureK,
-        classification: observation.classification,
+        classification: classifyPublishedPropagationMode(observation.reportedMode),
         identifiability: "Identified",
         waveCount: observation.waveCount,
         waveFrequencyKHz: observation.waveFrequencyKHz,

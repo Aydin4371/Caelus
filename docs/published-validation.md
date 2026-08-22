@@ -73,3 +73,8 @@ experiment and CFD arrays, entered metadata, declared uncertainty, and any
 qualifying controlled company reruns. Complete paired experiment–CFD validation
 still requires numeric pressure arrays from both sides at matching probe
 locations and operating conditions.
+
+The browser-facing public validation workspace and its thermal evidence levels
+are documented in `docs/public-data-validation.md`. Runtime results are derived
+from the downloadable arrays; the product does not ship prerecorded Kythros
+conclusions for those fixtures.

@@ -54,10 +54,13 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   const envelope = await readFile(new URL("../components/operating-envelope.tsx", import.meta.url), "utf8");
   const design = await readFile(new URL("../components/design-planner.tsx", import.meta.url), "utf8");
   const physicsVisual = await readFile(new URL("../components/rde-physics-visual.tsx", import.meta.url), "utf8");
+  const publicValidation = await readFile(new URL("../components/public-validation.tsx", import.meta.url), "utf8");
   const logic = await readFile(new URL("../lib/operating-envelope.ts", import.meta.url), "utf8");
   assert.match(page, /productView/);
   assert.match(page, /<DesignPlanner designs=\{designs\}/);
   assert.match(page, /<OperatingEnvelope designs=\{designs\}/);
+  assert.match(page, /Validation data/);
+  assert.match(page, /<PublicValidation/);
   assert.match(envelope, /Observed propagation mode by operating point/);
   assert.match(envelope, /Predictive layer/);
   assert.match(envelope, /raw-data and validation gates pass/);
@@ -96,8 +99,13 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(physicsVisual, /CHAMBER LENGTH/);
   assert.match(physicsVisual, /How to read the cutaway/);
   assert.match(physicsVisual, /PHYSICAL ANNULUS WALL/);
-  assert.match(physicsVisual, /Show exact circumferential angle × axial position maps/);
+  assert.match(physicsVisual, /Show exact coordinate plots/);
+  assert.match(physicsVisual, /circumferentially averaged bands/);
   assert.match(physicsVisual, /full engine definition stays in Design &amp; Plan/);
+  assert.match(publicValidation, /No prerecorded Kythros conclusions/);
+  assert.match(publicValidation, /Run public pressure checks/);
+  assert.match(publicValidation, /evaluatePublicPressureFixture/);
+  assert.match(publicValidation, /Thermal ranges remain ranges/);
 });
 
 test("ships an installable Kythros app manifest and service worker", async () => {

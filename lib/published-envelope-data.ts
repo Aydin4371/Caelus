@@ -46,7 +46,6 @@ type PublishedRow = {
   fuelMassFlowKgS: number;
   frequencyKHz: number;
   reportedMode: string;
-  classification: "Stable" | "Transitional" | "Unstable";
   waveCount: number | null;
 };
 
@@ -54,19 +53,19 @@ type PublishedRow = {
 // Case 14 repeats Case 10's condition for a longer-duration test, so it is not
 // added as a second envelope marker at identical coordinates.
 export const GE_2022_ROWS: PublishedRow[] = [
-  { caseNumber: 1, equivalenceRatio: 1.19, inletTemperatureK: 483, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: Number.NaN, reportedMode: "Failure", classification: "Unstable", waveCount: null },
-  { caseNumber: 2, equivalenceRatio: 1.19, inletTemperatureK: 573, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: 1.6724, reportedMode: "Intermittent detonation", classification: "Transitional", waveCount: 1 },
-  { caseNumber: 3, equivalenceRatio: 1.19, inletTemperatureK: 643, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: 1.7822, reportedMode: "Single wave", classification: "Stable", waveCount: 1 },
-  { caseNumber: 4, equivalenceRatio: 1.19, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: 1.9009, reportedMode: "Single wave", classification: "Stable", waveCount: 1 },
-  { caseNumber: 5, equivalenceRatio: 1.19, inletTemperatureK: 793, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: 1.8355, reportedMode: "Double-wave collision / single wave", classification: "Transitional", waveCount: null },
-  { caseNumber: 6, equivalenceRatio: 0.53, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0384, frequencyKHz: Number.NaN, reportedMode: "Failure", classification: "Unstable", waveCount: null },
-  { caseNumber: 7, equivalenceRatio: 0.61, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0442, frequencyKHz: 1.4520, reportedMode: "Sporadic detonation", classification: "Transitional", waveCount: null },
-  { caseNumber: 8, equivalenceRatio: 0.66, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0479, frequencyKHz: 1.5217, reportedMode: "Intermittent detonation", classification: "Transitional", waveCount: null },
-  { caseNumber: 9, equivalenceRatio: 0.79, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0573, frequencyKHz: 1.6137, reportedMode: "Double-wave collision / single wave", classification: "Transitional", waveCount: null },
-  { caseNumber: 10, equivalenceRatio: 0.84, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0624, frequencyKHz: 1.8182, reportedMode: "Double-wave collision / single wave", classification: "Transitional", waveCount: null },
-  { caseNumber: 11, equivalenceRatio: 0.97, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0703, frequencyKHz: 1.8273, reportedMode: "Double-wave collision / single wave", classification: "Transitional", waveCount: null },
-  { caseNumber: 12, equivalenceRatio: 1.06, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0763, frequencyKHz: 1.8491, reportedMode: "Single wave", classification: "Stable", waveCount: 1 },
-  { caseNumber: 13, equivalenceRatio: 1.25, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0906, frequencyKHz: 1.8784, reportedMode: "Single wave", classification: "Stable", waveCount: 1 },
+  { caseNumber: 1, equivalenceRatio: 1.19, inletTemperatureK: 483, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: Number.NaN, reportedMode: "Failure", waveCount: null },
+  { caseNumber: 2, equivalenceRatio: 1.19, inletTemperatureK: 573, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: 1.6724, reportedMode: "Intermittent detonation", waveCount: 1 },
+  { caseNumber: 3, equivalenceRatio: 1.19, inletTemperatureK: 643, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: 1.7822, reportedMode: "Single wave", waveCount: 1 },
+  { caseNumber: 4, equivalenceRatio: 1.19, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: 1.9009, reportedMode: "Single wave", waveCount: 1 },
+  { caseNumber: 5, equivalenceRatio: 1.19, inletTemperatureK: 793, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0857, frequencyKHz: 1.8355, reportedMode: "Double-wave collision / single wave", waveCount: null },
+  { caseNumber: 6, equivalenceRatio: 0.53, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0384, frequencyKHz: Number.NaN, reportedMode: "Failure", waveCount: null },
+  { caseNumber: 7, equivalenceRatio: 0.61, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0442, frequencyKHz: 1.4520, reportedMode: "Sporadic detonation", waveCount: null },
+  { caseNumber: 8, equivalenceRatio: 0.66, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0479, frequencyKHz: 1.5217, reportedMode: "Intermittent detonation", waveCount: null },
+  { caseNumber: 9, equivalenceRatio: 0.79, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0573, frequencyKHz: 1.6137, reportedMode: "Double-wave collision / single wave", waveCount: null },
+  { caseNumber: 10, equivalenceRatio: 0.84, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0624, frequencyKHz: 1.8182, reportedMode: "Double-wave collision / single wave", waveCount: null },
+  { caseNumber: 11, equivalenceRatio: 0.97, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0703, frequencyKHz: 1.8273, reportedMode: "Double-wave collision / single wave", waveCount: null },
+  { caseNumber: 12, equivalenceRatio: 1.06, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0763, frequencyKHz: 1.8491, reportedMode: "Single wave", waveCount: 1 },
+  { caseNumber: 13, equivalenceRatio: 1.25, inletTemperatureK: 713, airMassFlowKgS: 1.1100, fuelMassFlowKgS: 0.0906, frequencyKHz: 1.8784, reportedMode: "Single wave", waveCount: 1 },
 ];
 
 export function buildGe2022OperatingPoints(): OperatingPoint[] {
@@ -87,7 +86,6 @@ export function buildGe2022OperatingPoints(): OperatingPoint[] {
         ? `${GE_2022_SOURCE.locator}, Case #10; long-duration repeat Case #14 in Sec. 3.5 and Figs. 23–25`
         : `${GE_2022_SOURCE.locator}, Case #${row.caseNumber}`,
       reportedMode: row.reportedMode,
-      classification: row.classification,
       waveCount: row.waveCount,
       waveFrequencyKHz: row.frequencyKHz,
       airMassFlowKgS: row.airMassFlowKgS,
