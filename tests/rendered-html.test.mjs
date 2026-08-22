@@ -71,7 +71,13 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(envelope, /performance, feed-system, thermal, and repeatability evidence/);
   assert.match(envelope, /Next-test recommendation/);
   assert.match(envelope, /Open comparison/);
-  assert.match(design, /Nine traceable operating points/);
+  assert.match(design, /Nine candidate conditions, not operating predictions/);
+  assert.match(design, /Define the engine/);
+  assert.match(design, /Load the experiment/);
+  assert.match(design, /Add matched CFD/);
+  assert.match(design, /recommends one specific CFD change to run next/);
+  assert.match(design, /Total injector-orifice area ÷ annulus flow area × 100/);
+  assert.doesNotMatch(design, /Not available%/);
   assert.match(design, /It is not an operability prediction/);
   assert.match(design, /No interpolation, performance, backflow, or thermal prediction/);
   assert.match(logic, /allRuns\.filter\(\(run\) => run\.operatingPointId === operatingPoint\.id\)/);
