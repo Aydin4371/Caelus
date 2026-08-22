@@ -1166,8 +1166,6 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 .prospective-result { padding: 8px !important; border-radius: 6px; background: #edf8f9; }
 .prospective-result small { display: block; margin-top: 4px; color: var(--quiet); }
 .axial-profile-line { stroke: #1f7287; stroke-width: 2.5; }
-.thermal-example-boundary { margin: 0 24px 16px; padding: 10px 12px; border-left: 3px solid var(--warning); background: #fff8e9; color: var(--quiet); font-size: 11px; line-height: 1.5; }
-.thermal-example-boundary strong { color: var(--ink); }
 
 @media (max-width: 980px) {
   .system-evidence-strip, .physical-wall-grid, .wall-map-grid-layout { grid-template-columns: 1fr; }
