@@ -78,10 +78,11 @@ simulated static pressure at CTAP 1 and CTAP 3. Kythros stores only those source
 values, then calculates signed percent differences at runtime. The source
 ledger is `public/data/published-paired-validation.csv`.
 
-These values validate paired-comparison arithmetic and its presentation. They
-do not validate waveform alignment, pressure-amplitude extraction, or spatial
-mode identification because the paper does not release matched numeric pressure
-arrays.
+The paper does contain CFD results. These values validate paired-comparison
+arithmetic and its presentation, but they are not a loadable Comparison case.
+They do not validate waveform alignment, pressure-amplitude extraction, or
+spatial mode identification because the source does not release matched numeric
+experiment and CFD pressure arrays.
 
 ## Retrospective one-factor rerun
 
@@ -101,14 +102,16 @@ than as an overall success.
 This checks one-factor outcome classification on real published values. It is
 retrospective because the same paper supplies the intervention and its outcome;
 it does not prove that Kythros selected the intervention before seeing the
-result.
+result. The paper contains CFD results, but it does not provide the matched raw
+experiment and CFD pressure files needed by the Comparison loader.
 
 ## Current claim boundary
 
 Published checks now verify five wave-speed calculations, three raw
 pressure-record behaviors, one paired scalar comparison, and one retrospective
-controlled rerun. The homepage reports these checks without creating a separate
-validation workspace.
+controlled rerun. These remain automated regression checks and documented
+source records. They are not shown on the homepage because they do not exercise
+the full Comparison and next-run recommendation workflow.
 
 Production recommendations remain recalculated from the active uploaded
 experiment and CFD arrays, entered metadata, declared uncertainty, and any
