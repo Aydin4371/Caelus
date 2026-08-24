@@ -14,6 +14,12 @@ test("keeps the RDE animation controllable, accessible, and explicitly schematic
   assert.match(component, /rotatingWave/);
   assert.match(component, /mixtureStream/);
   assert.match(component, /productStream/);
+  assert.match(component, /3D assembly/);
+  assert.match(component, /Cooling channels/);
+  assert.match(component, /Material map/);
+  assert.match(component, /REGENERATIVE CHANNELS/);
+  assert.match(component, /design\.build\?\.hotWallMaterial/);
+  assert.match(component, /aria-pressed=\{assemblyLayer === value\}/);
   assert.match(styles, /@keyframes rotate-wave/);
   assert.match(styles, /animation-play-state: paused/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);

@@ -40,7 +40,7 @@ test("renders development preview metadata", async () => {
   assert.doesNotMatch(html, /Published checks/);
   assert.doesNotMatch(html, /What Kythros has actually reproduced/);
   assert.doesNotMatch(html, /Download audit values/);
-  assert.match(html, /Design &amp; plan/);
+  assert.match(html, /Build an RDE/);
   assert.match(html, />Comparison</);
   assert.match(html, /Operating Envelope/);
   assert.match(html, /rel="manifest"/);
@@ -65,7 +65,7 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(page, /productView/);
   assert.match(page, /useState<"home" \| "design" \| "envelope" \| "comparison">\("home"\)/);
   assert.match(page, /Nine candidate conditions, not operating predictions/);
-  assert.match(page, /Define the engine/);
+  assert.match(page, /Build the RDE/);
   assert.match(page, /Load the experiment/);
   assert.match(page, /Add matched CFD/);
   assert.match(page, /recommends one specific CFD change to run next/);
@@ -91,7 +91,7 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(design, /Total injector-orifice area ÷ annulus flow area × 100/);
   assert.doesNotMatch(design, /Not available%/);
   assert.match(design, /It is not an operability prediction/);
-  assert.match(design, /No interpolation, performance, backflow, or thermal prediction/);
+  assert.match(design, /Combustion and heat-flux prediction/);
   assert.match(logic, /allRuns\.filter\(\(run\) => run\.operatingPointId === operatingPoint\.id\)/);
   assert.match(logic, /evidenceType: baseline \? "Experiment \+ CFD" : "Experiment only"/);
   assert.match(page, /No CFD setup or result is required here/);
@@ -106,10 +106,14 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(envelope, /How a recommendation earns evidence/);
   assert.match(envelope, /not accepted RDE standards/);
   assert.match(design, /RDE geometry/);
+  assert.match(design, /Thermal and hydraulic screen/);
+  assert.match(design, /Materials and subsystems/);
+  assert.match(design, /Entered heat load, not a predicted heat flux/);
   assert.match(design, /<RdeGeometrySchematic design=\{activeDesign\}/);
   assert.doesNotMatch(physicsVisual, /<RdeGeometrySchematic design=\{design\}/);
   assert.match(physicsVisual, /schematic-view head-end-panel/);
   assert.match(physicsVisual, /schematic-view axial-panel/);
+  assert.match(physicsVisual, /schematic-view assembly-panel/);
   assert.match(physicsVisual, /WAVE ROTATES AROUND ANNULUS/);
   assert.match(physicsVisual, /OUTER Ø/);
   assert.match(physicsVisual, /INNER Ø/);
@@ -119,7 +123,7 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(physicsVisual, /PHYSICAL ANNULUS WALL/);
   assert.match(physicsVisual, /Show exact coordinate plots/);
   assert.match(physicsVisual, /circumferentially averaged bands/);
-  assert.match(physicsVisual, /full engine definition stays in Design &amp; Plan/);
+  assert.match(physicsVisual, /full engine definition stays in Build an RDE/);
   assert.doesNotMatch(physicsVisual, /Synthetic visualization inputs/);
 });
 
