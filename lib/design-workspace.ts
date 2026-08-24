@@ -6,6 +6,40 @@ import { classifyPublishedPropagationMode } from "./published-mode-classificatio
 
 export type RdeApplication = "Rocket" | "Air-breathing";
 
+export type RdeMaterialId =
+  | "GRCop-class copper alloy"
+  | "Inconel 718-class nickel superalloy"
+  | "Haynes 230-class nickel superalloy"
+  | "316L stainless steel"
+  | "Not selected";
+
+export type EngineBuildDefinition = {
+  feedSystem: string;
+  ignitionSystem: string;
+  hotWallMaterial: RdeMaterialId;
+  hotWallCoating: "None" | "YSZ-class thermal-barrier coating";
+  outerWallMaterial: RdeMaterialId;
+  injectorMaterial: RdeMaterialId;
+  centerbodyMaterial: RdeMaterialId;
+  nozzleMaterial: RdeMaterialId;
+  wallThicknessMm: number;
+  coolingMethod: "Regenerative" | "Film" | "Heat sink" | "Ablative" | "Not defined";
+  cooledSurfaces: "Outer wall" | "Inner and outer walls";
+  coolant: string;
+  coolingChannelCount: number;
+  coolingChannelWidthMm: number;
+  coolingChannelDepthMm: number;
+  coolingChannelRoughnessMm: number;
+  coolantMassFlowKgS: number;
+  coolantInletTemperatureK: number;
+  coolantInletPressureBar: number;
+  coolantDensityKgM3: number;
+  coolantSpecificHeatJkgK: number;
+  coolantViscosityPaS: number;
+  coolantThermalConductivityWMK: number;
+  designHeatFluxMWM2: number;
+};
+
 export type EngineDesign = {
   id: string;
   name: string;
@@ -31,6 +65,7 @@ export type EngineDesign = {
   inletPressureBarMax: number;
   inletTemperatureK: number;
   backPressureBar: number;
+  build?: EngineBuildDefinition;
 };
 
 export type OperatingPoint = {
@@ -140,10 +175,36 @@ export const EMPTY_ENGINE_DESIGN: EngineDesign = {
   inletPressureBarMax: Number.NaN,
   inletTemperatureK: Number.NaN,
   backPressureBar: Number.NaN,
+  build: {
+    feedSystem: "Pressure-fed",
+    ignitionSystem: "Pre-detonator",
+    hotWallMaterial: "GRCop-class copper alloy",
+    hotWallCoating: "None",
+    outerWallMaterial: "Inconel 718-class nickel superalloy",
+    injectorMaterial: "Inconel 718-class nickel superalloy",
+    centerbodyMaterial: "GRCop-class copper alloy",
+    nozzleMaterial: "Inconel 718-class nickel superalloy",
+    wallThicknessMm: 1.5,
+    coolingMethod: "Regenerative",
+    cooledSurfaces: "Outer wall",
+    coolant: "Fuel",
+    coolingChannelCount: 60,
+    coolingChannelWidthMm: 1,
+    coolingChannelDepthMm: 1.5,
+    coolingChannelRoughnessMm: 0.02,
+    coolantMassFlowKgS: 0.08,
+    coolantInletTemperatureK: 100,
+    coolantInletPressureBar: 12,
+    coolantDensityKgM3: 70,
+    coolantSpecificHeatJkgK: 9500,
+    coolantViscosityPaS: 0.000013,
+    coolantThermalConductivityWMK: 0.1,
+    designHeatFluxMWM2: 10,
+  },
 };
 
 export function cloneEngineDesign(design: EngineDesign): EngineDesign {
-  return { ...design };
+  return { ...design, build: design.build ? { ...design.build } : undefined };
 }
 
 export function cloneOperatingPoint(point: OperatingPoint): OperatingPoint {
@@ -236,6 +297,21 @@ export function validateEngineDesign(design: EngineDesign) {
   if (!(design.inletTemperatureK > 0)) issues.push("Inlet temperature must be greater than zero.");
   if (!(design.backPressureBar > 0)) issues.push("Back pressure must be greater than zero.");
   if (Number.isFinite(design.inletPressureBarMin) && Number.isFinite(design.backPressureBar) && design.inletPressureBarMin <= design.backPressureBar) issues.push("The full inlet-pressure range must exceed the entered back pressure.");
+  if (design.build) {
+    const build = design.build;
+    if (!build.feedSystem.trim() || !build.ignitionSystem.trim()) issues.push("Feed and ignition systems are required for the preliminary build definition.");
+    if ([build.hotWallMaterial, build.outerWallMaterial, build.injectorMaterial, build.centerbodyMaterial, build.nozzleMaterial].some((material) => material === "Not selected")) issues.push("Choose a structural material for every major hot-section component.");
+    if (!(build.wallThicknessMm > 0)) issues.push("Wall thickness must be greater than zero.");
+    if (build.coolingMethod === "Regenerative") {
+      if (!build.coolant.trim()) issues.push("Regenerative cooling requires a coolant definition.");
+      if (!Number.isInteger(build.coolingChannelCount) || build.coolingChannelCount < 1) issues.push("Cooling-channel count must be a positive integer.");
+      if (!(build.coolingChannelWidthMm > 0 && build.coolingChannelDepthMm > 0)) issues.push("Cooling-channel width and depth must be greater than zero.");
+      if (!(build.coolingChannelRoughnessMm >= 0)) issues.push("Cooling-channel roughness must be zero or greater.");
+      if (!(build.coolantMassFlowKgS > 0 && build.coolantInletTemperatureK > 0 && build.coolantInletPressureBar > 0)) issues.push("Coolant mass flow, inlet temperature, and inlet pressure must be greater than zero.");
+      if (!(build.coolantDensityKgM3 > 0 && build.coolantSpecificHeatJkgK > 0 && build.coolantViscosityPaS > 0 && build.coolantThermalConductivityWMK > 0)) issues.push("Coolant density, heat capacity, viscosity, and thermal conductivity must be greater than zero.");
+      if (!(build.designHeatFluxMWM2 > 0)) issues.push("Regenerative-cooling screening requires a positive entered design heat flux.");
+    }
+  }
   return issues;
 }
 
