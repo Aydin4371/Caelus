@@ -106,7 +106,9 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(envelope, /How a recommendation earns evidence/);
   assert.match(envelope, /not accepted RDE standards/);
   assert.match(design, /RDE geometry/);
-  assert.match(design, /Thermal and hydraulic screen/);
+  assert.match(design, /Regenerative thermal and hydraulic screen/);
+  assert.match(design, /Material tradeoff guide/);
+  assert.match(design, /No regenerative channel geometry/);
   assert.match(design, /Materials and subsystems/);
   assert.match(design, /Entered heat load, not a predicted heat flux/);
   assert.match(design, /<RdeGeometrySchematic design=\{activeDesign\}/);
