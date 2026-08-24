@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { EngineDesign } from "@/lib/design-workspace";
 
-type PartId = "all" | "plenum" | "injector" | "outer-jacket" | "cooling" | "hot-wall" | "annulus" | "centerbody" | "nozzle";
+type PartId = "all" | "plenum" | "injector" | "outer-jacket" | "cooling" | "hot-wall" | "annulus" | "detonation" | "centerbody" | "nozzle";
 type ViewPreset = "isometric" | "side" | "head-end";
 
 const PARTS: Array<{ id: Exclude<PartId, "all">; label: string; color: string; purpose: string }> = [
@@ -15,6 +15,7 @@ const PARTS: Array<{ id: Exclude<PartId, "all">; label: string; color: string; p
   { id: "cooling", label: "Cooling circuit", color: "#27a5c1", purpose: "Carries coolant through axial regenerative channels around the chamber." },
   { id: "hot-wall", label: "Hot-wall liner", color: "#b87333", purpose: "Separates the hot gas path from the regenerative cooling channels." },
   { id: "annulus", label: "Combustion annulus", color: "#efb552", purpose: "The narrow annular gas path in which the detonation wave travels circumferentially." },
+  { id: "detonation", label: "Rotating detonation front", color: "#e33f49", purpose: "A localized leading shock and reaction zone that spans the annular gap and sweeps circumferentially. A separate ignition system must establish it; its visible thickness and speed are exaggerated." },
   { id: "centerbody", label: "Centerbody", color: "#d9b57a", purpose: "Forms the inner annulus wall and guides the products toward the exhaust." },
   { id: "nozzle", label: "Nozzle / exhaust", color: "#687f86", purpose: "Expands and directs the combustion products downstream." },
 ];
@@ -27,8 +28,8 @@ function entered(value: number, unit: string, digits = 1) {
 
 function partValue(design: EngineDesign, part: PartId) {
   const build = design.build;
-  if (part === "plenum") return `${entered(design.plenumVolumeCm3, "cm³", 0)} · ${build?.feedSystem ?? "Feed system not defined"}`;
-  if (part === "injector") return `${Number.isFinite(design.injectorCount) ? Math.round(design.injectorCount) : "Not entered"} injectors · ${design.injectorType}`;
+  if (part === "plenum") return design.application === "Air-breathing" ? `${build?.airInletArchitecture ?? "Air inlet not defined"} · ${entered(design.plenumVolumeCm3, "cm³", 0)} entered manifold` : `${entered(design.plenumVolumeCm3, "cm³", 0)} · ${build?.feedSystem ?? "Feed system not defined"}`;
+  if (part === "injector") return design.application === "Air-breathing" ? `${build?.airFuelPreparation ?? "Fuel-air preparation not defined"} · ${Number.isFinite(design.injectorCount) ? Math.round(design.injectorCount) : "Not entered"} fuel injection sites` : `${Number.isFinite(design.injectorCount) ? Math.round(design.injectorCount) : "Not entered"} injectors · ${design.injectorType}`;
   if (part === "outer-jacket") return build?.outerWallMaterial ?? "Material not defined";
   if (part === "cooling") {
     if (build?.coolingMethod === "Regenerative") return `${build.coolingChannelCount} channels · ${entered(build.coolingChannelWidthMm, "mm", 2)} × ${entered(build.coolingChannelDepthMm, "mm", 2)} · ${build.coolant}`;
@@ -39,6 +40,7 @@ function partValue(design: EngineDesign, part: PartId) {
   }
   if (part === "hot-wall") return build ? `${build.hotWallMaterial} · ${entered(build.wallThicknessMm, "mm", 2)} wall · ${build.hotWallCoating} coating` : "Material not defined";
   if (part === "annulus") return `${entered(0.5 * (design.annulusOuterDiameterMm - design.annulusInnerDiameterMm), "mm", 2)} radial gap · ${entered(design.chamberLengthMm, "mm", 0)} length`;
+  if (part === "detonation") return `Conceptual single wave · startup by ${build?.ignitionSystem ?? "ignition system not defined"} · thickness and speed exaggerated`;
   if (part === "centerbody") return build?.centerbodyMaterial ?? "Material not defined";
   if (part === "nozzle") return `${build?.nozzleMaterial ?? "Material not defined"} · ${design.exhaustConfiguration}`;
   return "Click a component to inspect it.";
@@ -57,11 +59,12 @@ function tagMesh(mesh: THREE.Mesh, partId: Exclude<PartId, "all">) {
   return mesh;
 }
 
-function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSelect, onHover }: {
+function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, animationPaused, onSelect, onHover }: {
   design: EngineDesign;
   selectedPart: PartId;
   viewPreset: ViewPreset;
   viewRequest: number;
+  animationPaused: boolean;
   onSelect: (part: PartId) => void;
   onHover: (part: Exclude<PartId, "all"> | null) => void;
 }) {
@@ -71,7 +74,11 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSe
   const controlsRef = useRef<OrbitControls | null>(null);
   const partGroupsRef = useRef(new Map<Exclude<PartId, "all">, THREE.Group>());
   const modelRef = useRef<THREE.Group | null>(null);
+  const animationPausedRef = useRef(animationPaused);
   const isRegenerative = design.build?.coolingMethod === "Regenerative";
+  const isAirBreathing = design.application === "Air-breathing";
+
+  useEffect(() => { animationPausedRef.current = animationPaused; }, [animationPaused]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -144,9 +151,22 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSe
     const shellArc = Math.PI * 1.55;
     const orientAlongX = (mesh: THREE.Mesh) => { mesh.rotation.z = -Math.PI / 2; return mesh; };
 
-    const plenumShell = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(2.72, 2.72, 0.92, 64, 1, false), makeMaterial(0x91aaad, 0.58, 0.45, 0.42)));
-    plenumShell.position.x = -3.68;
-    addPart("plenum", [plenumShell]);
+    if (isAirBreathing) {
+      const inletShell = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(2.72, 2.72, 2.3, 64, 1, true, shellStart, shellArc), makeMaterial(0x7da9b2, 0.72, 0.32, 0.4)));
+      inletShell.position.x = -4.26;
+      const inletLip = new THREE.Mesh(new THREE.TorusGeometry(2.72, 0.11, 12, 64, shellArc), makeMaterial(0x4e7f8c, 0.95, 0.38, 0.34));
+      inletLip.rotation.y = Math.PI / 2;
+      inletLip.rotation.x = shellStart;
+      inletLip.position.x = -5.4;
+      const inletAnnulus = new THREE.Mesh(new THREE.RingGeometry(centerRadius + 0.04, 2.69, 64, 1, shellStart, shellArc), makeMaterial(0x9fd5df, 0.28, 0.05, 0.55));
+      inletAnnulus.rotation.y = Math.PI / 2;
+      inletAnnulus.position.x = -5.38;
+      addPart("plenum", [inletShell, inletLip, inletAnnulus]);
+    } else {
+      const plenumShell = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(2.72, 2.72, 0.92, 64, 1, false), makeMaterial(0x91aaad, 0.58, 0.45, 0.42)));
+      plenumShell.position.x = -3.68;
+      addPart("plenum", [plenumShell]);
+    }
 
     const injectorRing = new THREE.Mesh(new THREE.RingGeometry(centerRadius + 0.04, outerRadius - 0.03, 64), makeMaterial(0xb9434e, 1, 0.42, 0.38));
     injectorRing.rotation.y = Math.PI / 2;
@@ -173,6 +193,19 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSe
     const annulus = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(0.5 * (outerRadius + centerRadius), 0.5 * (outerRadius + centerRadius), chamberLength - 0.12, 64, 1, true, shellStart, shellArc), makeMaterial(0xefb552, 0.3, 0.05, 0.78)));
     annulus.position.x = 0.02;
     addPart("annulus", [annulus]);
+
+    const enteredAblativeThickness = Number.isFinite(design.build?.ablativeThicknessMm) ? design.build!.ablativeThicknessMm : 4;
+    const ablativeVisualInset = Math.min(0.28, Math.max(0.08, enteredAblativeThickness / 45));
+    const gasPathOuterRadius = design.build?.coolingMethod === "Ablative" ? outerRadius - ablativeVisualInset - 0.03 : outerRadius - 0.04;
+    const waveStartAngle = shellStart + shellArc * 0.32;
+    const leadingSheet = new THREE.Mesh(new THREE.RingGeometry(centerRadius + 0.035, gasPathOuterRadius, 48, 1, waveStartAngle, 0.105), makeMaterial(0xe33f49, 1, 0.04, 0.22));
+    leadingSheet.rotation.y = Math.PI / 2;
+    leadingSheet.position.x = -1.55;
+    const reactionSheet = new THREE.Mesh(new THREE.RingGeometry(centerRadius + 0.055, gasPathOuterRadius - 0.02, 48, 1, waveStartAngle - 0.18, 0.22), makeMaterial(0xf08b37, 0.62, 0.02, 0.28));
+    reactionSheet.rotation.y = Math.PI / 2;
+    reactionSheet.position.x = -1.25;
+    const detonationGroup = addPart("detonation", [reactionSheet, leadingSheet]);
+    detonationGroup.rotation.x = 0.35;
 
     const centerCylinder = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(centerRadius, centerRadius, chamberLength - 0.15, 64, 1, false), makeMaterial(0xd9b57a, 1, 0.28, 0.5)));
     centerCylinder.position.x = -0.04;
@@ -233,8 +266,7 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSe
       heatSinkBandExit.position.x = 2.95;
       addPart("cooling", [heatSinkShell, heatSinkBandInlet, heatSinkBandExit]);
     } else if (design.build?.coolingMethod === "Ablative") {
-      const enteredThickness = Number.isFinite(design.build.ablativeThicknessMm) ? design.build.ablativeThicknessMm : 4;
-      const visualInset = Math.min(0.28, Math.max(0.08, enteredThickness / 45));
+      const visualInset = ablativeVisualInset;
       const ablativeLiner = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(outerRadius - visualInset, outerRadius - visualInset, chamberLength - 0.12, 64, 1, true, shellStart, shellArc), makeMaterial(0xa83e52, 0.96, 0.08, 0.72)));
       ablativeLiner.position.x = 0.02;
       const ablativeFaceInnerRadius = Math.min(centerRadius + 0.04, outerRadius - visualInset - 0.04);
@@ -299,8 +331,13 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSe
     resizeObserver.observe(host);
     resize();
 
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let previousTime = performance.now();
     let frame = 0;
-    const animate = () => {
+    const animate = (time = performance.now()) => {
+      const elapsed = Math.min(50, Math.max(0, time - previousTime));
+      previousTime = time;
+      if (!animationPausedRef.current && !reduceMotion) detonationGroup.rotation.x += elapsed * 0.00038;
       controls.update();
       renderer.render(scene, camera);
       frame = requestAnimationFrame(animate);
@@ -330,7 +367,7 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSe
       controlsRef.current = null;
       modelRef.current = null;
     };
-  }, [design.annulusInnerDiameterMm, design.annulusOuterDiameterMm, design.injectorCount, design.build?.coolingMethod, design.build?.coolingChannelCount, design.build?.filmInjectionGeometry, design.build?.filmInjectionLocation, design.build?.ablativeThicknessMm, isRegenerative, onHover, onSelect]);
+  }, [design.application, design.annulusInnerDiameterMm, design.annulusOuterDiameterMm, design.injectorCount, design.build, isAirBreathing, isRegenerative, onHover, onSelect]);
 
   useEffect(() => {
     const effectiveSelection = selectedPart !== "all" && partGroupsRef.current.has(selectedPart) ? selectedPart : "all";
@@ -365,13 +402,14 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSe
   return <div className="assembly-canvas-host" ref={hostRef}/>;
 }
 
-export function RdeAssembly3D({ design }: { design: EngineDesign }) {
+export function RdeAssembly3D({ design, animationPaused = false }: { design: EngineDesign; animationPaused?: boolean }) {
   const [selectedPart, setSelectedPart] = useState<PartId>("all");
   const [hoveredPart, setHoveredPart] = useState<Exclude<PartId, "all"> | null>(null);
   const [viewPreset, setViewPreset] = useState<ViewPreset>("isometric");
   const [viewRequest, setViewRequest] = useState(0);
   const thermalMethod = design.build?.coolingMethod ?? "Not defined";
   const isRegenerative = thermalMethod === "Regenerative";
+  const isAirBreathing = design.application === "Air-breathing";
   const thermalPresentation = useMemo(() => {
     if (thermalMethod === "Film") return { label: "Film cooling layer", color: "#2588c7", purpose: "Shows the entered film injection feature and the protective wall layer. Effectiveness is still an entered assumption." };
     if (thermalMethod === "Heat sink") return { label: "Heat-sink thermal mass", color: "#d78a2f", purpose: "Shows the entered thermal-mass shell that absorbs sensible heat during a limited exposure." };
@@ -379,7 +417,12 @@ export function RdeAssembly3D({ design }: { design: EngineDesign }) {
     if (thermalMethod === "Not defined") return { label: "Thermal management", color: "#98a8aa", purpose: "No thermal-management hardware is defined for this saved build." };
     return { label: "Regenerative channels", color: "#27a5c1", purpose: "Carries coolant through the entered axial channels and manifolds around the chamber." };
   }, [thermalMethod]);
-  const displayedParts = useMemo(() => PARTS.map((part) => part.id === "cooling" ? { ...part, ...thermalPresentation } : part), [thermalPresentation]);
+  const displayedParts = useMemo(() => PARTS.map((part) => {
+    if (part.id === "cooling") return { ...part, ...thermalPresentation };
+    if (isAirBreathing && part.id === "plenum") return { ...part, label: "Air inlet / annular feed", purpose: "Delivers air from the selected upstream architecture to the annular combustor. The external inlet or compressor is not modeled." };
+    if (isAirBreathing && part.id === "injector") return { ...part, label: "Fuel injection / mixing", purpose: design.build?.airFuelPreparation === "Premixed upstream" ? "Represents the entered upstream premixing architecture and the annular chamber inlet." : "Introduces fuel into the air stream through the entered injection architecture." };
+    return part;
+  }), [design.build?.airFuelPreparation, isAirBreathing, thermalPresentation]);
   const selectedDefinition = useMemo(() => displayedParts.find((part) => part.id === selectedPart) ?? null, [displayedParts, selectedPart]);
 
   function chooseView(view: ViewPreset) {
@@ -389,15 +432,16 @@ export function RdeAssembly3D({ design }: { design: EngineDesign }) {
 
   return <div className="interactive-assembly">
     <div className="assembly-view-toolbar">
-      <div><strong>Explore the actual assembly</strong><span>Drag to rotate · wheel or pinch to zoom · click a colored component to identify it</span></div>
+      <div><strong>Explore the {isAirBreathing ? "air-breathing RDE" : "rocket RDRE"} assembly</strong><span>Drag to rotate · wheel or pinch to zoom · click a colored component to identify it</span></div>
       <div aria-label="3D camera views">{(["isometric", "side", "head-end"] as const).map((view) => <button type="button" key={view} aria-pressed={viewPreset === view} onClick={() => chooseView(view)}>{view === "head-end" ? "Head-end" : view[0].toUpperCase() + view.slice(1)}</button>)}</div>
     </div>
     <div className="assembly-interactive-layout">
       <div className="assembly-viewport">
-        <RdeAssemblyCanvas design={design} selectedPart={selectedPart} viewPreset={viewPreset} viewRequest={viewRequest} onSelect={setSelectedPart} onHover={setHoveredPart}/>
-        <div className="assembly-orientation"><span>INJECTOR</span><i>Flow direction →</i><span>EXHAUST</span></div>
+        <RdeAssemblyCanvas design={design} selectedPart={selectedPart} viewPreset={viewPreset} viewRequest={viewRequest} animationPaused={animationPaused} onSelect={setSelectedPart} onHover={setHoveredPart}/>
+        <div className="assembly-orientation"><span>{isAirBreathing ? "AIR INLET" : "INJECTOR"}</span><i>Flow direction →</i><span>EXHAUST</span></div>
         {hoveredPart && <div className="assembly-hover-label">Click to inspect · {displayedParts.find((part) => part.id === hoveredPart)?.label ?? PART_LABELS[hoveredPart]}</div>}
-        {!isRegenerative && <div className={`assembly-thermal-note method-${thermalMethod.toLowerCase().replace(" ", "-")}`}><strong>{thermalPresentation.label}</strong><span>{thermalMethod === "Film" ? "Blue wall film and entered injection feature" : thermalMethod === "Heat sink" ? "Amber thermal-mass shell" : thermalMethod === "Ablative" ? "Red sacrificial hot-side liner" : "No cooling hardware defined"}</span></div>}
+        <div className="assembly-wave-note"><strong>Red wedge: rotating detonation front</strong><span>Localized single-wave schematic · visible thickness and speed exaggerated</span></div>
+        {!isRegenerative && <div className={`assembly-thermal-note method-${thermalMethod.toLowerCase().replace(" ", "-")}`}><strong>{thermalPresentation.label}</strong><span>{thermalMethod === "Film" ? "Blue wall film and entered injection feature" : thermalMethod === "Heat sink" ? "Amber thermal-mass shell" : thermalMethod === "Ablative" ? "Magenta sacrificial hot-side liner" : "No cooling hardware defined"}</span></div>}
         <div className="assembly-axis-key"><span className="axis-x">X</span><span className="axis-y">Y</span><span className="axis-z">Z</span></div>
       </div>
       <aside className="assembly-inspector" aria-label="RDE component inspector">

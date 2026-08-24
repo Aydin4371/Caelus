@@ -19,6 +19,7 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
   const outer = design.annulusOuterDiameterMm;
   const drawable = finite(inner) && finite(outer) && outer > inner && finite(design.chamberLengthMm);
   const injectorCount = finite(design.injectorCount) ? Math.max(0, Math.min(48, Math.round(design.injectorCount))) : 0;
+  const isAirBreathing = design.application === "Air-breathing";
   const thermalLegend = design.build?.coolingMethod === "Film" ? "Film cooling layer" : design.build?.coolingMethod === "Heat sink" ? "Heat-sink thermal mass" : design.build?.coolingMethod === "Ablative" ? "Ablative liner" : design.build?.coolingMethod === "Regenerative" ? "Regenerative coolant" : "Thermal management not defined";
   if (!drawable) return <div className="schematic-unavailable"><strong>Geometry drawing unavailable</strong><span>Enter inner diameter, outer diameter, and chamber length.</span></div>;
   const innerRadius = 54 * inner / outer;
@@ -49,6 +50,7 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
             {Array.from({ length: injectorCount }, (_, index) => { const angle = index / Math.max(injectorCount, 1) * Math.PI * 2; const radius = (102 + innerRadius) / 2; return <circle key={index} cx={Math.cos(angle) * radius} cy={Math.sin(angle) * radius} r="2.5" className="schematic-injector"/>; })}
             <g className={animationStyles.rotatingWave}>
               <circle r="102" className={animationStyles.waveOrbitAnchor}/>
+              <line x1={innerRadius + 2} x2="101" y1="0" y2="0" className="schematic-local-front"/>
               <path d="M -70 -66 A 96 96 0 0 1 73 -62" className="schematic-wave" markerEnd={`url(#${waveMarkerId})`}/>
             </g>
             <text x="0" y="5" textAnchor="middle" className="schematic-part-name">CENTREBODY</text>
@@ -75,7 +77,7 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
 
       <figure className="schematic-view axial-panel">
         <figcaption><span>02</span><div><strong>Axial cutaway</strong><small>Section through the centreline, from feed system to exhaust</small></div></figcaption>
-        <svg viewBox="0 0 620 330" role="img" aria-label="Axial cutaway showing propellant entering the plenum and injectors, refilling the annulus behind the rotating detonation, hot products exhausting through the nozzle, and entered chamber dimensions">
+        <svg viewBox="0 0 620 330" role="img" aria-label={`Axial cutaway showing ${isAirBreathing ? "air entering the annular feed and fuel being added" : "propellant entering the plenum and injectors"}, refilling the annulus behind the rotating detonation, hot products exhausting downstream, and entered chamber dimensions`}>
           <defs>
             <marker id={flowMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-flow-marker" d="M0,0 L0,6 L7,3 z" /></marker>
             <marker id={productMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="schematic-product-marker" d="M0,0 L0,6 L7,3 z" /></marker>
@@ -113,8 +115,8 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
           <text x="166" y="122" textAnchor="middle" className="schematic-zone-label halo">FRESH MIXTURE</text>
           <text x="365" y="101" textAnchor="middle" className="schematic-zone-label hot halo">HOT PRODUCTS</text>
           <text x="300" y="159" textAnchor="middle" className="schematic-core-label">CENTREBODY</text>
-          <text x="76" y="246" textAnchor="middle" className="schematic-part-name">PLENUM</text>
-          <text x="128" y="46" textAnchor="middle" className="schematic-part-name">INJECTOR FACE</text>
+          <text x="76" y="246" textAnchor="middle" className="schematic-part-name">{isAirBreathing ? "AIR INLET" : "PLENUM"}</text>
+          <text x="128" y="46" textAnchor="middle" className="schematic-part-name">{isAirBreathing ? "FUEL INJECTION" : "INJECTOR FACE"}</text>
           <text x="535" y="266" textAnchor="middle" className="schematic-part-name">NOZZLE / EXHAUST</text>
 
           <line x1="128" x2="486" y1="282" y2="282" className="schematic-dimension solid"/>
@@ -128,8 +130,8 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
           <text x="246" y="82" textAnchor="start" className="schematic-dimension-label halo">RADIAL GAP {format(gap, 2)} mm</text>
         </svg>
         <ol className={`cutaway-steps ${animationStyles.processSteps}`}>
-          <li><b>1</b><span><strong>Feed</strong>Propellant enters the plenum.</span></li>
-          <li><b>2</b><span><strong>Inject</strong>Jets refill the annular gap.</span></li>
+          <li><b>1</b><span><strong>{isAirBreathing ? "Admit air" : "Feed"}</strong>{isAirBreathing ? "The upstream inlet system supplies the annulus." : "Propellant enters the plenum."}</span></li>
+          <li><b>2</b><span><strong>{isAirBreathing ? "Add fuel" : "Inject"}</strong>{isAirBreathing ? `${design.build?.airFuelPreparation ?? "The entered preparation method"} feeds the fresh charge.` : "Jets refill the annular gap."}</span></li>
           <li><b>3</b><span><strong>Detonate</strong>The wave rotates around the annulus.</span></li>
           <li><b>4</b><span><strong>Expand</strong>Hot products move downstream.</span></li>
           <li><b>5</b><span><strong>Exhaust</strong>The nozzle converts pressure to thrust.</span></li>
@@ -138,11 +140,11 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
 
       <figure className="schematic-view assembly-panel">
         <figcaption><span>03</span><div><strong>Interactive 3D assembly</strong><small>Rotate, zoom, and select the entered subsystems, materials, and cooling circuit</small></div></figcaption>
-        <RdeAssembly3D design={design}/>
+        <RdeAssembly3D design={design} animationPaused={animationPaused}/>
       </figure>
     </div>
-    <p className="cutaway-clarifier"><strong>How to read the cutaway:</strong> the detonation wave travels circumferentially around the engine, so the red front shows where that rotating wave intersects this axial section. The bulk exhaust flow moves left to right.</p>
-    <div className="schematic-legend"><span className="legend-injector">{finite(design.injectorCount) ? `${Math.round(design.injectorCount)} injectors` : "Injector count not entered"}</span><span className="legend-flow">Fresh propellant</span><span className="legend-coolant">{thermalLegend}</span><span className="legend-detonation">Rotating detonation front</span><span className="legend-products">Hot combustion products</span></div>
+    <p className="cutaway-clarifier"><strong>How to read the cutaway:</strong> the localized red wedge is the detonation front. It spans the annular gap and sweeps circumferentially; its visible thickness and animation speed are exaggerated. It does not self-start in this schematic; the entered {design.build?.ignitionSystem ?? "ignition system"} initiates the chamber. The complete thermal liner is a separate stationary component. Bulk exhaust flow moves left to right.</p>
+    <div className="schematic-legend"><span className="legend-injector">{finite(design.injectorCount) ? `${Math.round(design.injectorCount)} ${isAirBreathing ? "fuel injection sites" : "injectors"}` : "Injector count not entered"}</span><span className="legend-flow">{isAirBreathing ? "Air and fuel refill" : "Fresh propellant"}</span><span className="legend-coolant">{thermalLegend}</span><span className="legend-detonation">Localized detonation front</span><span className="legend-products">Hot combustion products</span></div>
   </div>;
 }
 function extent(values: number[], fallback: readonly [number, number]): readonly [number, number] {

@@ -16,6 +16,8 @@ export type RdeMaterialId =
 export type EngineBuildDefinition = {
   feedSystem: string;
   ignitionSystem: string;
+  airInletArchitecture: "Ram-fed" | "Compressor-fed" | "Direct-connect test rig" | "Not defined";
+  airFuelPreparation: "Separate fuel injection" | "Premixed upstream";
   hotWallMaterial: RdeMaterialId;
   hotWallCoating: "None" | "YSZ-class thermal-barrier coating";
   outerWallMaterial: RdeMaterialId;
@@ -192,6 +194,8 @@ export const EMPTY_ENGINE_DESIGN: EngineDesign = {
   build: {
     feedSystem: "Pressure-fed",
     ignitionSystem: "Pre-detonator",
+    airInletArchitecture: "Ram-fed",
+    airFuelPreparation: "Separate fuel injection",
     hotWallMaterial: "GRCop-class copper alloy",
     hotWallCoating: "None",
     outerWallMaterial: "Inconel 718-class nickel superalloy",
@@ -328,6 +332,8 @@ export function validateEngineDesign(design: EngineDesign) {
   if (design.build) {
     const build = design.build;
     if (!build.feedSystem.trim() || !build.ignitionSystem.trim()) issues.push("Feed and ignition systems are required for the preliminary build definition.");
+    if (design.application === "Air-breathing" && (!build.airInletArchitecture || build.airInletArchitecture === "Not defined")) issues.push("Air-breathing builds require an upstream air-inlet architecture.");
+    if (design.application === "Air-breathing" && !build.airFuelPreparation) issues.push("Air-breathing builds require a fuel-air preparation method.");
     if ([build.hotWallMaterial, build.outerWallMaterial, build.injectorMaterial, build.centerbodyMaterial, build.nozzleMaterial].some((material) => material === "Not selected")) issues.push("Choose a structural material for every major hot-section component.");
     if (!(build.wallThicknessMm > 0)) issues.push("Wall thickness must be greater than zero.");
     if (build.coolingMethod !== "Not defined" && !(build.designHeatFluxMWM2 > 0)) issues.push(`${build.coolingMethod} screening requires a positive entered design heat flux.`);
