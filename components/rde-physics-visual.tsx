@@ -19,6 +19,7 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
   const outer = design.annulusOuterDiameterMm;
   const drawable = finite(inner) && finite(outer) && outer > inner && finite(design.chamberLengthMm);
   const injectorCount = finite(design.injectorCount) ? Math.max(0, Math.min(48, Math.round(design.injectorCount))) : 0;
+  const thermalLegend = design.build?.coolingMethod === "Film" ? "Film cooling layer" : design.build?.coolingMethod === "Heat sink" ? "Heat-sink thermal mass" : design.build?.coolingMethod === "Ablative" ? "Ablative liner" : design.build?.coolingMethod === "Regenerative" ? "Regenerative coolant" : "Thermal management not defined";
   if (!drawable) return <div className="schematic-unavailable"><strong>Geometry drawing unavailable</strong><span>Enter inner diameter, outer diameter, and chamber length.</span></div>;
   const innerRadius = 54 * inner / outer;
   const gap = (outer - inner) / 2;
@@ -141,7 +142,7 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
       </figure>
     </div>
     <p className="cutaway-clarifier"><strong>How to read the cutaway:</strong> the detonation wave travels circumferentially around the engine, so the red front shows where that rotating wave intersects this axial section. The bulk exhaust flow moves left to right.</p>
-    <div className="schematic-legend"><span className="legend-injector">{finite(design.injectorCount) ? `${Math.round(design.injectorCount)} injectors` : "Injector count not entered"}</span><span className="legend-flow">Fresh propellant</span><span className="legend-coolant">Regenerative coolant</span><span className="legend-detonation">Rotating detonation front</span><span className="legend-products">Hot combustion products</span></div>
+    <div className="schematic-legend"><span className="legend-injector">{finite(design.injectorCount) ? `${Math.round(design.injectorCount)} injectors` : "Injector count not entered"}</span><span className="legend-flow">Fresh propellant</span><span className="legend-coolant">{thermalLegend}</span><span className="legend-detonation">Rotating detonation front</span><span className="legend-products">Hot combustion products</span></div>
   </div>;
 }
 function extent(values: number[], fallback: readonly [number, number]): readonly [number, number] {

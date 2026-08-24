@@ -1,4 +1,4 @@
-import type { EngineDesign, RdeMaterialId } from "./design-workspace.ts";
+import type { EngineBuildDefinition, EngineDesign, RdeMaterialId } from "./design-workspace.ts";
 
 export type MaterialScreeningProperty = {
   id: RdeMaterialId;
@@ -79,6 +79,7 @@ export const RDE_MATERIALS: MaterialScreeningProperty[] = [
 export const RDE_MATERIAL_IDS = RDE_MATERIALS.map((material) => material.id);
 
 export type RdeBuildScreening = {
+  method: EngineBuildDefinition["coolingMethod"];
   available: boolean;
   cooledAreaM2: number | null;
   enteredHeatLoadKW: number | null;
@@ -93,6 +94,15 @@ export type RdeBuildScreening = {
   estimatedHotWallTemperatureK: number | null;
   materialReferenceTemperatureK: number | null;
   simpleHoopStressMPa: number | null;
+  filmCoolantFractionPct: number | null;
+  enteredFilmEffectivenessPct: number | null;
+  screenedResidualHeatFluxMWM2: number | null;
+  filmProtectedHeatLoadKW: number | null;
+  heatSinkEnergyCapacityKJ: number | null;
+  idealizedHeatSinkDurationS: number | null;
+  ablativeVolumeCm3: number | null;
+  ablativeMassKg: number | null;
+  idealizedAblativeDurationS: number | null;
   messages: string[];
 };
 
@@ -107,6 +117,7 @@ function finitePositive(...values: number[]) {
 export function calculateRdeBuildScreening(design: EngineDesign): RdeBuildScreening {
   const build = design.build;
   const empty: RdeBuildScreening = {
+    method: build?.coolingMethod ?? "Not defined",
     available: false,
     cooledAreaM2: null,
     enteredHeatLoadKW: null,
@@ -121,13 +132,87 @@ export function calculateRdeBuildScreening(design: EngineDesign): RdeBuildScreen
     estimatedHotWallTemperatureK: null,
     materialReferenceTemperatureK: null,
     simpleHoopStressMPa: null,
+    filmCoolantFractionPct: null,
+    enteredFilmEffectivenessPct: null,
+    screenedResidualHeatFluxMWM2: null,
+    filmProtectedHeatLoadKW: null,
+    heatSinkEnergyCapacityKJ: null,
+    idealizedHeatSinkDurationS: null,
+    ablativeVolumeCm3: null,
+    ablativeMassKg: null,
+    idealizedAblativeDurationS: null,
     messages: [],
   };
 
-  if (!build || build.coolingMethod !== "Regenerative") {
+  if (!build || build.coolingMethod === "Not defined") {
     return {
       ...empty,
-      messages: [build ? `${build.coolingMethod} cooling is recorded, but only regenerative channel screening is implemented.` : "Add a preliminary build definition to enable cooling screening."],
+      messages: [build ? "Select a thermal-management method to define its hardware and direct screening calculation." : "Add a preliminary build definition to enable thermal-management screening."],
+    };
+  }
+
+  const commonRequired = [design.annulusInnerDiameterMm, design.annulusOuterDiameterMm, design.chamberLengthMm, build.designHeatFluxMWM2];
+  if (!finitePositive(...commonRequired)) {
+    return { ...empty, messages: ["Complete the annulus geometry, chamber length, and entered heat flux to run this direct screen."] };
+  }
+  const lengthM = design.chamberLengthMm * 1e-3;
+  const outerDiameterM = design.annulusOuterDiameterMm * 1e-3;
+  const innerDiameterM = design.annulusInnerDiameterMm * 1e-3;
+  const cooledAreaM2 = Math.PI * lengthM * (build.cooledSurfaces === "Inner and outer walls" ? outerDiameterM + innerDiameterM : outerDiameterM);
+  const enteredHeatLoadW = build.designHeatFluxMWM2 * 1e6 * cooledAreaM2;
+
+  if (build.coolingMethod === "Film") {
+    const mainMassFlowKgS = 0.5 * (design.massFlowKgSMin + design.massFlowKgSMax);
+    if (!finitePositive(build.filmMassFlowKgS, build.filmEffectivenessPct, mainMassFlowKgS) || build.filmEffectivenessPct > 100) {
+      return { ...empty, cooledAreaM2, enteredHeatLoadKW: enteredHeatLoadW / 1000, messages: ["Complete the film-coolant flow and entered effectiveness fields to run the film-allocation screen."] };
+    }
+    const effectiveness = build.filmEffectivenessPct / 100;
+    return {
+      ...empty,
+      available: true,
+      cooledAreaM2,
+      enteredHeatLoadKW: enteredHeatLoadW / 1000,
+      filmCoolantFractionPct: 100 * build.filmMassFlowKgS / mainMassFlowKgS,
+      enteredFilmEffectivenessPct: build.filmEffectivenessPct,
+      screenedResidualHeatFluxMWM2: build.designHeatFluxMWM2 * (1 - effectiveness),
+      filmProtectedHeatLoadKW: enteredHeatLoadW * effectiveness / 1000,
+      messages: ["Effectiveness is an entered design assumption, not a Kythros prediction. The screen does not model film mixing, combustion loss, wall temperature, or injector interaction."],
+    };
+  }
+
+  if (build.coolingMethod === "Heat sink") {
+    const deltaTemperatureK = build.heatSinkMaximumTemperatureK - build.heatSinkInitialTemperatureK;
+    if (!finitePositive(build.heatSinkMassKg, build.heatSinkSpecificHeatJkgK, build.heatSinkInitialTemperatureK, deltaTemperatureK)) {
+      return { ...empty, cooledAreaM2, enteredHeatLoadKW: enteredHeatLoadW / 1000, messages: ["Complete the heat-sink mass, specific heat, and temperature-window fields to run the sensible-energy screen."] };
+    }
+    const capacityJ = build.heatSinkMassKg * build.heatSinkSpecificHeatJkgK * deltaTemperatureK;
+    return {
+      ...empty,
+      available: true,
+      cooledAreaM2,
+      enteredHeatLoadKW: enteredHeatLoadW / 1000,
+      heatSinkEnergyCapacityKJ: capacityJ / 1000,
+      idealizedHeatSinkDurationS: capacityJ / enteredHeatLoadW,
+      messages: ["Idealized sensible-heat duration only. Kythros assumes uniform temperature and omits gradients, losses, phase change, stress, and temperature-dependent properties."],
+    };
+  }
+
+  if (build.coolingMethod === "Ablative") {
+    if (!finitePositive(build.ablativeThicknessMm, build.ablativeDensityKgM3, build.ablativeEffectiveHeatMJkg)) {
+      return { ...empty, cooledAreaM2, enteredHeatLoadKW: enteredHeatLoadW / 1000, messages: ["Complete the ablative thickness, density, and entered effective heat-absorption fields to run the material-inventory screen."] };
+    }
+    const volumeM3 = cooledAreaM2 * build.ablativeThicknessMm * 1e-3;
+    const massKg = volumeM3 * build.ablativeDensityKgM3;
+    const effectiveEnergyJ = massKg * build.ablativeEffectiveHeatMJkg * 1e6;
+    return {
+      ...empty,
+      available: true,
+      cooledAreaM2,
+      enteredHeatLoadKW: enteredHeatLoadW / 1000,
+      ablativeVolumeCm3: volumeM3 * 1e6,
+      ablativeMassKg: massKg,
+      idealizedAblativeDurationS: effectiveEnergyJ / enteredHeatLoadW,
+      messages: ["Idealized material-inventory equivalent only. The entered effective heat absorption is not a recession-rate, erosion, char, bond-line-temperature, or service-life model."],
     };
   }
 
@@ -153,11 +238,6 @@ export function calculateRdeBuildScreening(design: EngineDesign): RdeBuildScreen
     return { ...empty, messages: ["Complete the geometry, cooling-channel, coolant-property, pressure, and entered heat-flux fields to run the screen."] };
   }
 
-  const lengthM = design.chamberLengthMm * 1e-3;
-  const outerDiameterM = design.annulusOuterDiameterMm * 1e-3;
-  const innerDiameterM = design.annulusInnerDiameterMm * 1e-3;
-  const cooledAreaM2 = Math.PI * lengthM * (build.cooledSurfaces === "Inner and outer walls" ? outerDiameterM + innerDiameterM : outerDiameterM);
-  const enteredHeatLoadW = build.designHeatFluxMWM2 * 1e6 * cooledAreaM2;
   const widthM = build.coolingChannelWidthMm * 1e-3;
   const depthM = build.coolingChannelDepthMm * 1e-3;
   const channelFlowAreaM2 = build.coolingChannelCount * widthM * depthM;
@@ -193,6 +273,7 @@ export function calculateRdeBuildScreening(design: EngineDesign): RdeBuildScreen
   messages.push("Heat flux and coolant properties are user-entered assumptions; Kythros does not predict RDE heat transfer or certify hardware.");
 
   return {
+    ...empty,
     available: true,
     cooledAreaM2,
     enteredHeatLoadKW: enteredHeatLoadW / 1000,

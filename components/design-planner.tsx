@@ -41,9 +41,9 @@ function compactPercentage(value: number, digits = 2) {
 
 function thermalMethodExplanation(method: EngineBuildDefinition["coolingMethod"]) {
   if (method === "Regenerative") return "A channel circuit will be drawn and screened from the entered coolant and geometry.";
-  if (method === "Film") return "Saved as film cooling. Kythros will not draw or calculate regenerative channels.";
-  if (method === "Heat sink") return "Saved as a heat-sink build. Kythros will not draw a coolant circuit or regenerative channels.";
-  if (method === "Ablative") return "Saved as an ablative build. Kythros will not draw regenerative channels or predict material recession.";
+  if (method === "Film") return "A wall film and injection feature will be drawn. The direct screen reports coolant allocation and applies your entered effectiveness assumption.";
+  if (method === "Heat sink") return "A thermal-mass shell will be drawn. The direct screen reports sensible-energy capacity and an idealized exposure duration.";
+  if (method === "Ablative") return "A sacrificial liner will be drawn. The direct screen reports material inventory and an idealized energy-equivalent duration, not recession.";
   return "Saved without a thermal-management definition. No cooling hardware or thermal screen will be shown.";
 }
 
@@ -59,7 +59,7 @@ function download(content: string, name: string, type: string) {
 function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; onCancel: () => void; onSave: (design: EngineDesign) => void }) {
   const [draft, setDraft] = useState(() => {
     const copy = cloneEngineDesign(initial);
-    return { ...copy, build: copy.build ?? { ...EMPTY_ENGINE_DESIGN.build! } };
+    return { ...copy, build: { ...EMPTY_ENGINE_DESIGN.build!, ...(copy.build ?? {}) } };
   });
   const [error, setError] = useState("");
   const setNumber = (key: keyof EngineDesign, value: string) => setDraft((current) => ({ ...current, [key]: value === "" ? Number.NaN : Number(value) }));
@@ -113,14 +113,16 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
       <label><span>Hot-wall thickness (mm)</span><input type="number" step="0.1" min="0" value={numberValue(build.wallThicknessMm)} onChange={(event) => setBuildNumber("wallThicknessMm", event.target.value)} /></label>
     </div><div className="material-tradeoff-guide"><div className="material-tradeoff-heading"><strong>Material tradeoff guide</strong><span>Selected materials are highlighted. Values are nominal screening references, not certified allowables.</span></div><div className="material-tradeoff-grid">{RDE_MATERIALS.filter((item) => item.id !== "Not selected").map((item) => <article key={item.id} className={selectedMaterialIds.has(item.id) ? "selected" : ""}><header><div><span>{item.family}</span><strong>{item.id}</strong></div>{selectedMaterialIds.has(item.id) && <b>USED</b>}</header><dl><div><dt>Density</dt><dd>{compactNumber(item.densityKgM3 ?? Number.NaN, 0)} kg/m³</dd></div><div><dt>Conductivity</dt><dd>{compactNumber(item.thermalConductivityWMK ?? Number.NaN, 1)} W/m/K</dd></div><div><dt>Temperature reference</dt><dd>{item.referenceTemperatureK ? `${compactNumber(item.referenceTemperatureK, 0)} K` : "Not assigned"}</dd></div></dl><p className="material-pro"><b>PRO</b>{item.advantages[0]}</p><p className="material-con"><b>WATCH</b>{item.tradeoffs[0]}</p><footer>{item.propertyBasis} · <a href={item.sourceUrl} target="_blank" rel="noreferrer">Source</a></footer></article>)}</div></div></div>
 
-    <div className="design-form-section"><h2>Thermal management</h2><p className="design-form-help">Choose the actual thermal-management method first. Regenerative inputs and channel geometry only appear when Regenerative is selected.</p><div className="design-form-grid four">
+    <div className="design-form-section"><h2>Thermal management</h2><p className="design-form-help">Choose the actual method. Each defined method saves its own hardware inputs, appears differently in the 3D assembly, and receives a transparent direct screen from your assumptions.</p><div className="design-form-grid four">
       <label><span>Cooling method</span><select value={build.coolingMethod} onChange={(event) => setBuild("coolingMethod", event.target.value as EngineBuildDefinition["coolingMethod"])}><option>Regenerative</option><option>Film</option><option>Heat sink</option><option>Ablative</option><option>Not defined</option></select></label>
-    </div>{build.coolingMethod === "Regenerative" ? <>
-    <div className="thermal-method-confirmation regenerative"><strong>Regenerative cooling selected</strong><span>{thermalMethodExplanation(build.coolingMethod)}</span></div>
-    <div className="design-form-grid four regenerative-inputs">
+    </div>
+    <div className={`thermal-method-confirmation ${build.coolingMethod === "Regenerative" ? "regenerative" : ""}`}><strong>{build.coolingMethod} selected</strong><span>{thermalMethodExplanation(build.coolingMethod)}</span></div>
+    {build.coolingMethod !== "Not defined" && <div className="design-form-grid four thermal-common-inputs">
       <label><span>Cooled surfaces</span><select value={build.cooledSurfaces} onChange={(event) => setBuild("cooledSurfaces", event.target.value as EngineBuildDefinition["cooledSurfaces"])}><option>Outer wall</option><option>Inner and outer walls</option></select></label>
-      <label><span>Coolant</span><input value={build.coolant} onChange={(event) => setBuild("coolant", event.target.value)} placeholder="Fuel" /></label>
       <label><span>Entered heat flux (MW/m²)</span><input type="number" step="0.1" min="0" value={numberValue(build.designHeatFluxMWM2)} onChange={(event) => setBuildNumber("designHeatFluxMWM2", event.target.value)} /></label>
+    </div>}
+    {build.coolingMethod === "Regenerative" && <div className="design-form-grid four regenerative-inputs">
+      <label><span>Coolant</span><input value={build.coolant} onChange={(event) => setBuild("coolant", event.target.value)} placeholder="Fuel" /></label>
       <label><span>Channel count</span><input type="number" step="1" min="1" value={numberValue(build.coolingChannelCount)} onChange={(event) => setBuildNumber("coolingChannelCount", event.target.value)} /></label>
       <label><span>Channel width (mm)</span><input type="number" step="0.1" min="0" value={numberValue(build.coolingChannelWidthMm)} onChange={(event) => setBuildNumber("coolingChannelWidthMm", event.target.value)} /></label>
       <label><span>Channel depth (mm)</span><input type="number" step="0.1" min="0" value={numberValue(build.coolingChannelDepthMm)} onChange={(event) => setBuildNumber("coolingChannelDepthMm", event.target.value)} /></label>
@@ -132,7 +134,28 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
       <label><span>Specific heat (J/kg/K)</span><input type="number" step="1" min="0" value={numberValue(build.coolantSpecificHeatJkgK)} onChange={(event) => setBuildNumber("coolantSpecificHeatJkgK", event.target.value)} /></label>
       <label><span>Dynamic viscosity (Pa·s)</span><input type="number" step="0.000001" min="0" value={numberValue(build.coolantViscosityPaS)} onChange={(event) => setBuildNumber("coolantViscosityPaS", event.target.value)} /></label>
       <label><span>Thermal conductivity (W/m/K)</span><input type="number" step="0.01" min="0" value={numberValue(build.coolantThermalConductivityWMK)} onChange={(event) => setBuildNumber("coolantThermalConductivityWMK", event.target.value)} /></label>
-    </div></> : <div className="thermal-method-confirmation"><strong>{build.coolingMethod} selected</strong><span>{thermalMethodExplanation(build.coolingMethod)}</span></div>}</div>
+    </div>}
+    {build.coolingMethod === "Film" && <div className="design-form-grid four method-specific-inputs film-inputs">
+      <label><span>Film coolant</span><input value={build.filmCoolant ?? ""} onChange={(event) => setBuild("filmCoolant", event.target.value)} placeholder="Fuel" /></label>
+      <label><span>Film mass flow (kg/s)</span><input type="number" step="0.01" min="0" value={numberValue(build.filmMassFlowKgS)} onChange={(event) => setBuildNumber("filmMassFlowKgS", event.target.value)} /></label>
+      <label><span>Injection geometry</span><select value={build.filmInjectionGeometry ?? "Annular slot"} onChange={(event) => setBuild("filmInjectionGeometry", event.target.value as EngineBuildDefinition["filmInjectionGeometry"])}><option>Annular slot</option><option>Discrete holes</option></select></label>
+      <label><span>Injection location</span><select value={build.filmInjectionLocation ?? "Injector face"} onChange={(event) => setBuild("filmInjectionLocation", event.target.value as EngineBuildDefinition["filmInjectionLocation"])}><option>Injector face</option><option>Chamber inlet</option><option>Mid-chamber</option></select></label>
+      <label><span>Injection angle (deg)</span><input type="number" step="1" min="0" max="90" value={numberValue(build.filmInjectionAngleDeg)} onChange={(event) => setBuildNumber("filmInjectionAngleDeg", event.target.value)} /></label>
+      <label><span>Entered effectiveness (%)</span><input type="number" step="1" min="0" max="100" value={numberValue(build.filmEffectivenessPct)} onChange={(event) => setBuildNumber("filmEffectivenessPct", event.target.value)} /></label>
+    </div>}
+    {build.coolingMethod === "Heat sink" && <div className="design-form-grid four method-specific-inputs heat-sink-inputs">
+      <label><span>Thermal mass (kg)</span><input type="number" step="0.1" min="0" value={numberValue(build.heatSinkMassKg)} onChange={(event) => setBuildNumber("heatSinkMassKg", event.target.value)} /></label>
+      <label><span>Specific heat (J/kg/K)</span><input type="number" step="1" min="0" value={numberValue(build.heatSinkSpecificHeatJkgK)} onChange={(event) => setBuildNumber("heatSinkSpecificHeatJkgK", event.target.value)} /></label>
+      <label><span>Initial temperature (K)</span><input type="number" step="1" min="0" value={numberValue(build.heatSinkInitialTemperatureK)} onChange={(event) => setBuildNumber("heatSinkInitialTemperatureK", event.target.value)} /></label>
+      <label><span>Maximum entered temperature (K)</span><input type="number" step="1" min="0" value={numberValue(build.heatSinkMaximumTemperatureK)} onChange={(event) => setBuildNumber("heatSinkMaximumTemperatureK", event.target.value)} /></label>
+    </div>}
+    {build.coolingMethod === "Ablative" && <div className="design-form-grid four method-specific-inputs ablative-inputs">
+      <label><span>Ablative liner material</span><input value={build.ablativeMaterial ?? ""} onChange={(event) => setBuild("ablativeMaterial", event.target.value)} placeholder="Silica-phenolic composite" /></label>
+      <label><span>Liner thickness (mm)</span><input type="number" step="0.1" min="0" value={numberValue(build.ablativeThicknessMm)} onChange={(event) => setBuildNumber("ablativeThicknessMm", event.target.value)} /></label>
+      <label><span>Entered density (kg/m³)</span><input type="number" step="1" min="0" value={numberValue(build.ablativeDensityKgM3)} onChange={(event) => setBuildNumber("ablativeDensityKgM3", event.target.value)} /></label>
+      <label><span>Effective heat absorption (MJ/kg)</span><input type="number" step="0.1" min="0" value={numberValue(build.ablativeEffectiveHeatMJkg)} onChange={(event) => setBuildNumber("ablativeEffectiveHeatMJkg", event.target.value)} /></label>
+    </div>}
+    </div>
 
     <div className="design-form-section"><h2>Operating range</h2><div className="design-form-grid four">
       <label><span>Minimum equivalence ratio</span><input type="number" step="0.01" value={numberValue(draft.equivalenceRatioMin)} onChange={(event) => setNumber("equivalenceRatioMin", event.target.value)} /></label>
@@ -214,7 +237,7 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
 
     <section className="capability-strip" aria-label="Current model capability">
       <article><span>Preliminary build</span><strong>{activeDesign.build ? "Defined" : "Geometry only"}</strong><small>{activeDesign.build ? "Geometry, components, materials, feed, ignition, and cooling inputs" : "Refine this record to add systems, materials, and cooling"}</small></article>
-      <article><span>Thermal management</span><strong>{buildScreening?.available ? "Regenerative screen" : `${thermalMethod} recorded`}</strong><small>{buildScreening?.available ? "Calculated from entered heat flux, channel geometry, and coolant properties" : thermalMethodExplanation(thermalMethod)}</small></article>
+      <article><span>Thermal management</span><strong>{buildScreening?.available ? `${thermalMethod} direct screen` : `${thermalMethod} recorded`}</strong><small>{buildScreening?.available ? "Calculated from saved method inputs and entered heat-load assumptions" : thermalMethodExplanation(thermalMethod)}</small></article>
       <article><span>Observed operating points</span><strong>{physicalPoints.length}</strong><small>{publishedPoints.length ? `${publishedPoints.length} published summaries · ${rawSignalPoints.length} raw-signal uploads` : demoPoints.length ? `${demoPoints.length} synthetic point${demoPoints.length === 1 ? "" : "s"} excluded` : "User-provided measurements only"}</small></article>
       <article><span>Screening plan coverage</span><strong>{activeDesign.source === "published" ? "Not created" : `${matchedPlanCount} / ${plan.length}`}</strong><small>{activeDesign.source === "published" ? "The source does not report the full inlet-pressure design range needed for this plan" : "Measured conditions that match this design's planned conditions"}</small></article>
     </section>
@@ -232,23 +255,29 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
         <div><dt>Inlet / back-pressure ratio</dt><dd>{compactNumber(calculations.minimumPressureRatio, 2)} to {compactNumber(calculations.maximumPressureRatio, 2)}</dd></div>
       </dl>}</section>
 
-      <section className="design-card build-materials-card"><div className="card-heading"><div><span>Component definition</span><h2>Materials and subsystems</h2></div><small>Nominal families, not certified allowables</small></div>{activeDesign.build ? <div className="build-component-list">
+      <section className="design-card build-materials-card"><div className="card-heading"><div><span>Component definition</span><h2>Materials and subsystems</h2></div><small>Nominal families, not certified allowables</small></div>{activeDesign.build ? <div className="build-material-layout"><div className="material-component-rows">
         {([
           ["Hot-wall liner", activeDesign.build.hotWallMaterial],
           ["Outer pressure jacket", activeDesign.build.outerWallMaterial],
           ["Injector face", activeDesign.build.injectorMaterial],
           ["Centerbody", activeDesign.build.centerbodyMaterial],
           ["Nozzle / exhaust", activeDesign.build.nozzleMaterial],
-        ] as const).map(([component, materialId]) => { const item = RDE_MATERIALS.find((candidate) => candidate.id === materialId); return <article key={component}><span>{component}</span><strong>{materialId}</strong><small>{item?.role ?? "No screening property available"}</small>{item && <><small className="material-inline-pro"><b>Pro:</b> {item.advantages[0] ?? "No guidance available"}</small><small className="material-inline-con"><b>Watch:</b> {item.tradeoffs[0] ?? "No guidance available"}</small></>}{item?.sourceUrl && <small>{item.propertyBasis} · <a href={item.sourceUrl} target="_blank" rel="noreferrer">Reference</a></small>}</article>; })}
-        <article><span>Hot-wall coating</span><strong>{activeDesign.build.hotWallCoating}</strong><small>Recorded selection only; no coating life model</small></article>
-        <article><span>Feed system</span><strong>{activeDesign.build.feedSystem}</strong><small>Entered architecture</small></article>
-        <article><span>Ignition</span><strong>{activeDesign.build.ignitionSystem}</strong><small>Entered architecture</small></article>
-        <article><span>Wall definition</span><strong>{compactNumber(activeDesign.build.wallThicknessMm, 2)} mm</strong><small>Uniform thickness assumed in the simple screen</small></article>
-      </div> : <div className="build-card-empty"><strong>No subsystem or material definition</strong><p>Refine this legacy geometry record to assign component materials, feed and ignition architecture, and thermal management.</p></div>}</section>
+        ] as const).map(([component, materialId]) => { const item = RDE_MATERIALS.find((candidate) => candidate.id === materialId); return <article key={component}><header><div><span>{component}</span><strong>{materialId}</strong></div><p>{item?.role ?? "No screening property available"}</p></header><div className="material-guidance-columns"><section className="material-guidance-pro"><b>WHY IT FITS</b><p>{item?.advantages[0] ?? "No guidance available"}</p></section><section className="material-guidance-watch"><b>WATCH</b><p>{item?.tradeoffs[0] ?? "No guidance available"}</p></section><section className="material-guidance-reference"><b>REFERENCE BASIS</b><p>{item?.propertyBasis ?? "No screening properties"}{item?.sourceUrl && <> · <a href={item.sourceUrl} target="_blank" rel="noreferrer">Open source</a></>}</p></section></div></article>; })}
+        </div><div className="subsystem-definition-grid">
+          <article><span>Hot-wall coating</span><strong>{activeDesign.build.hotWallCoating}</strong><small>Recorded selection only; no coating-life model</small></article>
+          <article><span>Feed system</span><strong>{activeDesign.build.feedSystem}</strong><small>Entered architecture</small></article>
+          <article><span>Ignition</span><strong>{activeDesign.build.ignitionSystem}</strong><small>Entered architecture</small></article>
+          <article><span>Wall definition</span><strong>{compactNumber(activeDesign.build.wallThicknessMm, 2)} mm</strong><small>Uniform thickness assumed in the direct screen</small></article>
+        </div></div> : <div className="build-card-empty"><strong>No subsystem or material definition</strong><p>Refine this legacy geometry record to assign component materials, feed and ignition architecture, and thermal management.</p></div>}</section>
 
-      <section className="design-card cooling-screen-card"><div className="card-heading"><div><span>Thermal management</span><h2>{thermalMethod === "Regenerative" ? "Regenerative thermal and hydraulic screen" : `${thermalMethod} configuration`}</h2></div><small>{thermalMethod === "Regenerative" ? "Entered heat load, not a predicted heat flux" : "Saved build definition, not a performance model"}</small></div>{activeDesign.build && buildScreening?.available ? <>
-        <div className="cooling-circuit-summary"><span><b>{activeDesign.build.coolant}</b>Coolant</span><span><b>{activeDesign.build.coolingChannelCount}</b>Channels</span><span><b>{compactNumber(activeDesign.build.coolingChannelWidthMm, 2)} × {compactNumber(activeDesign.build.coolingChannelDepthMm, 2)} mm</b>Channel section</span><span><b>{activeDesign.build.cooledSurfaces}</b>Cooled surface</span></div>
-        <dl className="design-calculations cooling-calculations">
+      <section className="design-card cooling-screen-card"><div className="card-heading"><div><span>Thermal management</span><h2>{thermalMethod === "Not defined" ? "No method defined" : thermalMethod === "Regenerative" ? "Regenerative thermal and hydraulic screen" : `${thermalMethod} direct screen`}</h2></div><small>Entered assumptions, not predicted performance or life</small></div>{activeDesign.build && buildScreening?.available ? <>
+        <div className={`cooling-circuit-summary method-${thermalMethod.toLowerCase().replace(" ", "-")}`}>
+          {thermalMethod === "Regenerative" && <><span><b>{activeDesign.build.coolant}</b>Coolant</span><span><b>{activeDesign.build.coolingChannelCount}</b>Channels</span><span><b>{compactNumber(activeDesign.build.coolingChannelWidthMm, 2)} × {compactNumber(activeDesign.build.coolingChannelDepthMm, 2)} mm</b>Channel section</span><span><b>{activeDesign.build.cooledSurfaces}</b>Cooled surface</span></>}
+          {thermalMethod === "Film" && <><span><b>{activeDesign.build.filmCoolant}</b>Film coolant</span><span><b>{activeDesign.build.filmInjectionGeometry}</b>Delivery</span><span><b>{activeDesign.build.filmInjectionLocation} · {compactNumber(activeDesign.build.filmInjectionAngleDeg, 0)}°</b>Injection</span><span><b>{activeDesign.build.cooledSurfaces}</b>Protected surface</span></>}
+          {thermalMethod === "Heat sink" && <><span><b>{compactNumber(activeDesign.build.heatSinkMassKg, 2)} kg</b>Thermal mass</span><span><b>{compactNumber(activeDesign.build.heatSinkSpecificHeatJkgK, 0)} J/kg/K</b>Specific heat</span><span><b>{compactNumber(activeDesign.build.heatSinkInitialTemperatureK, 0)} to {compactNumber(activeDesign.build.heatSinkMaximumTemperatureK, 0)} K</b>Entered window</span><span><b>{activeDesign.build.cooledSurfaces}</b>Protected surface</span></>}
+          {thermalMethod === "Ablative" && <><span><b>{activeDesign.build.ablativeMaterial}</b>Liner material</span><span><b>{compactNumber(activeDesign.build.ablativeThicknessMm, 2)} mm</b>Thickness</span><span><b>{compactNumber(activeDesign.build.ablativeDensityKgM3, 0)} kg/m³</b>Entered density</span><span><b>{activeDesign.build.cooledSurfaces}</b>Protected surface</span></>}
+        </div>
+        {thermalMethod === "Regenerative" && <dl className="design-calculations cooling-calculations">
           <div><dt>Entered heat load</dt><dd>{compactNumber(buildScreening.enteredHeatLoadKW ?? Number.NaN, 1)} kW<small>{compactNumber(activeDesign.build.designHeatFluxMWM2, 2)} MW/m² over {compactNumber(buildScreening.cooledAreaM2 ?? Number.NaN, 4)} m²</small></dd></div>
           <div><dt>Channel flow area</dt><dd>{compactNumber(buildScreening.channelFlowAreaMm2 ?? Number.NaN, 2)} mm²<small>Hydraulic diameter {compactNumber(buildScreening.hydraulicDiameterMm ?? Number.NaN, 3)} mm</small></dd></div>
           <div><dt>Coolant velocity</dt><dd>{compactNumber(buildScreening.coolantVelocityMS ?? Number.NaN, 2)} m/s<small>Re {compactNumber(buildScreening.reynoldsNumber ?? Number.NaN, 0)} · {buildScreening.flowRegime}</small></dd></div>
@@ -257,9 +286,26 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
           <div><dt>Screened hot-wall temperature</dt><dd>{compactNumber(buildScreening.estimatedHotWallTemperatureK ?? Number.NaN, 0)} K<small>Source-backed material reference {compactNumber(buildScreening.materialReferenceTemperatureK ?? Number.NaN, 0)} K</small></dd></div>
           <div><dt>Coolant-side coefficient</dt><dd>{compactNumber(buildScreening.coolantCoefficientWM2K ?? Number.NaN, 0)} W/m²/K<small>Rectangular-channel correlation</small></dd></div>
           <div><dt>Simple hoop stress</dt><dd>{compactNumber(buildScreening.simpleHoopStressMPa ?? Number.NaN, 1)} MPa<small>Thin-wall pressure screen only</small></dd></div>
-        </dl>
+        </dl>}
+        {thermalMethod === "Film" && <dl className="design-calculations cooling-calculations">
+          <div><dt>Entered heat load</dt><dd>{compactNumber(buildScreening.enteredHeatLoadKW ?? Number.NaN, 1)} kW<small>{compactNumber(activeDesign.build.designHeatFluxMWM2, 2)} MW/m² over {compactNumber(buildScreening.cooledAreaM2 ?? Number.NaN, 4)} m²</small></dd></div>
+          <div><dt>Film-flow allocation</dt><dd>{compactPercentage(buildScreening.filmCoolantFractionPct ?? Number.NaN, 2)}<small>{compactNumber(activeDesign.build.filmMassFlowKgS, 3)} kg/s ÷ midpoint main flow</small></dd></div>
+          <div><dt>Entered effectiveness</dt><dd>{compactPercentage(buildScreening.enteredFilmEffectivenessPct ?? Number.NaN, 1)}<small>User assumption, not calculated film effectiveness</small></dd></div>
+          <div><dt>Residual entered heat flux</dt><dd>{compactNumber(buildScreening.screenedResidualHeatFluxMWM2 ?? Number.NaN, 2)} MW/m²<small>Entered heat flux × (1 − entered effectiveness)</small></dd></div>
+          <div><dt>Heat-load offset</dt><dd>{compactNumber(buildScreening.filmProtectedHeatLoadKW ?? Number.NaN, 1)} kW<small>Bookkeeping result, not wall-temperature prediction</small></dd></div>
+        </dl>}
+        {thermalMethod === "Heat sink" && <dl className="design-calculations cooling-calculations">
+          <div><dt>Entered heat load</dt><dd>{compactNumber(buildScreening.enteredHeatLoadKW ?? Number.NaN, 1)} kW<small>{compactNumber(activeDesign.build.designHeatFluxMWM2, 2)} MW/m² over {compactNumber(buildScreening.cooledAreaM2 ?? Number.NaN, 4)} m²</small></dd></div>
+          <div><dt>Sensible-energy capacity</dt><dd>{compactNumber(buildScreening.heatSinkEnergyCapacityKJ ?? Number.NaN, 1)} kJ<small>Mass × specific heat × entered temperature rise</small></dd></div>
+          <div><dt>Idealized exposure duration</dt><dd>{compactNumber(buildScreening.idealizedHeatSinkDurationS ?? Number.NaN, 2)} s<small>Energy capacity ÷ entered heat load</small></dd></div>
+        </dl>}
+        {thermalMethod === "Ablative" && <dl className="design-calculations cooling-calculations">
+          <div><dt>Entered heat load</dt><dd>{compactNumber(buildScreening.enteredHeatLoadKW ?? Number.NaN, 1)} kW<small>{compactNumber(activeDesign.build.designHeatFluxMWM2, 2)} MW/m² over {compactNumber(buildScreening.cooledAreaM2 ?? Number.NaN, 4)} m²</small></dd></div>
+          <div><dt>Ablative inventory</dt><dd>{compactNumber(buildScreening.ablativeVolumeCm3 ?? Number.NaN, 1)} cm³<small>{compactNumber(buildScreening.ablativeMassKg ?? Number.NaN, 3)} kg from entered density</small></dd></div>
+          <div><dt>Idealized energy-equivalent duration</dt><dd>{compactNumber(buildScreening.idealizedAblativeDurationS ?? Number.NaN, 2)} s<small>{compactNumber(activeDesign.build.ablativeEffectiveHeatMJkg, 2)} MJ/kg entered effective absorption</small></dd></div>
+        </dl>}
         <div className="build-screen-messages">{buildScreening.messages.map((message) => <p key={message}>{message}</p>)}</div>
-      </> : <div className="build-card-empty"><strong>{thermalMethod} is saved</strong><p>{thermalMethodExplanation(thermalMethod)}</p>{thermalMethod !== "Regenerative" && <small>No regenerative channel geometry or channel calculations are attached to this build.</small>}</div>}</section>
+      </> : <div className="build-card-empty"><strong>{thermalMethod === "Not defined" ? "Choose a thermal-management method" : `${thermalMethod} needs method inputs`}</strong><p>{thermalMethodExplanation(thermalMethod)}</p>{buildScreening?.messages.map((message) => <small key={message}>{message}</small>)}</div>}</section>
 
       <section className="design-card next-point-card"><div className="card-heading"><div><span>{activeDesign.source === "published" ? "Published evidence loaded" : "Coverage-based next point"}</span><h2>{activeDesign.source === "published" ? "Inspect the real observed envelope" : nextPoint ? nextPoint.role === "Baseline" ? "Establish the centre condition" : `Add the ${nextPoint.role.toLowerCase()}` : "Screening plan covered"}</h2></div></div>{activeDesign.source === "published" ? <><p>The source provides enough information to test the operating-envelope hierarchy, plotting, provenance, and reported-mode display. It does not provide enough raw evidence to validate signal analysis or recommend a new test.</p><button className="button primary" onClick={() => onOpenEnvelope(activeDesign.id)}>Open Operating Envelope</button></> : nextPoint ? <><p>This point is selected from the entered design range because it is the planned condition farthest from the loaded measured observations. It is not an operability prediction.</p><div className="next-point-values"><span><b>φ {nextPoint.equivalenceRatio.toFixed(2)}</b>Equivalence ratio</span><span><b>{nextPoint.massFlowKgS.toFixed(3)} kg/s</b>Mass flow</span><span><b>{nextPoint.inletPressureBar.toFixed(2)} bar</b>Inlet pressure</span></div><button className="button primary" onClick={() => onAddOperatingPoint(activeDesign.id, nextPoint)}>Add this operating point</button></> : <><p>Every point in the current screening plan has a matched measured operating point. Open the Operating Envelope to inspect the observed modes.</p><button className="button primary" onClick={() => onOpenEnvelope(activeDesign.id)}>Open Operating Envelope</button></>}</section>
     </div>
@@ -268,6 +314,6 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
 
     {designs.length > 1 && <section className="screening-plan-card design-portfolio"><div className="card-heading"><div><span>Design comparison</span><h2>Entered designs and evidence coverage</h2><p>This compares entered geometry and loaded evidence only. It does not rank performance.</p></div></div><div className="screening-table-wrap"><table><thead><tr><th>Design</th><th>Propellants</th><th>Annulus gap</th><th>Injector-area ratio</th><th>Observed points</th><th></th></tr></thead><tbody>{designs.map((design) => { const result = calculateDesign(design); const pointCount = operatingPoints.filter((item) => item.designId === design.id && item.source !== "demo").length; return <tr key={design.id}><th>{design.name}</th><td>{design.fuel} / {design.oxidizer}</td><td>{compactNumber(result.annulusGapMm, 2)} mm</td><td>{compactPercentage(result.injectorAreaRatioPct)}</td><td>{pointCount}</td><td><button onClick={() => onSelectDesign(design.id)}>{design.id === activeDesign.id ? "Selected" : "Open"}</button></td></tr>; })}</tbody></table></div></section>}
 
-    <section className="product-boundary-card"><div><span>What Kythros can do now</span><strong>Define a preliminary RDE build, map materials to components, screen an entered regenerative-cooling load, plan operating conditions, compare evidence, classify, and report.</strong></div><div><span>What still requires engineering analysis</span><strong>Combustion and heat-flux prediction, detailed manifolds and CAD, conjugate heat transfer, stress and life analysis, feed-system dynamics, seals and joints, manufacturability, and hardware certification.</strong></div></section>
+    <section className="product-boundary-card"><div><span>What Kythros can do now</span><strong>Define a preliminary RDE build, map materials to components, represent regenerative, film, heat-sink, or ablative hardware, run transparent assumption-driven screens, plan operating conditions, compare evidence, classify, and report.</strong></div><div><span>What still requires engineering analysis</span><strong>Combustion and heat-flux prediction, detailed manifolds and CAD, conjugate heat transfer, stress and life analysis, film effectiveness, ablative recession, feed-system dynamics, seals and joints, manufacturability, and hardware certification.</strong></div></section>
   </section>;
 }

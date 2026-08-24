@@ -46,14 +46,40 @@ test("calculates a transparent first-order regenerative cooling screen", () => {
   assert.match(result.messages.at(-1) ?? "", /user-entered assumptions/i);
 });
 
-test("does not imply a regenerative result for another cooling method", () => {
+test("calculates an idealized heat-sink energy screen without regenerative outputs", () => {
   const heatSinkDesign = { ...design, build: { ...design.build!, coolingMethod: "Heat sink" as const } };
   const result = calculateRdeBuildScreening(heatSinkDesign);
-  assert.equal(result.available, false);
+  assert.equal(result.available, true);
+  assert.equal(result.method, "Heat sink");
   assert.equal(result.pressureDropBar, null);
-  assert.match(result.messages[0], /only regenerative/i);
+  assert.equal(result.heatSinkEnergyCapacityKJ, 2400);
+  assert.ok((result.idealizedHeatSinkDurationS ?? 0) > 0);
+  assert.match(result.messages[0], /sensible-heat duration/i);
   assert.deepEqual(validateEngineDesign(heatSinkDesign), []);
   assert.equal(cloneEngineDesign(heatSinkDesign).build?.coolingMethod, "Heat sink");
+});
+
+test("screens film cooling from an explicitly entered effectiveness assumption", () => {
+  const filmDesign = { ...design, build: { ...design.build!, coolingMethod: "Film" as const, filmMassFlowKgS: 0.03, filmEffectivenessPct: 40 } };
+  const result = calculateRdeBuildScreening(filmDesign);
+  assert.equal(result.available, true);
+  assert.equal(result.method, "Film");
+  assert.ok(Math.abs((result.filmCoolantFractionPct ?? 0) - 5) < 1e-12);
+  assert.ok(Math.abs((result.screenedResidualHeatFluxMWM2 ?? 0) - 6) < 1e-12);
+  assert.ok((result.filmProtectedHeatLoadKW ?? 0) > 0);
+  assert.equal(result.coolantVelocityMS, null);
+  assert.match(result.messages[0], /entered design assumption/i);
+});
+
+test("screens an ablative liner as material inventory without claiming recession life", () => {
+  const ablativeDesign = { ...design, build: { ...design.build!, coolingMethod: "Ablative" as const, ablativeThicknessMm: 10, ablativeDensityKgM3: 1500, ablativeEffectiveHeatMJkg: 2.5 } };
+  const result = calculateRdeBuildScreening(ablativeDesign);
+  assert.equal(result.available, true);
+  assert.equal(result.method, "Ablative");
+  assert.ok((result.ablativeVolumeCm3 ?? 0) > 0);
+  assert.ok((result.ablativeMassKg ?? 0) > 0);
+  assert.ok((result.idealizedAblativeDurationS ?? 0) > 0);
+  assert.match(result.messages[0], /not a recession-rate/i);
 });
 
 test("raises the screened wall temperature when the entered heat flux increases", () => {
