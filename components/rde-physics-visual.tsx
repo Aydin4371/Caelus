@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
+import { RdeAssembly3D } from "@/components/rde-assembly-3d";
 import type { PhysicsComparisonRow } from "@/lib/physics-evidence";
 import type { EngineDesign } from "@/lib/design-workspace";
 import { wallField, type WallField, type WallFieldImport, type WallFieldQuantity } from "@/lib/spatial-field";
@@ -11,11 +12,9 @@ function format(value: number, digits = 1) { return finite(value) ? value.toFixe
 
 export function RdeGeometrySchematic({ design, compact = false }: { design: EngineDesign; compact?: boolean }) {
   const [animationPaused, setAnimationPaused] = useState(false);
-  const [assemblyLayer, setAssemblyLayer] = useState<"assembly" | "hot-wall" | "cooling" | "materials">("assembly");
   const waveMarkerId = useId().replaceAll(":", "-");
   const flowMarkerId = `${waveMarkerId}-flow`;
   const productMarkerId = `${waveMarkerId}-product`;
-  const coolantMarkerId = `${waveMarkerId}-coolant`;
   const inner = design.annulusInnerDiameterMm;
   const outer = design.annulusOuterDiameterMm;
   const drawable = finite(inner) && finite(outer) && outer > inner && finite(design.chamberLengthMm);
@@ -136,65 +135,9 @@ export function RdeGeometrySchematic({ design, compact = false }: { design: Engi
         </ol>
       </figure>
 
-      <figure className={`schematic-view assembly-panel assembly-layer-${assemblyLayer}`}>
-        <figcaption><span>03</span><div><strong>3D assembly</strong><small>Exploded cutaway of the entered subsystems, materials, and cooling circuit</small></div></figcaption>
-        <div className="assembly-layer-controls" aria-label="3D assembly layers">
-          {([[
-            "assembly", "Full assembly"
-          ], [
-            "hot-wall", "Hot wall"
-          ], [
-            "cooling", "Cooling channels"
-          ], [
-            "materials", "Material map"
-          ]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={assemblyLayer === value} onClick={() => setAssemblyLayer(value)}>{label}</button>)}
-        </div>
-        <div className="assembly-layout">
-          <svg viewBox="0 0 760 360" role="img" aria-label="Three-dimensional cutaway showing the plenum, injector face, annular hot-wall liner, centerbody, nozzle, outer jacket, and regenerative cooling channels">
-            <defs>
-              <linearGradient id={`${waveMarkerId}-jacket`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#e8efed"/><stop offset=".5" stopColor="#b7cdcd"/><stop offset="1" stopColor="#f4f7f4"/></linearGradient>
-              <linearGradient id={`${waveMarkerId}-liner`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#d8a55b"/><stop offset="1" stopColor="#9c5d2d"/></linearGradient>
-              <marker id={coolantMarkerId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path className="assembly-coolant-marker" d="M0,0 L0,6 L7,3 z" /></marker>
-            </defs>
-            <g className="assembly-outer-jacket">
-              <path d="M126 86 H529 L653 151 V245 L529 310 H126 Z" fill={`url(#${waveMarkerId}-jacket)`}/>
-              <ellipse cx="126" cy="198" rx="58" ry="112"/>
-              <path d="M126 86 H529 L653 151 L595 165 L510 121 H126 Z" className="assembly-cut-surface"/>
-            </g>
-            <g className="assembly-plenum"><path d="M70 124 L126 86 V310 L70 272 Z"/><ellipse cx="70" cy="198" rx="37" ry="74"/></g>
-            <g className="assembly-injector-face"><ellipse cx="151" cy="198" rx="46" ry="89"/>{Array.from({ length: 12 }, (_, index) => { const angle = index / 12 * Math.PI * 2; return <circle key={index} cx={151 + Math.cos(angle) * 36} cy={198 + Math.sin(angle) * 70} r="3"/>; })}</g>
-            <g className="assembly-hot-wall">
-              <path d="M151 122 H512 L594 165 V230 L512 274 H151 Z" fill={`url(#${waveMarkerId}-liner)`}/>
-              <ellipse cx="151" cy="198" rx="43" ry="76"/>
-              <path d="M151 143 H500 L559 174 V221 L500 253 H151 Z" className="assembly-annulus-void"/>
-            </g>
-            <g className="assembly-centerbody"><path d="M151 158 H486 L548 198 L486 238 H151 Z"/><ellipse cx="151" cy="198" rx="25" ry="40"/></g>
-            <g className="assembly-cooling-channels">
-              {[0, 1, 2, 3, 4, 5].map((index) => <path key={index} d={`M174 ${107 + index * 12} H510 L593 ${151 + index * 8}`} />)}
-              <path d="M188 112 H500 L580 154" className={animationStyles.mixtureStream} markerEnd={`url(#${coolantMarkerId})`}/>
-              <path d="M188 286 H500 L580 240" className={animationStyles.mixtureStream} markerEnd={`url(#${coolantMarkerId})`}/>
-            </g>
-            <g className="assembly-callouts">
-              <path d="M84 105 L35 68"/><text x="29" y="60" textAnchor="start">FEED PLENUM</text>
-              <path d="M151 107 L150 53"/><text x="150" y="44" textAnchor="middle">INJECTOR FACE</text>
-              <path d="M343 123 L343 62"/><text x="343" y="53" textAnchor="middle">HOT-WALL LINER</text>
-              <path d="M440 96 L482 50"/><text x="489" y="43" textAnchor="start">OUTER JACKET</text>
-              <path d="M384 160 L413 142"/><text x="420" y="138" textAnchor="start">CENTREBODY</text>
-              <path d="M585 258 L650 292"/><text x="655" y="299" textAnchor="start">NOZZLE</text>
-              <path d="M385 109 L409 87" className="assembly-cooling-callout"/><text x="416" y="82" textAnchor="start" className="assembly-cooling-label">REGENERATIVE CHANNELS</text>
-            </g>
-          </svg>
-          <div className="assembly-material-map" aria-label="Entered component materials">
-            <article><span>Hot-wall liner</span><strong>{design.build?.hotWallMaterial ?? "Not defined"}</strong></article>
-            <article><span>Hot-wall coating</span><strong>{design.build?.hotWallCoating ?? "Not defined"}</strong></article>
-            <article><span>Outer jacket</span><strong>{design.build?.outerWallMaterial ?? "Not defined"}</strong></article>
-            <article><span>Injector face</span><strong>{design.build?.injectorMaterial ?? "Not defined"}</strong></article>
-            <article><span>Centerbody</span><strong>{design.build?.centerbodyMaterial ?? "Not defined"}</strong></article>
-            <article><span>Nozzle / exhaust</span><strong>{design.build?.nozzleMaterial ?? "Not defined"}</strong></article>
-            <article className="assembly-cooling-definition"><span>Thermal management</span><strong>{design.build ? `${design.build.coolingMethod} · ${design.build.coolant}` : "Not defined"}</strong><small>{design.build?.coolingMethod === "Regenerative" ? `${design.build.coolingChannelCount} channels · ${format(design.build.coolingChannelWidthMm, 2)} × ${format(design.build.coolingChannelDepthMm, 2)} mm` : "No regenerative circuit entered"}</small></article>
-          </div>
-        </div>
-        <p className="assembly-boundary">This is a component-aware design schematic, not production CAD. It does not define tolerances, joints, manifolds, fasteners, seals, additive-manufacturing constraints, or structural life.</p>
+      <figure className="schematic-view assembly-panel">
+        <figcaption><span>03</span><div><strong>Interactive 3D assembly</strong><small>Rotate, zoom, and select the entered subsystems, materials, and cooling circuit</small></div></figcaption>
+        <RdeAssembly3D design={design}/>
       </figure>
     </div>
     <p className="cutaway-clarifier"><strong>How to read the cutaway:</strong> the detonation wave travels circumferentially around the engine, so the red front shows where that rotating wave intersects this axial section. The bulk exhaust flow moves left to right.</p>
