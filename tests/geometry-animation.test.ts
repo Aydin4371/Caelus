@@ -17,7 +17,9 @@ test("keeps the RDE animation controllable, accessible, and explicitly schematic
   assert.match(component, /mixtureStream/);
   assert.match(component, /productStream/);
   assert.match(component, /3D assembly/);
-  assert.match(component, /<RdeAssembly3D design=\{design\}/);
+  assert.match(component, /<RdeAssembly3D design=\{design\} animationPaused=\{animationPaused\}/);
+  assert.match(component, /schematic-local-front/);
+  assert.match(component, /localized red wedge/);
   assert.match(assembly, /WebGLRenderer/);
   assert.match(assembly, /OrbitControls/);
   assert.match(assembly, /Drag to rotate/);
@@ -25,6 +27,10 @@ test("keeps the RDE animation controllable, accessible, and explicitly schematic
   assert.match(assembly, /COMPONENT INSPECTOR/);
   assert.match(assembly, /Cooling circuit/);
   assert.match(assembly, /Combustion annulus/);
+  assert.match(assembly, /Rotating detonation front/);
+  assert.match(assembly, /Localized single-wave schematic/);
+  assert.match(assembly, /Air inlet \/ annular feed/);
+  assert.match(assembly, /airInletArchitecture/);
   assert.match(assembly, /pointerup/);
   assert.match(assembly, /aria-label", "Interactive three-dimensional RDE assembly/);
   assert.match(assembly, /isRegenerative/);
@@ -40,6 +46,8 @@ test("keeps the RDE animation controllable, accessible, and explicitly schematic
   assert.match(planner, /Thermal mass/);
   assert.match(planner, /Ablative liner material/);
   assert.match(planner, /WHY IT FITS/);
+  assert.match(planner, /geometry-quantities-card/);
+  assert.match(planner, /Air inlet architecture/);
   assert.match(styles, /@keyframes rotate-wave/);
   assert.match(styles, /animation-play-state: paused/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);

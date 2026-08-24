@@ -114,6 +114,8 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(design, /Idealized energy-equivalent duration/);
   assert.match(design, /WHY IT FITS/);
   assert.match(design, /Materials and subsystems/);
+  assert.match(design, /geometry-quantities-card/);
+  assert.match(design, /Air inlet architecture/);
   assert.match(design, /Entered assumptions, not predicted performance or life/);
   assert.match(design, /<RdeGeometrySchematic design=\{activeDesign\}/);
   assert.doesNotMatch(physicsVisual, /<RdeGeometrySchematic design=\{design\}/);
@@ -126,6 +128,7 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(physicsVisual, /RADIAL GAP/);
   assert.match(physicsVisual, /CHAMBER LENGTH/);
   assert.match(physicsVisual, /How to read the cutaway/);
+  assert.match(physicsVisual, /localized red wedge/);
   assert.match(physicsVisual, /PHYSICAL ANNULUS WALL/);
   assert.match(physicsVisual, /Show exact coordinate plots/);
   assert.match(physicsVisual, /circumferentially averaged bands/);

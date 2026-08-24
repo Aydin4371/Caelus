@@ -35,6 +35,21 @@ test("calculates geometry and flow quantities directly from entered design value
   assert.equal(result.minimumPressureRatio, 6);
 });
 
+test("requires and preserves a real air-breathing inlet definition", () => {
+  const airBreathing = {
+    ...design,
+    application: "Air-breathing" as const,
+    oxidizer: "Air",
+    build: {
+      ...design.build!,
+      airInletArchitecture: "Ram-fed" as const,
+      airFuelPreparation: "Separate fuel injection" as const,
+    },
+  };
+  assert.deepEqual(validateEngineDesign(airBreathing), []);
+  assert.match(validateEngineDesign({ ...airBreathing, build: { ...airBreathing.build, airInletArchitecture: "Not defined" as const } }).join(" "), /air-inlet architecture/i);
+});
+
 test("starts an unobserved screening plan at the entered range center", () => {
   const points = buildScreeningPlan(design, []);
   assert.equal(points.length, 9);

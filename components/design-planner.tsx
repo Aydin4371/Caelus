@@ -79,13 +79,14 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
   return <section className="design-editor" aria-label="Preliminary RDE build inputs">
     <div className="design-editor-heading"><div><span className="workspace-label">Preliminary RDE builder</span><h1>{draft.id ? "Refine the RDE build" : "Build an RDE concept"}</h1><p>Define the engine, hot-section materials, and cooling circuit in one traceable record. Kythros performs direct geometry and first-order screening calculations, not CFD, combustion prediction, stress analysis, or design certification.</p></div></div>
 
-    <div className="design-form-section"><h2>Identity and propellants</h2><div className="design-form-grid four">
+    <div className="design-form-section"><h2>Identity and propellants</h2><div className={`application-definition ${draft.application === "Air-breathing" ? "air-breathing" : "rocket"}`}><strong>{draft.application} RDE variant</strong><span>{draft.application === "Air-breathing" ? "Air is supplied by the selected upstream inlet architecture. This preliminary build defines the annular combustor and fuel delivery, not the external inlet or compressor." : "Fuel and oxidizer are supplied through the entered onboard feed system and injector face."}</span></div><div className="design-form-grid four">
       <label><span>Design name</span><input value={draft.name} onChange={(event) => setText("name", event.target.value)} placeholder="Annular demonstrator A" /></label>
       <label><span>Application</span><select value={draft.application} onChange={(event) => setText("application", event.target.value)}><option>Rocket</option><option>Air-breathing</option></select></label>
       <label><span>Fuel</span><input value={draft.fuel} onChange={(event) => setText("fuel", event.target.value)} /></label>
-      <label><span>Oxidizer</span><input value={draft.oxidizer} onChange={(event) => setText("oxidizer", event.target.value)} /></label>
-      <label><span>Feed system</span><input value={build.feedSystem} onChange={(event) => setBuild("feedSystem", event.target.value)} placeholder="Pressure-fed" /></label>
+      <label><span>{draft.application === "Air-breathing" ? "Oxidizer / working air" : "Oxidizer"}</span><input value={draft.oxidizer} onChange={(event) => setText("oxidizer", event.target.value)} /></label>
+      <label><span>{draft.application === "Air-breathing" ? "Fuel delivery system" : "Propellant feed system"}</span><input value={build.feedSystem} onChange={(event) => setBuild("feedSystem", event.target.value)} placeholder={draft.application === "Air-breathing" ? "Fuel pump / pressure-fed" : "Pressure-fed"} /></label>
       <label><span>Ignition system</span><input value={build.ignitionSystem} onChange={(event) => setBuild("ignitionSystem", event.target.value)} placeholder="Pre-detonator" /></label>
+      {draft.application === "Air-breathing" && <><label><span>Air inlet architecture</span><select value={build.airInletArchitecture ?? "Not defined"} onChange={(event) => setBuild("airInletArchitecture", event.target.value as EngineBuildDefinition["airInletArchitecture"])}><option>Ram-fed</option><option>Compressor-fed</option><option>Direct-connect test rig</option><option>Not defined</option></select></label><label><span>Fuel-air preparation</span><select value={build.airFuelPreparation ?? "Separate fuel injection"} onChange={(event) => setBuild("airFuelPreparation", event.target.value as EngineBuildDefinition["airFuelPreparation"])}><option>Separate fuel injection</option><option>Premixed upstream</option></select></label></>}
     </div></div>
 
     <div className="design-form-section"><h2>Annulus and injector</h2><div className="design-form-grid four">
@@ -96,7 +97,7 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
       <label><span>Injector count</span><input type="number" step="1" value={numberValue(draft.injectorCount)} onChange={(event) => setNumber("injectorCount", event.target.value)} /></label>
       <label><span>Orifice diameter (mm)</span><input type="number" step="0.01" value={numberValue(draft.injectorDiameterMm)} onChange={(event) => setNumber("injectorDiameterMm", event.target.value)} /></label>
       <label><span>Injection angle (deg)</span><input type="number" min="0" max="90" value={numberValue(draft.injectorAngleDeg)} onChange={(event) => setNumber("injectorAngleDeg", event.target.value)} /></label>
-      <label><span>Plenum volume (cm³)</span><input type="number" value={numberValue(draft.plenumVolumeCm3)} onChange={(event) => setNumber("plenumVolumeCm3", event.target.value)} /></label>
+      <label><span>{draft.application === "Air-breathing" ? "Inlet / manifold volume (cm³)" : "Plenum volume (cm³)"}</span><input type="number" value={numberValue(draft.plenumVolumeCm3)} onChange={(event) => setNumber("plenumVolumeCm3", event.target.value)} /></label>
       <label><span>Wall condition</span><input value={draft.wallCondition} onChange={(event) => setText("wallCondition", event.target.value)} /></label>
       <label><span>Exhaust configuration</span><input value={draft.exhaustConfiguration} onChange={(event) => setText("exhaustConfiguration", event.target.value)} /></label>
     </div></div>
@@ -244,7 +245,7 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
 
     <div className="design-overview-grid">
       <section className="design-card design-geometry-card"><div className="card-heading"><div><span>Generated from the preliminary build</span><h2>RDE geometry and assembly</h2></div><small>Interactive schematic, not CAD or CFD</small></div><RdeGeometrySchematic design={activeDesign}/></section>
-      <section className="design-card"><div className="card-heading"><div><span>Calculated from the design</span><h2>Geometry and flow quantities</h2></div><small>Not model predictions</small></div>{calculations && <dl className="design-calculations">
+      <section className="design-card geometry-quantities-card"><div className="card-heading"><div><span>Calculated from the design</span><h2>Geometry and flow quantities</h2></div><small>Not model predictions</small></div>{calculations && <dl className="design-calculations">
         <div><dt>Mean diameter</dt><dd>{compactNumber(calculations.meanDiameterMm, 2)} mm</dd></div>
         <div><dt>Annulus gap</dt><dd>{compactNumber(calculations.annulusGapMm, 2)} mm</dd></div>
         <div><dt>Annulus area</dt><dd>{compactNumber(calculations.annulusAreaMm2, 1)} mm²</dd></div>
@@ -265,7 +266,8 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
         ] as const).map(([component, materialId]) => { const item = RDE_MATERIALS.find((candidate) => candidate.id === materialId); return <article key={component}><header><div><span>{component}</span><strong>{materialId}</strong></div><p>{item?.role ?? "No screening property available"}</p></header><div className="material-guidance-columns"><section className="material-guidance-pro"><b>WHY IT FITS</b><p>{item?.advantages[0] ?? "No guidance available"}</p></section><section className="material-guidance-watch"><b>WATCH</b><p>{item?.tradeoffs[0] ?? "No guidance available"}</p></section><section className="material-guidance-reference"><b>REFERENCE BASIS</b><p>{item?.propertyBasis ?? "No screening properties"}{item?.sourceUrl && <> · <a href={item.sourceUrl} target="_blank" rel="noreferrer">Open source</a></>}</p></section></div></article>; })}
         </div><div className="subsystem-definition-grid">
           <article><span>Hot-wall coating</span><strong>{activeDesign.build.hotWallCoating}</strong><small>Recorded selection only; no coating-life model</small></article>
-          <article><span>Feed system</span><strong>{activeDesign.build.feedSystem}</strong><small>Entered architecture</small></article>
+          <article><span>{activeDesign.application === "Air-breathing" ? "Fuel delivery" : "Propellant feed"}</span><strong>{activeDesign.build.feedSystem}</strong><small>Entered architecture</small></article>
+          {activeDesign.application === "Air-breathing" && <><article><span>Upstream air inlet</span><strong>{activeDesign.build.airInletArchitecture ?? "Not defined"}</strong><small>The external inlet or compressor is outside this model</small></article><article><span>Fuel-air preparation</span><strong>{activeDesign.build.airFuelPreparation ?? "Not defined"}</strong><small>Entered mixing architecture</small></article></>}
           <article><span>Ignition</span><strong>{activeDesign.build.ignitionSystem}</strong><small>Entered architecture</small></article>
           <article><span>Wall definition</span><strong>{compactNumber(activeDesign.build.wallThicknessMm, 2)} mm</strong><small>Uniform thickness assumed in the direct screen</small></article>
         </div></div> : <div className="build-card-empty"><strong>No subsystem or material definition</strong><p>Refine this legacy geometry record to assign component materials, feed and ignition architecture, and thermal management.</p></div>}</section>
