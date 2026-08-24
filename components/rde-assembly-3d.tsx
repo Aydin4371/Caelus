@@ -438,11 +438,11 @@ export function RdeAssembly3D({ design, animationPaused = false }: { design: Eng
     <div className="assembly-interactive-layout">
       <div className="assembly-viewport">
         <RdeAssemblyCanvas design={design} selectedPart={selectedPart} viewPreset={viewPreset} viewRequest={viewRequest} animationPaused={animationPaused} onSelect={setSelectedPart} onHover={setHoveredPart}/>
-        <div className="assembly-orientation"><span>{isAirBreathing ? "AIR INLET" : "INJECTOR"}</span><i>Flow direction →</i><span>EXHAUST</span></div>
+        <div className="assembly-orientation"><span>{isAirBreathing ? "AIR INLET" : "INJECTOR"}</span><i><span>FLOW DIRECTION</span></i><span>EXHAUST</span></div>
         {hoveredPart && <div className="assembly-hover-label">Click to inspect · {displayedParts.find((part) => part.id === hoveredPart)?.label ?? PART_LABELS[hoveredPart]}</div>}
         <div className="assembly-wave-note"><strong>Red wedge: rotating detonation front</strong><span>Localized single-wave schematic · visible thickness and speed exaggerated</span></div>
         {!isRegenerative && <div className={`assembly-thermal-note method-${thermalMethod.toLowerCase().replace(" ", "-")}`}><strong>{thermalPresentation.label}</strong><span>{thermalMethod === "Film" ? "Blue wall film and entered injection feature" : thermalMethod === "Heat sink" ? "Amber thermal-mass shell" : thermalMethod === "Ablative" ? "Magenta sacrificial hot-side liner" : "No cooling hardware defined"}</span></div>}
-        <div className="assembly-axis-key"><span className="axis-x">X</span><span className="axis-y">Y</span><span className="axis-z">Z</span></div>
+        <div className="assembly-axis-key" role="img" aria-label="Model orientation axes: X, Y, and Z"><svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="25" cy="38" r="2.5"/><path className="axis-x" d="M25 38 L47 30 M47 30 L40 29 M47 30 L42 35"/><path className="axis-y" d="M25 38 L25 14 M25 14 L21 20 M25 14 L29 20"/><path className="axis-z" d="M25 38 L43 51 M43 51 L36 50 M43 51 L40 44"/><text className="axis-x" x="51" y="31">X</text><text className="axis-y" x="22" y="11">Y</text><text className="axis-z" x="47" y="57">Z</text></svg></div>
       </div>
       <aside className="assembly-inspector" aria-label="RDE component inspector">
         <div className="assembly-inspector-heading"><div><span>COMPONENT INSPECTOR</span><strong>{selectedDefinition?.label ?? "Complete assembly"}</strong></div>{selectedPart !== "all" && <button type="button" onClick={() => setSelectedPart("all")}>Show all</button>}</div>

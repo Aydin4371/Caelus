@@ -31,6 +31,8 @@ test("keeps the RDE animation controllable, accessible, and explicitly schematic
   assert.match(assembly, /Localized single-wave schematic/);
   assert.match(assembly, /Air inlet \/ annular feed/);
   assert.match(assembly, /airInletArchitecture/);
+  assert.match(assembly, /Model orientation axes: X, Y, and Z/);
+  assert.match(assembly, /FLOW DIRECTION/);
   assert.match(assembly, /pointerup/);
   assert.match(assembly, /aria-label", "Interactive three-dimensional RDE assembly/);
   assert.match(assembly, /isRegenerative/);

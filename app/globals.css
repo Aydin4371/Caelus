@@ -1150,9 +1150,12 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 .assembly-canvas-host { width: 100%; height: 100%; min-height: 540px; }
 .assembly-canvas-host canvas { width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
 .assembly-canvas-host canvas:focus-visible { box-shadow: inset 0 0 0 3px rgba(37, 136, 162, .45); }
-.assembly-orientation { position: absolute; left: 14px; right: 14px; bottom: 13px; padding: 8px 11px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; border: 1px solid rgba(173, 196, 199, .8); border-radius: 6px; background: rgba(255, 253, 248, .88); color: #173b49; font-size: 8.5px; font-weight: 800; letter-spacing: .08em; pointer-events: none; backdrop-filter: blur(5px); }
-.assembly-orientation i { height: 1px; position: relative; background: #2588a2; color: #2588a2; font-style: normal; font-size: 8px; text-align: center; line-height: 0; }
-.assembly-orientation i::after { content: ""; position: absolute; top: -3px; right: 0; border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; border-left: 7px solid #2588a2; }
+.assembly-orientation { position: absolute; left: 14px; right: 14px; bottom: 13px; min-height: 34px; padding: 7px 11px; display: grid; grid-template-columns: auto minmax(110px, 1fr) auto; align-items: center; gap: 11px; border: 1px solid rgba(173, 196, 199, .8); border-radius: 6px; background: rgba(255, 253, 248, .9); color: #173b49; font-size: 8.5px; font-weight: 800; line-height: 1; letter-spacing: .08em; pointer-events: none; backdrop-filter: blur(5px); }
+.assembly-orientation > span { white-space: nowrap; }
+.assembly-orientation i { height: 18px; position: relative; display: grid; place-items: center; color: #2588a2; font-style: normal; }
+.assembly-orientation i::before { content: ""; height: 1px; position: absolute; left: 0; right: 0; top: 50%; background: #2588a2; transform: translateY(-50%); }
+.assembly-orientation i::after { content: ""; position: absolute; top: 50%; right: -1px; border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; border-left: 7px solid #2588a2; transform: translateY(-50%); }
+.assembly-orientation i span { padding: 3px 8px; position: relative; border-radius: 3px; background: rgba(255, 253, 248, .96); font-size: 8px; line-height: 1; letter-spacing: .06em; }
 .assembly-hover-label { position: absolute; bottom: 57px; left: 13px; padding: 7px 9px; border: 1px solid #a8cbd1; border-radius: 5px; background: rgba(239, 250, 250, .94); color: #17677b; font-size: 9.5px; font-weight: 750; pointer-events: none; }
 .assembly-wave-note, .assembly-thermal-note { position: absolute; left: 13px; padding: 8px 10px; display: grid; gap: 2px; border-radius: 5px; pointer-events: none; }
 .assembly-wave-note { top: 13px; border: 1px solid #e49ba1; border-left: 3px solid #e33f49; background: rgba(255, 244, 245, .96); }
@@ -1164,12 +1167,14 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 .assembly-thermal-note.method-film { border-color: #8fc8db; border-left-color: #2588c7; background: rgba(237, 249, 253, .96); }
 .assembly-thermal-note.method-heat-sink { border-color: #dfb67e; border-left-color: #d78a2f; }
 .assembly-thermal-note.method-ablative { border-color: #dda1aa; border-left-color: #a83e52; background: rgba(255, 244, 246, .96); }
-.assembly-axis-key { position: absolute; top: 12px; right: 12px; width: 54px; height: 54px; border: 1px solid rgba(173, 196, 199, .8); border-radius: 50%; background: rgba(255, 253, 248, .86); pointer-events: none; }
-.assembly-axis-key span { width: 20px; position: absolute; left: 17px; top: 17px; font-size: 8px; font-weight: 800; transform-origin: left center; }
-.assembly-axis-key span::before { content: ""; width: 14px; height: 2px; margin-right: 2px; display: inline-block; vertical-align: middle; background: currentColor; }
-.assembly-axis-key .axis-x { color: #c84f58; transform: rotate(-20deg) translateX(2px); }
-.assembly-axis-key .axis-y { color: #2588a2; transform: rotate(-90deg) translateX(2px); }
-.assembly-axis-key .axis-z { color: #c8873d; transform: rotate(42deg) translateX(2px); }
+.assembly-axis-key { position: absolute; top: 12px; right: 12px; width: 60px; height: 60px; border: 1px solid rgba(173, 196, 199, .8); border-radius: 50%; background: rgba(255, 253, 248, .9); pointer-events: none; }
+.assembly-axis-key svg { width: 100%; height: 100%; overflow: visible; }
+.assembly-axis-key circle { fill: #173b49; }
+.assembly-axis-key path { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.assembly-axis-key text { font: 800 9px var(--font-geist-mono), monospace; dominant-baseline: middle; }
+.assembly-axis-key .axis-x { color: #c84f58; fill: #c84f58; stroke: #c84f58; }
+.assembly-axis-key .axis-y { color: #2588a2; fill: #2588a2; stroke: #2588a2; }
+.assembly-axis-key .axis-z { color: #c8873d; fill: #c8873d; stroke: #c8873d; }
 .assembly-inspector { min-width: 0; padding: 13px; display: grid; align-content: start; gap: 10px; background: #f5f9f7; }
 .assembly-inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
 .assembly-inspector-heading > div { display: grid; gap: 3px; }
