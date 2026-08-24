@@ -7,16 +7,73 @@ export type MaterialScreeningProperty = {
   thermalConductivityWMK: number | null;
   referenceTemperatureK: number | null;
   role: string;
+  advantages: string[];
+  tradeoffs: string[];
   propertyBasis: string;
   sourceUrl: string;
 };
 
 export const RDE_MATERIALS: MaterialScreeningProperty[] = [
-  { id: "GRCop-class copper alloy", family: "Copper alloy", densityKgM3: 8900, thermalConductivityWMK: 300, referenceTemperatureK: 811, role: "High-conductivity liner or centerbody", propertyBasis: "GRCop-84 reference conductivity and 538 °C liner reference temperature", sourceUrl: "https://ntrs.nasa.gov/citations/20180005537" },
-  { id: "Inconel 718-class nickel superalloy", family: "Nickel superalloy", densityKgM3: 8190, thermalConductivityWMK: 11.4, referenceTemperatureK: 973, role: "Outer jacket, injector, or nozzle structure", propertyBasis: "Annealed density, room-temperature conductivity, and 700 °C application reference", sourceUrl: "https://www.specialmetals.com/documents/technical-bulletins/inconel/" },
-  { id: "Haynes 230-class nickel superalloy", family: "Nickel superalloy", densityKgM3: 8970, thermalConductivityWMK: 8.9, referenceTemperatureK: 1423, role: "Oxidation-resistant hot-section structure", propertyBasis: "Room-temperature physical properties and 1150 °C continuous oxidation reference", sourceUrl: "https://haynesintl.com/en/alloys/alloy-portfolio/high-temperature-alloys/haynes-230/" },
-  { id: "316L stainless steel", family: "Stainless steel", densityKgM3: 8000, thermalConductivityWMK: 15, referenceTemperatureK: null, role: "Prototype manifolds and lower-temperature structure", propertyBasis: "Room-temperature density and conductivity; no generic temperature limit assigned", sourceUrl: "https://www.thyssenkrupp-materials.co.uk/stainless-steel-316l-14404.html" },
-  { id: "Not selected", family: "Unspecified", densityKgM3: null, thermalConductivityWMK: null, referenceTemperatureK: null, role: "Select a material before screening", propertyBasis: "No screening properties", sourceUrl: "" },
+  {
+    id: "GRCop-class copper alloy",
+    family: "Copper alloy",
+    densityKgM3: 8900,
+    thermalConductivityWMK: 300,
+    referenceTemperatureK: 811,
+    role: "High-conductivity liner or centerbody",
+    advantages: ["Moves heat into a cooling circuit far better than the nickel and steel options", "NASA-developed balance of elevated-temperature strength, creep life, and low-cycle fatigue life"],
+    tradeoffs: ["Needs an effective cooling path because copper alloys are not stand-alone thermal barriers", "Hot-gas oxidation protection and coating compatibility require separate review"],
+    propertyBasis: "GRCop-84 nominal conductivity and a 538 °C screening reference, not a design allowable",
+    sourceUrl: "https://ntrs.nasa.gov/citations/20070005011",
+  },
+  {
+    id: "Inconel 718-class nickel superalloy",
+    family: "Nickel superalloy",
+    densityKgM3: 8190,
+    thermalConductivityWMK: 11.4,
+    referenceTemperatureK: 973,
+    role: "Outer jacket, injector, or nozzle structure",
+    advantages: ["Strong, fatigue-resistant structural option across a broad moderate-temperature range", "Mature aerospace fabrication and joining routes"],
+    tradeoffs: ["Conducts heat roughly 25 times less effectively than the GRCop-class option", "Sustained service above the entered 700 °C reference needs grade, heat-treatment, and life data"],
+    propertyBasis: "Annealed density, room-temperature conductivity, and 700 °C screening reference",
+    sourceUrl: "https://www.specialmetals.com/documents/technical-bulletins/inconel/",
+  },
+  {
+    id: "Haynes 230-class nickel superalloy",
+    family: "Nickel superalloy",
+    densityKgM3: 8970,
+    thermalConductivityWMK: 8.9,
+    referenceTemperatureK: 1423,
+    role: "Oxidation-resistant hot-section structure",
+    advantages: ["High-temperature strength and oxidation resistance for prolonged exposure", "Good thermal stability and resistance to grain growth"],
+    tradeoffs: ["Lowest heat-spreading conductivity in this preliminary library", "High density makes it a poor default where a cooled copper liner can carry the heat"],
+    propertyBasis: "Room-temperature physical properties and a 1150 °C oxidation screening reference",
+    sourceUrl: "https://haynesintl.com/en/alloys/alloy-portfolio/high-temperature-alloys/haynes-230/",
+  },
+  {
+    id: "316L stainless steel",
+    family: "Stainless steel",
+    densityKgM3: 8000,
+    thermalConductivityWMK: 15,
+    referenceTemperatureK: null,
+    role: "Prototype manifolds and lower-temperature structure",
+    advantages: ["Accessible corrosion-resistant choice for prototype plumbing and lower-temperature structure", "Common welding routes with no routine post-weld heat treatment for thin sections"],
+    tradeoffs: ["Low thermal conductivity and high thermal expansion increase thermal-gradient and distortion concerns", "No generic hot-wall temperature reference is assigned in Kythros"],
+    propertyBasis: "Room-temperature density and conductivity; no generic temperature limit assigned",
+    sourceUrl: "https://www.thyssenkrupp-materials.co.uk/stainless-steel-316l-14404.html",
+  },
+  {
+    id: "Not selected",
+    family: "Unspecified",
+    densityKgM3: null,
+    thermalConductivityWMK: null,
+    referenceTemperatureK: null,
+    role: "Select a material before screening",
+    advantages: [],
+    tradeoffs: ["No screening properties or material guidance are available"],
+    propertyBasis: "No screening properties",
+    sourceUrl: "",
+  },
 ];
 
 export const RDE_MATERIAL_IDS = RDE_MATERIALS.map((material) => material.id);

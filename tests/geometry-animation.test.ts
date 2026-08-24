@@ -4,6 +4,8 @@ import test from "node:test";
 
 test("keeps the RDE animation controllable, accessible, and explicitly schematic", async () => {
   const component = await readFile(new URL("../components/rde-physics-visual.tsx", import.meta.url), "utf8");
+  const assembly = await readFile(new URL("../components/rde-assembly-3d.tsx", import.meta.url), "utf8");
+  const planner = await readFile(new URL("../components/design-planner.tsx", import.meta.url), "utf8");
   const styles = await readFile(new URL("../components/rde-geometry-animation.module.css", import.meta.url), "utf8");
 
   assert.match(component, /Conceptual flow animation/);
@@ -15,11 +17,22 @@ test("keeps the RDE animation controllable, accessible, and explicitly schematic
   assert.match(component, /mixtureStream/);
   assert.match(component, /productStream/);
   assert.match(component, /3D assembly/);
-  assert.match(component, /Cooling channels/);
-  assert.match(component, /Material map/);
-  assert.match(component, /REGENERATIVE CHANNELS/);
-  assert.match(component, /design\.build\?\.hotWallMaterial/);
-  assert.match(component, /aria-pressed=\{assemblyLayer === value\}/);
+  assert.match(component, /<RdeAssembly3D design=\{design\}/);
+  assert.match(assembly, /WebGLRenderer/);
+  assert.match(assembly, /OrbitControls/);
+  assert.match(assembly, /Drag to rotate/);
+  assert.match(assembly, /wheel or pinch to zoom/);
+  assert.match(assembly, /COMPONENT INSPECTOR/);
+  assert.match(assembly, /Cooling circuit/);
+  assert.match(assembly, /Combustion annulus/);
+  assert.match(assembly, /pointerup/);
+  assert.match(assembly, /aria-label", "Interactive three-dimensional RDE assembly/);
+  assert.match(assembly, /isRegenerative/);
+  assert.match(assembly, /No regenerative channels in this saved build/);
+  assert.match(planner, /Material tradeoff guide/);
+  assert.match(planner, /item\.advantages/);
+  assert.match(planner, /item\.tradeoffs/);
+  assert.match(planner, /Saved as a heat-sink build/);
   assert.match(styles, /@keyframes rotate-wave/);
   assert.match(styles, /animation-play-state: paused/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
