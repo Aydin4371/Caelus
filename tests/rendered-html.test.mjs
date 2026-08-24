@@ -108,9 +108,13 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(design, /RDE geometry/);
   assert.match(design, /Regenerative thermal and hydraulic screen/);
   assert.match(design, /Material tradeoff guide/);
-  assert.match(design, /No regenerative channel geometry/);
+  assert.match(design, /film-flow allocation/i);
+  assert.match(design, /Sensible-energy capacity/);
+  assert.match(design, /Ablative inventory/);
+  assert.match(design, /Idealized energy-equivalent duration/);
+  assert.match(design, /WHY IT FITS/);
   assert.match(design, /Materials and subsystems/);
-  assert.match(design, /Entered heat load, not a predicted heat flux/);
+  assert.match(design, /Entered assumptions, not predicted performance or life/);
   assert.match(design, /<RdeGeometrySchematic design=\{activeDesign\}/);
   assert.doesNotMatch(physicsVisual, /<RdeGeometrySchematic design=\{design\}/);
   assert.match(physicsVisual, /schematic-view head-end-panel/);

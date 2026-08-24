@@ -30,7 +30,13 @@ function partValue(design: EngineDesign, part: PartId) {
   if (part === "plenum") return `${entered(design.plenumVolumeCm3, "cm³", 0)} · ${build?.feedSystem ?? "Feed system not defined"}`;
   if (part === "injector") return `${Number.isFinite(design.injectorCount) ? Math.round(design.injectorCount) : "Not entered"} injectors · ${design.injectorType}`;
   if (part === "outer-jacket") return build?.outerWallMaterial ?? "Material not defined";
-  if (part === "cooling") return build?.coolingMethod === "Regenerative" ? `${build.coolingChannelCount} channels · ${entered(build.coolingChannelWidthMm, "mm", 2)} × ${entered(build.coolingChannelDepthMm, "mm", 2)} · ${build.coolant}` : `${build?.coolingMethod ?? "Not defined"} · no regenerative channel geometry`;
+  if (part === "cooling") {
+    if (build?.coolingMethod === "Regenerative") return `${build.coolingChannelCount} channels · ${entered(build.coolingChannelWidthMm, "mm", 2)} × ${entered(build.coolingChannelDepthMm, "mm", 2)} · ${build.coolant}`;
+    if (build?.coolingMethod === "Film") return `${build.filmCoolant || "Coolant not entered"} · ${entered(build.filmMassFlowKgS, "kg/s", 3)} · ${build.filmInjectionGeometry || "Delivery not entered"} at ${build.filmInjectionLocation || "location not entered"}`;
+    if (build?.coolingMethod === "Heat sink") return `${entered(build.heatSinkMassKg, "kg", 2)} thermal mass · ${entered(build.heatSinkInitialTemperatureK, "K", 0)} to ${entered(build.heatSinkMaximumTemperatureK, "K", 0)}`;
+    if (build?.coolingMethod === "Ablative") return `${build.ablativeMaterial || "Material not entered"} · ${entered(build.ablativeThicknessMm, "mm", 2)} liner`;
+    return "Thermal-management hardware not defined";
+  }
   if (part === "hot-wall") return build ? `${build.hotWallMaterial} · ${entered(build.wallThicknessMm, "mm", 2)} wall · ${build.hotWallCoating} coating` : "Material not defined";
   if (part === "annulus") return `${entered(0.5 * (design.annulusOuterDiameterMm - design.annulusInnerDiameterMm), "mm", 2)} radial gap · ${entered(design.chamberLengthMm, "mm", 0)} length`;
   if (part === "centerbody") return build?.centerbodyMaterial ?? "Material not defined";
@@ -196,6 +202,46 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSe
         coolingMeshes.push(manifold);
       }
       addPart("cooling", coolingMeshes);
+    } else if (design.build?.coolingMethod === "Film") {
+      const filmMeshes: THREE.Mesh[] = [];
+      const filmLayer = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(outerRadius - 0.075, outerRadius - 0.075, chamberLength - 0.3, 64, 1, true, shellStart, shellArc), makeMaterial(0x2588c7, 0.72, 0.04, 0.24)));
+      filmLayer.position.x = 0.1;
+      filmMeshes.push(filmLayer);
+      const injectionX = design.build.filmInjectionLocation === "Mid-chamber" ? 0 : design.build.filmInjectionLocation === "Chamber inlet" ? -2.45 : -3.02;
+      const filmRing = new THREE.Mesh(new THREE.TorusGeometry(outerRadius - 0.1, 0.075, 10, 64, shellArc), makeMaterial(0x187eac, 1, 0.05, 0.25));
+      filmRing.rotation.y = Math.PI / 2;
+      filmRing.rotation.x = shellStart;
+      filmRing.position.x = injectionX;
+      filmMeshes.push(filmRing);
+      if (design.build.filmInjectionGeometry === "Discrete holes") {
+        for (let index = 0; index < 20; index += 1) {
+          const angle = index / 20 * shellArc + shellStart;
+          const hole = new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 8), makeMaterial(0x76d7ef, 1, 0.02, 0.2));
+          hole.position.set(injectionX, Math.cos(angle) * (outerRadius - 0.1), Math.sin(angle) * (outerRadius - 0.1));
+          filmMeshes.push(hole);
+        }
+      }
+      addPart("cooling", filmMeshes);
+    } else if (design.build?.coolingMethod === "Heat sink") {
+      const heatSinkShell = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(2.62, 2.62, chamberLength - 0.18, 64, 1, true, shellStart, shellArc), makeMaterial(0xd78a2f, 0.9, 0.65, 0.32)));
+      heatSinkShell.position.x = 0.02;
+      const heatSinkBandInlet = new THREE.Mesh(new THREE.TorusGeometry(2.62, 0.12, 12, 64, shellArc), makeMaterial(0xb8681f, 1, 0.72, 0.28));
+      heatSinkBandInlet.rotation.y = Math.PI / 2;
+      heatSinkBandInlet.rotation.x = shellStart;
+      heatSinkBandInlet.position.x = -2.9;
+      const heatSinkBandExit = heatSinkBandInlet.clone();
+      heatSinkBandExit.position.x = 2.95;
+      addPart("cooling", [heatSinkShell, heatSinkBandInlet, heatSinkBandExit]);
+    } else if (design.build?.coolingMethod === "Ablative") {
+      const enteredThickness = Number.isFinite(design.build.ablativeThicknessMm) ? design.build.ablativeThicknessMm : 4;
+      const visualInset = Math.min(0.28, Math.max(0.08, enteredThickness / 45));
+      const ablativeLiner = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(outerRadius - visualInset, outerRadius - visualInset, chamberLength - 0.12, 64, 1, true, shellStart, shellArc), makeMaterial(0xa83e52, 0.96, 0.08, 0.72)));
+      ablativeLiner.position.x = 0.02;
+      const ablativeFaceInnerRadius = Math.min(centerRadius + 0.04, outerRadius - visualInset - 0.04);
+      const ablativeFace = new THREE.Mesh(new THREE.RingGeometry(ablativeFaceInnerRadius, outerRadius - visualInset, 64, 1, shellStart, shellArc), makeMaterial(0xc75f70, 1, 0.08, 0.68));
+      ablativeFace.rotation.y = Math.PI / 2;
+      ablativeFace.position.x = -3.08;
+      addPart("cooling", [ablativeLiner, ablativeFace]);
     }
 
     const flowArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(-4.7, -2.85, 0), 10.2, 0x2588a2, 0.34, 0.18);
@@ -284,7 +330,7 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, onSe
       controlsRef.current = null;
       modelRef.current = null;
     };
-  }, [design.annulusInnerDiameterMm, design.annulusOuterDiameterMm, design.injectorCount, design.build?.coolingChannelCount, isRegenerative, onHover, onSelect]);
+  }, [design.annulusInnerDiameterMm, design.annulusOuterDiameterMm, design.injectorCount, design.build?.coolingMethod, design.build?.coolingChannelCount, design.build?.filmInjectionGeometry, design.build?.filmInjectionLocation, design.build?.ablativeThicknessMm, isRegenerative, onHover, onSelect]);
 
   useEffect(() => {
     const effectiveSelection = selectedPart !== "all" && partGroupsRef.current.has(selectedPart) ? selectedPart : "all";
@@ -324,13 +370,16 @@ export function RdeAssembly3D({ design }: { design: EngineDesign }) {
   const [hoveredPart, setHoveredPart] = useState<Exclude<PartId, "all"> | null>(null);
   const [viewPreset, setViewPreset] = useState<ViewPreset>("isometric");
   const [viewRequest, setViewRequest] = useState(0);
-  const isRegenerative = design.build?.coolingMethod === "Regenerative";
-  const displayedParts = useMemo(() => PARTS.map((part) => part.id === "cooling" && !isRegenerative ? {
-    ...part,
-    label: "Thermal management",
-    color: "#98a8aa",
-    purpose: `${design.build?.coolingMethod ?? "No method"} is recorded. No regenerative channels are drawn because this build does not use them.`,
-  } : part), [design.build?.coolingMethod, isRegenerative]);
+  const thermalMethod = design.build?.coolingMethod ?? "Not defined";
+  const isRegenerative = thermalMethod === "Regenerative";
+  const thermalPresentation = useMemo(() => {
+    if (thermalMethod === "Film") return { label: "Film cooling layer", color: "#2588c7", purpose: "Shows the entered film injection feature and the protective wall layer. Effectiveness is still an entered assumption." };
+    if (thermalMethod === "Heat sink") return { label: "Heat-sink thermal mass", color: "#d78a2f", purpose: "Shows the entered thermal-mass shell that absorbs sensible heat during a limited exposure." };
+    if (thermalMethod === "Ablative") return { label: "Ablative liner", color: "#a83e52", purpose: "Shows the entered sacrificial liner on the hot-gas side. It does not predict recession or bond-line temperature." };
+    if (thermalMethod === "Not defined") return { label: "Thermal management", color: "#98a8aa", purpose: "No thermal-management hardware is defined for this saved build." };
+    return { label: "Regenerative channels", color: "#27a5c1", purpose: "Carries coolant through the entered axial channels and manifolds around the chamber." };
+  }, [thermalMethod]);
+  const displayedParts = useMemo(() => PARTS.map((part) => part.id === "cooling" ? { ...part, ...thermalPresentation } : part), [thermalPresentation]);
   const selectedDefinition = useMemo(() => displayedParts.find((part) => part.id === selectedPart) ?? null, [displayedParts, selectedPart]);
 
   function chooseView(view: ViewPreset) {
@@ -347,8 +396,8 @@ export function RdeAssembly3D({ design }: { design: EngineDesign }) {
       <div className="assembly-viewport">
         <RdeAssemblyCanvas design={design} selectedPart={selectedPart} viewPreset={viewPreset} viewRequest={viewRequest} onSelect={setSelectedPart} onHover={setHoveredPart}/>
         <div className="assembly-orientation"><span>INJECTOR</span><i>Flow direction →</i><span>EXHAUST</span></div>
-        {hoveredPart && <div className="assembly-hover-label">Click to inspect · {PART_LABELS[hoveredPart]}</div>}
-        {!isRegenerative && <div className="assembly-thermal-note"><strong>{design.build?.coolingMethod ?? "Thermal management not defined"}</strong><span>No regenerative channels in this saved build</span></div>}
+        {hoveredPart && <div className="assembly-hover-label">Click to inspect · {displayedParts.find((part) => part.id === hoveredPart)?.label ?? PART_LABELS[hoveredPart]}</div>}
+        {!isRegenerative && <div className={`assembly-thermal-note method-${thermalMethod.toLowerCase().replace(" ", "-")}`}><strong>{thermalPresentation.label}</strong><span>{thermalMethod === "Film" ? "Blue wall film and entered injection feature" : thermalMethod === "Heat sink" ? "Amber thermal-mass shell" : thermalMethod === "Ablative" ? "Red sacrificial hot-side liner" : "No cooling hardware defined"}</span></div>}
         <div className="assembly-axis-key"><span className="axis-x">X</span><span className="axis-y">Y</span><span className="axis-z">Z</span></div>
       </div>
       <aside className="assembly-inspector" aria-label="RDE component inspector">

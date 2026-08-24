@@ -38,6 +38,20 @@ export type EngineBuildDefinition = {
   coolantViscosityPaS: number;
   coolantThermalConductivityWMK: number;
   designHeatFluxMWM2: number;
+  filmCoolant: string;
+  filmMassFlowKgS: number;
+  filmInjectionGeometry: "Annular slot" | "Discrete holes";
+  filmInjectionLocation: "Injector face" | "Chamber inlet" | "Mid-chamber";
+  filmInjectionAngleDeg: number;
+  filmEffectivenessPct: number;
+  heatSinkMassKg: number;
+  heatSinkSpecificHeatJkgK: number;
+  heatSinkInitialTemperatureK: number;
+  heatSinkMaximumTemperatureK: number;
+  ablativeMaterial: string;
+  ablativeThicknessMm: number;
+  ablativeDensityKgM3: number;
+  ablativeEffectiveHeatMJkg: number;
 };
 
 export type EngineDesign = {
@@ -200,6 +214,20 @@ export const EMPTY_ENGINE_DESIGN: EngineDesign = {
     coolantViscosityPaS: 0.000013,
     coolantThermalConductivityWMK: 0.1,
     designHeatFluxMWM2: 10,
+    filmCoolant: "Fuel",
+    filmMassFlowKgS: 0.04,
+    filmInjectionGeometry: "Annular slot",
+    filmInjectionLocation: "Injector face",
+    filmInjectionAngleDeg: 20,
+    filmEffectivenessPct: 35,
+    heatSinkMassKg: 8,
+    heatSinkSpecificHeatJkgK: 500,
+    heatSinkInitialTemperatureK: 300,
+    heatSinkMaximumTemperatureK: 900,
+    ablativeMaterial: "Silica-phenolic composite",
+    ablativeThicknessMm: 8,
+    ablativeDensityKgM3: 1600,
+    ablativeEffectiveHeatMJkg: 3,
   },
 };
 
@@ -302,6 +330,7 @@ export function validateEngineDesign(design: EngineDesign) {
     if (!build.feedSystem.trim() || !build.ignitionSystem.trim()) issues.push("Feed and ignition systems are required for the preliminary build definition.");
     if ([build.hotWallMaterial, build.outerWallMaterial, build.injectorMaterial, build.centerbodyMaterial, build.nozzleMaterial].some((material) => material === "Not selected")) issues.push("Choose a structural material for every major hot-section component.");
     if (!(build.wallThicknessMm > 0)) issues.push("Wall thickness must be greater than zero.");
+    if (build.coolingMethod !== "Not defined" && !(build.designHeatFluxMWM2 > 0)) issues.push(`${build.coolingMethod} screening requires a positive entered design heat flux.`);
     if (build.coolingMethod === "Regenerative") {
       if (!build.coolant.trim()) issues.push("Regenerative cooling requires a coolant definition.");
       if (!Number.isInteger(build.coolingChannelCount) || build.coolingChannelCount < 1) issues.push("Cooling-channel count must be a positive integer.");
@@ -309,7 +338,17 @@ export function validateEngineDesign(design: EngineDesign) {
       if (!(build.coolingChannelRoughnessMm >= 0)) issues.push("Cooling-channel roughness must be zero or greater.");
       if (!(build.coolantMassFlowKgS > 0 && build.coolantInletTemperatureK > 0 && build.coolantInletPressureBar > 0)) issues.push("Coolant mass flow, inlet temperature, and inlet pressure must be greater than zero.");
       if (!(build.coolantDensityKgM3 > 0 && build.coolantSpecificHeatJkgK > 0 && build.coolantViscosityPaS > 0 && build.coolantThermalConductivityWMK > 0)) issues.push("Coolant density, heat capacity, viscosity, and thermal conductivity must be greater than zero.");
-      if (!(build.designHeatFluxMWM2 > 0)) issues.push("Regenerative-cooling screening requires a positive entered design heat flux.");
+    } else if (build.coolingMethod === "Film") {
+      if (!build.filmCoolant?.trim()) issues.push("Film cooling requires a film-coolant definition.");
+      if (!(build.filmMassFlowKgS > 0)) issues.push("Film-coolant mass flow must be greater than zero.");
+      if (!(build.filmInjectionAngleDeg >= 0 && build.filmInjectionAngleDeg <= 90)) issues.push("Film injection angle must be between 0 and 90 degrees.");
+      if (!(build.filmEffectivenessPct > 0 && build.filmEffectivenessPct <= 100)) issues.push("Entered film effectiveness must be greater than zero and no more than 100 percent.");
+    } else if (build.coolingMethod === "Heat sink") {
+      if (!(build.heatSinkMassKg > 0 && build.heatSinkSpecificHeatJkgK > 0)) issues.push("Heat-sink mass and specific heat must be greater than zero.");
+      if (!(build.heatSinkInitialTemperatureK > 0 && build.heatSinkMaximumTemperatureK > build.heatSinkInitialTemperatureK)) issues.push("Heat-sink maximum temperature must exceed its positive initial temperature.");
+    } else if (build.coolingMethod === "Ablative") {
+      if (!build.ablativeMaterial?.trim()) issues.push("Ablative cooling requires a liner-material definition.");
+      if (!(build.ablativeThicknessMm > 0 && build.ablativeDensityKgM3 > 0 && build.ablativeEffectiveHeatMJkg > 0)) issues.push("Ablative thickness, density, and entered effective heat absorption must be greater than zero.");
     }
   }
   return issues;
