@@ -3,10 +3,11 @@ import { validateEngineDesign, validateOperatingPoint, type EngineDesign, type O
 import { ANALYSIS_VERSION } from "./rde-analysis.ts";
 import { experimentPhysicsFromMetadata } from "./physics-evidence.ts";
 import { wallFieldImportIsValid } from "./spatial-field.ts";
+import { CONTROLLED_PARAMETERS } from "./controlled-parameters.ts";
 
 export const WORKSPACE_SCHEMA = "kythros-pressure-wave-workspace";
 export const LEGACY_WORKSPACE_SCHEMA = "caevera-pressure-wave-workspace";
-export const WORKSPACE_FORMAT_VERSION = 4;
+export const WORKSPACE_FORMAT_VERSION = 5;
 
 export type WorkspaceState = {
   cases: AnalysisCase[];
@@ -83,7 +84,7 @@ const REQUIRED_TEXT_METADATA = [
   "name", "solver", "solverVersion", "spatialScheme", "numericalFlux", "limiterFilter",
   "temporalScheme", "turbulenceModel", "combustionModel", "chemistryModel",
   "chemistryIntegrator", "wallBoundaryCondition", "inletBoundaryCondition",
-  "outletBoundaryCondition", "initializationMethod",
+  "inletForcingMethod", "outletBoundaryCondition", "initializationMethod",
 ] as const;
 
 function validateMetadata(metadata: Record<string, unknown>, label: string) {
@@ -116,6 +117,7 @@ function validateCase(value: unknown, index: number): asserts value is AnalysisC
   if (!isObject(value) || typeof value.id !== "string" || !isObject(value.metadata)) throw new Error(`Case ${index + 1} is malformed.`);
   if (!("solverRuntimeHours" in value.metadata)) value.metadata.solverRuntimeHours = Number.NaN;
   if (!("backPressureBar" in value.metadata)) value.metadata.backPressureBar = Number.NaN;
+  if (!("inletForcingMethod" in value.metadata)) value.metadata.inletForcingMethod = "Not documented";
   validateMetadata(value.metadata, `Case ${index + 1}`);
   if (!Array.isArray(value.testSignals) || !Array.isArray(value.cfdSignals) || value.testSignals.length < 3 || value.testSignals.length !== value.cfdSignals.length) {
     throw new Error(`Case ${index + 1} does not contain matched experiment and CFD probe arrays.`);
@@ -133,6 +135,7 @@ function validateCase(value: unknown, index: number): asserts value is AnalysisC
       || typeof value.relationship.baselineCaseId !== "string"
       || value.relationship.referenceCaseId != null && typeof value.relationship.referenceCaseId !== "string"
       || !allowedChanges.includes(String(value.relationship.changedVariable))
+      || value.relationship.changedParameter != null && !(String(value.relationship.changedParameter) in CONTROLLED_PARAMETERS)
       || typeof value.relationship.description !== "string") {
       throw new Error(`Case ${index + 1} has an invalid related-rerun definition.`);
     }
@@ -168,7 +171,7 @@ export function deserializeWorkspace(text: string): WorkspaceState {
     throw new Error("This is not valid JSON.");
   }
   if (!isObject(parsed) || parsed.schema !== WORKSPACE_SCHEMA && parsed.schema !== LEGACY_WORKSPACE_SCHEMA) throw new Error("This is not a Kythros pressure-and-wave workspace.");
-  if (parsed.formatVersion !== 1 && parsed.formatVersion !== 2 && parsed.formatVersion !== 3 && parsed.formatVersion !== WORKSPACE_FORMAT_VERSION) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
+  if (![1, 2, 3, 4, WORKSPACE_FORMAT_VERSION].includes(Number(parsed.formatVersion))) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
   if (!isObject(parsed.state) || !Array.isArray(parsed.state.cases)) throw new Error("The workspace does not contain a case list.");
   parsed.state.cases.forEach(validateCase);
   const cases = parsed.state.cases as AnalysisCase[];

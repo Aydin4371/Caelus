@@ -2,7 +2,6 @@ import type { CaseMetadata, SensitivityVariable } from "./caevera-types.ts";
 import { RESEARCH_CLAIMS_BY_CAUSE, SOURCE_IDS_BY_CAUSE, type DiagnosticCauseId, type DiagnosticResearchClaim } from "./diagnostic-knowledge.ts";
 import {
   CONFIRMATION_ERROR_REDUCTION_PCT,
-  CONTROLLED_VARIABLE_LABELS,
   CONTROLLED_RERUN_RULES,
   NUMERICAL_CONVERGENCE_RESPONSE_PCT,
   RECOMMENDATION_POLICY_VERSION,
@@ -16,6 +15,7 @@ import {
   type DataQualityResult,
 } from "./rde-analysis.ts";
 import { phasePatternErrorDeg, type RdeModeResult } from "./wave-dynamics.ts";
+import { CONTROLLED_PARAMETERS, type ControlledParameter } from "./controlled-parameters.ts";
 import {
   assessResolvedDifference,
   exactAssessment,
@@ -61,6 +61,7 @@ export type CaseHistoryEvidence = {
   baselineCaseId?: string;
   causeId: DiagnosticCauseId;
   changedVariable?: SensitivityVariable;
+  changedParameter?: ControlledParameter | null;
   state: "supports" | "weakens" | "unknown";
   strength: "strong" | "moderate";
   caseId: string;
@@ -129,6 +130,7 @@ export type ControlledNextRun = {
     version: string;
     evaluationMode: "numerical-convergence" | "model-sensitivity" | "case-specific";
     changedVariable: ControlledSensitivityVariable | null;
+    changedParameter: ControlledParameter | null;
     targetedMetricIds: string[];
     confirmationErrorReductionPct: number | null;
     minimumResponsePct: number | null;
@@ -429,14 +431,12 @@ type CoreNextRun = Omit<ControlledNextRun,
   "stage" | "whyThisRunFirst" | "inconclusiveCriterion" | "ifConfirmed" | "ifRejected" | "ifInconclusive" | "latestControlledResult" | "precedent" | "reasoningLedger"
 >;
 
-function currentSettingSummary(variable: ControlledSensitivityVariable, metadata: CaseMetadata) {
-  if (variable === "mesh") return `${metadata.minimumCellSizeMm.toFixed(3)} mm minimum cell`;
-  if (variable === "time-step") return `${metadata.timeStepUs.toFixed(3)} µs flow step`;
-  if (variable === "chemistry") return `${metadata.chemistryModel} with ${metadata.chemistryIntegrator}`;
-  if (variable === "inlet") return metadata.inletBoundaryCondition;
-  if (variable === "wall") return metadata.wallBoundaryCondition;
-  if (variable === "initialization") return metadata.initializationMethod;
-  return "the synchronized measured inlet history";
+function currentSettingSummary(parameter: ControlledParameter, metadata: CaseMetadata) {
+  if (parameter === "mesh-resolution") return `${metadata.minimumCellSizeMm.toFixed(3)} mm minimum cell`;
+  if (parameter === "flow-time-step") return `${metadata.timeStepUs.toFixed(3)} µs flow step`;
+  const field = CONTROLLED_PARAMETERS[parameter].primaryField;
+  const value = metadata[field];
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : String(value || "the entered setting");
 }
 
 function targetMetricNames(ids: string[]) {
@@ -482,6 +482,7 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
       version: RECOMMENDATION_POLICY_VERSION,
       evaluationMode,
       changedVariable: plannedVariable,
+      changedParameter: plannedRule?.parameter ?? null,
       targetedMetricIds: plannedRule?.targets ?? [],
       confirmationErrorReductionPct: plannedRule ? CONFIRMATION_ERROR_REDUCTION_PCT : null,
       minimumResponsePct: plannedRule?.minimumResponsePct ?? null,
@@ -492,7 +493,8 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
   };
 
   if (plannedVariable && plannedRule) {
-    const variableLabel = CONTROLLED_VARIABLE_LABELS[plannedVariable];
+    const parameter = plannedRule.parameter;
+    const variableLabel = CONTROLLED_PARAMETERS[parameter].label.toLowerCase();
     const continuingSequence = numericalLimit != null && latest?.sequenceStatus === "effect-confirmed";
     return {
       ...common,
@@ -502,7 +504,7 @@ function nextRunFor(hypothesis: DiagnosticHypothesis, metadata: CaseMetadata, la
       title: numericalLimit != null
         ? continuingSequence ? `Continue ${variableLabel} convergence with the next adjacent level` : `Test ${variableLabel} convergence between two adjacent levels`
         : `Test one ${variableLabel} change`,
-      change: `Use the accepted case with ${currentSettingSummary(plannedVariable, metadata)} as the starting point. Change only ${variableLabel} by one documented adjacent level.`,
+      change: `Use the accepted case with ${currentSettingSummary(parameter, metadata)} as the starting point. Change only the ${variableLabel} by one documented adjacent level.`,
       reason,
       holdFixed: ["Geometry and operating point", "experiment samples and probe mapping", "comparison window and uncertainty values", `all CFD settings except ${variableLabel}`],
       expectedOutcome: numericalLimit != null

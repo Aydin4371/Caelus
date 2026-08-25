@@ -1,6 +1,7 @@
 import type { Signal } from "./rde-analysis.ts";
 import type { FileImportProvenance } from "./data-import.ts";
 import type { WallFieldImport } from "./spatial-field.ts";
+import type { ControlledParameter } from "./controlled-parameters.ts";
 
 export type Dimensionality = "2D" | "3D" | "";
 
@@ -10,7 +11,19 @@ export type CaseRelationship = {
   baselineCaseId: string;
   referenceCaseId?: string;
   changedVariable: SensitivityVariable;
+  changedParameter?: ControlledParameter | null;
   description: string;
+  recommendation?: {
+    id: string;
+    frozenAt: string;
+    analysisVersion: string;
+    policyVersion: string;
+    startingCaseId: string;
+    parameter: ControlledParameter;
+    currentValue: string | number;
+    suggestedTargetValue: string | number | null;
+    question: string;
+  } | null;
 };
 
 export type RdePhysicsMeasurements = {
@@ -74,6 +87,7 @@ export type CaseMetadata = {
   solverRuntimeHours: number;
   wallBoundaryCondition: string;
   inletBoundaryCondition: string;
+  inletForcingMethod: string;
   outletBoundaryCondition: string;
   initializationMethod: string;
   meshConvergencePct: number;
@@ -110,6 +124,11 @@ export type AnalysisCase = {
   testSignals: Signal[];
   cfdSignals: Signal[];
   imports?: { experiment: FileImportProvenance; cfd: FileImportProvenance } | null;
+  pairingAudit?: {
+    verifiedAt: string;
+    fingerprint: string;
+    checks: Array<{ id: string; label: string; passed: boolean; detail: string }>;
+  } | null;
   wallFields?: { experiment: WallFieldImport | null; cfd: WallFieldImport | null } | null;
 };
 
@@ -152,6 +171,7 @@ export const EMPTY_METADATA: CaseMetadata = {
   solverRuntimeHours: Number.NaN,
   wallBoundaryCondition: "",
   inletBoundaryCondition: "",
+  inletForcingMethod: "",
   outletBoundaryCondition: "",
   initializationMethod: "",
   meshConvergencePct: Number.NaN,

@@ -21,6 +21,9 @@ import { WAVE_METHOD_SOURCES } from "../lib/wave-method-sources.ts";
 import { mapProbeTable, parseDelimitedTable, suggestImportMapping } from "../lib/data-import.ts";
 import { deserializeWorkspace, serializeWorkspace, WORKSPACE_SCHEMA } from "../lib/workspace.ts";
 import { PUBLISHED_VALIDATION_SOURCES, PUBLISHED_WAVE_SPEED_BENCHMARKS, RAW_DATASET_VALIDATION_CASES, waveSpeedFromPassageFrequency } from "../lib/published-benchmarks.ts";
+import { createNextRunWorkOrder } from "../lib/next-run-work-order.ts";
+import { parseCfdRunManifest, parseOpenFoamCaseFiles, CFD_RUN_MANIFEST_SCHEMA } from "../lib/cfd-run-manifest.ts";
+import { auditComparisonPairing } from "../lib/comparison-pairing.ts";
 
 function sineSignal({
   name,
@@ -88,6 +91,7 @@ const DEMO_METADATA: CaseMetadata = {
   solverRuntimeHours: 10,
   wallBoundaryCondition: "Isothermal 450 K",
   inletBoundaryCondition: "Measured total state + mass flow",
+  inletForcingMethod: "No inlet forcing applied",
   outletBoundaryCondition: "Non-reflecting pressure outlet",
   initializationMethod: "Single-point ignition kernel",
   meshConvergencePct: 4.8,
@@ -97,6 +101,50 @@ const DEMO_METADATA: CaseMetadata = {
   cfdPressureUncertaintyPct: 2,
   cfdTimingUncertaintyUs: 0.25,
 };
+
+test("solver manifests prefill documented CFD settings without inventing the rest", () => {
+  const imported = parseCfdRunManifest(JSON.stringify({
+    schema: CFD_RUN_MANIFEST_SCHEMA,
+    formatVersion: 1,
+    source: "generic",
+    metadata: { solver: "Fluent", solverVersion: "2026 R1", timeStepUs: 0.05, unknownSetting: "ignored" },
+  }));
+  assert.equal(imported.metadata.solver, "Fluent");
+  assert.equal(imported.metadata.timeStepUs, 0.05);
+  assert.equal("unknownSetting" in imported.metadata, false);
+
+  const openFoam = parseOpenFoamCaseFiles([
+    { name: "controlDict", text: "application rhoReactingFoam;\ndeltaT 1e-7;\nmaxCo 0.25;" },
+    { name: "fvSchemes", text: "ddtSchemes { default backward; }\ndivSchemes { default Gauss linearUpwind; }" },
+  ]);
+  assert.equal(openFoam.metadata.solver, "rhoReactingFoam");
+  close(openFoam.metadata.timeStepUs as number, 0.1, 1e-12, "OpenFOAM time step");
+  assert.equal(openFoam.metadata.cfl, 0.25);
+});
+
+test("automatic pairing audits probes, synchronization, and the common time window", () => {
+  const demo = makeDemoProbeSignals();
+  const audit = auditComparisonPairing(DEMO_METADATA, demo.test, demo.cfd);
+  assert.equal(audit.passed, true);
+  assert.match(audit.fingerprint, /^pair-/);
+  assert.equal(audit.checks.length, 4);
+});
+
+test("a recommendation freezes one exact CFD parameter into a work order", () => {
+  const demo = makeDemoProbeSignals();
+  const comparisons = compareProbeSets(demo.test, demo.cfd).comparisons;
+  const experiment = analyzeRdeProbeSet(demo.test, DEMO_METADATA.probePositionsDeg, DEMO_METADATA.annulusMeanDiameterMm, { maximumWaveCount: DEMO_METADATA.maximumWaveCount, synchronizationConfirmed: true });
+  const simulation = analyzeRdeProbeSet(demo.cfd, DEMO_METADATA.probePositionsDeg, DEMO_METADATA.annulusMeanDiameterMm, { maximumWaveCount: DEMO_METADATA.maximumWaveCount, synchronizationConfirmed: true });
+  const assessment = buildCaseAssessment(DEMO_METADATA, comparisons, experiment, simulation);
+  const baseline: AnalysisCase = { id: "baseline", source: "demo", metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
+  const workOrder = createNextRunWorkOrder(assessment.nextRun, baseline, "2026-08-25T00:00:00.000Z");
+  assert.ok(workOrder);
+  assert.equal(workOrder.change.parameter, assessment.nextRun.decisionPolicy.changedParameter);
+  assert.ok(workOrder.change.allowedMetadataFields.length > 0);
+  assert.ok(workOrder.lockedMetadataFields.every((field) => !workOrder.change.allowedMetadataFields.includes(field)));
+  assert.equal(workOrder.lockedSettings.solver, DEMO_METADATA.solver);
+  assert.deepEqual(workOrder.comparisonDefinition.probePositionsDeg, DEMO_METADATA.probePositionsDeg);
+});
 
 test("identical signals produce exact waveform agreement and cycle metrics", () => {
   const testSignal = sineSignal({ name: "test" });
@@ -509,7 +557,7 @@ test("a related case is diagnostic only when every experiment sample and one CFD
   const candidate: AnalysisCase = {
     id: "candidate",
     source: "demo",
-    relationship: { baselineCaseId: "base", changedVariable: "mesh", description: "Mesh plus hidden changes" },
+    relationship: { baselineCaseId: "base", changedVariable: "mesh", changedParameter: "mesh-resolution", description: "Mesh plus hidden changes" },
     metadata: { ...DEMO_METADATA, name: "Uncontrolled", minimumCellSizeMm: 0.125, meshCells: 5_000_000, turbulenceModel: "LES" },
     testSignals: changedExperiment,
     cfdSignals: demo.cfd,
@@ -521,24 +569,24 @@ test("a related case is diagnostic only when every experiment sample and one CFD
   assert.ok(evidence.relationshipIssues.some((issue) => /experiment pressure samples differ/i.test(issue)));
   assert.ok(evidence.relationshipIssues.some((issue) => /turbulence model/i.test(issue)));
   assert.match(evidence.detail, /experiment pressure samples differ/i);
-  assert.match(evidence.detail, /more than one CFD setting group changed.*additional changes: turbulence model/i);
+  assert.match(evidence.detail, /more than the declared CFD parameter changed.*additional changes: turbulence model/i);
 
   const unchangedInlet: AnalysisCase = {
     id: "unchanged-inlet",
     source: "demo",
-    relationship: { baselineCaseId: "base", referenceCaseId: "base", changedVariable: "inlet", description: "Declared inlet rerun" },
+    relationship: { baselineCaseId: "base", referenceCaseId: "base", changedVariable: "inlet", changedParameter: "inlet-treatment", description: "Declared inlet rerun" },
     metadata: { ...DEMO_METADATA, name: "Unchanged inlet" },
     testSignals: demo.test,
     cfdSignals: demo.cfd,
   };
   const unchangedEvidence = buildCaseHistoryEvidence([baseline, unchangedInlet], baseline.id)[0];
   assert.equal(unchangedEvidence.controlled, false);
-  assert.deepEqual(unchangedEvidence.relationshipIssues, ["No inlet setting differs from the starting case Synthetic test."]);
+  assert.deepEqual(unchangedEvidence.relationshipIssues, ["The declared inlet boundary treatment does not differ from the starting case Synthetic test."]);
 
   const uncertaintyUpdated: AnalysisCase = {
     id: "uncertainty-updated",
     source: "demo",
-    relationship: { baselineCaseId: "base", referenceCaseId: "base", changedVariable: "mesh", description: "Mesh rerun with updated result uncertainty" },
+    relationship: { baselineCaseId: "base", referenceCaseId: "base", changedVariable: "mesh", changedParameter: "mesh-resolution", description: "Mesh rerun with updated result uncertainty" },
     metadata: { ...DEMO_METADATA, name: "Mesh uncertainty update", minimumCellSizeMm: 0.125, cfdPressureUncertaintyPct: 1.5, cfdTimingUncertaintyUs: 0.15 },
     testSignals: demo.test,
     cfdSignals: demo.cfd,
@@ -554,8 +602,8 @@ test("measured unsteady forcing has a classifiable rerun path", () => {
   const candidate: AnalysisCase = {
     id: "forcing",
     source: "demo",
-    relationship: { baselineCaseId: "base", changedVariable: "unsteadiness", description: "Measured inlet-pressure history" },
-    metadata: { ...DEMO_METADATA, name: "Measured forcing", inletBoundaryCondition: "Measured synchronized inlet-pressure history" },
+    relationship: { baselineCaseId: "base", changedVariable: "unsteadiness", changedParameter: "inlet-unsteadiness", description: "Measured inlet-pressure history" },
+    metadata: { ...DEMO_METADATA, name: "Measured forcing", inletForcingMethod: "Measured synchronized inlet-pressure history" },
     testSignals: demo.test,
     cfdSignals: demo.cfd.map((signal) => ({ ...signal, pressure: signal.pressure.map((value, index) => value * (1 + 0.02 * Math.sin(index / 90))) })),
   };

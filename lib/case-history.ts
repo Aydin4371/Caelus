@@ -1,4 +1,5 @@
 import type { AnalysisCase, CaseMetadata, SensitivityVariable } from "./caevera-types.ts";
+import { ALL_CONTROLLED_FIELDS, CONTROLLED_PARAMETERS, inferControlledParameter, type ControlledParameter } from "./controlled-parameters.ts";
 import { buildCaseAssessment, type CaseAssessment, type MetricAssessment } from "./diagnostics.ts";
 import type { DiagnosticCauseId } from "./diagnostic-knowledge.ts";
 import {
@@ -31,6 +32,7 @@ export type CaseHistoryEvidence = {
   baselineCaseId: string;
   causeId: DiagnosticCauseId;
   changedVariable: SensitivityVariable;
+  changedParameter: ControlledParameter | null;
   state: "supports" | "weakens" | "unknown";
   strength: "strong" | "moderate";
   caseId: string;
@@ -55,16 +57,7 @@ export type CaseHistoryEvidence = {
   planDisposition: PlanDisposition;
 };
 
-export const CONTROLLED_RERUN_FIELDS: Record<SensitivityVariable, (keyof CaseMetadata)[]> = {
-  mesh: ["meshCells", "minimumCellSizeMm", "cellsPerInductionLength", "nearWallCellSizeMm", "spatialScheme", "spatialOrder", "numericalFlux", "limiterFilter"],
-  "time-step": ["timeStepUs", "cfl", "temporalScheme", "temporalOrder"],
-  chemistry: ["chemistryModel", "chemistrySpecies", "chemistryReactions", "chemistryIntegrator", "combustionModel"],
-  inlet: ["inletBoundaryCondition"],
-  wall: ["wallBoundaryCondition"],
-  initialization: ["initializationMethod"],
-  unsteadiness: ["inletBoundaryCondition"],
-  other: ["solver", "solverVersion", "dimensionality", "turbulenceModel", "outletBoundaryCondition"],
-};
+const OTHER_CFD_FIELDS: (keyof CaseMetadata)[] = ["solver", "solverVersion", "dimensionality", "turbulenceModel", "outletBoundaryCondition"];
 
 const PHYSICAL_CASE_FIELDS: (keyof CaseMetadata)[] = [
   "annulusMeanDiameterMm", "annulusDiameterUncertaintyMm", "probePositionsDeg", "maximumWaveCount",
@@ -114,6 +107,7 @@ const FIELD_LABELS: Partial<Record<keyof CaseMetadata, string>> = {
   timeStepUs: "time step",
   wallBoundaryCondition: "wall treatment",
   inletBoundaryCondition: "inlet treatment",
+  inletForcingMethod: "measured inlet forcing",
   outletBoundaryCondition: "outlet treatment",
   initializationMethod: "initialization",
   cfdPressureUncertaintyPct: "CFD pressure uncertainty",
@@ -155,7 +149,7 @@ function signalsEqual(left: AnalysisCase["testSignals"], right: AnalysisCase["te
 }
 
 function changedCfdSettings(baseline: CaseMetadata, candidate: CaseMetadata) {
-  const fields = [...new Set(Object.values(CONTROLLED_RERUN_FIELDS).flat())];
+  const fields = [...new Set([...ALL_CONTROLLED_FIELDS, ...OTHER_CFD_FIELDS])];
   return fields.filter((field) => !valueEqual(baseline[field], candidate[field]));
 }
 
@@ -263,20 +257,25 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
     const referenceCase = requestedReference ?? previous?.item ?? baseline;
     const referenceSummary = summaryFor(referenceCase);
     const changedSettings = changedCfdSettings(referenceCase.metadata, candidate.metadata);
+    const changedParameter = relation.changedParameter ?? inferControlledParameter(variable, changedSettings);
+    const parameterDefinition = changedParameter ? CONTROLLED_PARAMETERS[changedParameter] : null;
     const physicalDifferences = physicalCaseDifferences(referenceCase, candidate);
     const experimentMatches = signalsEqual(referenceCase.testSignals, candidate.testSignals);
     const physicalCaseMatches = physicalDifferences.length === 0 && experimentMatches;
     const referenceInFamily = referenceCase.id === baseline.id || referenceCase.relationship?.baselineCaseId === baseline.id;
-    const expectedChangedSettings = rule ? changedSettings.filter((field) => CONTROLLED_RERUN_FIELDS[variable].includes(field)) : [];
-    const extraChangedSettings = rule ? changedSettings.filter((field) => !CONTROLLED_RERUN_FIELDS[variable].includes(field)) : changedSettings;
+    const parameterMatchesVariable = Boolean(parameterDefinition && parameterDefinition.variable === variable);
+    const expectedChangedSettings = parameterDefinition ? changedSettings.filter((field) => parameterDefinition.fields.includes(field)) : [];
+    const extraChangedSettings = parameterDefinition ? changedSettings.filter((field) => !parameterDefinition.fields.includes(field)) : changedSettings;
     const relationshipIssues: string[] = [];
-    if (!rule || variable === "other") relationshipIssues.push("No single CFD setting group was declared. Choose one named change if this rerun should update the plan.");
+    if (!rule || variable === "other" || !changedParameter) relationshipIssues.push("No single CFD parameter was declared. Choose one named parameter if this rerun should update the plan.");
+    if (changedParameter && !parameterMatchesVariable) relationshipIssues.push("The declared parameter does not match the saved diagnostic category.");
     if (!referenceInFamily) relationshipIssues.push("The selected starting run is outside this operating point.");
     if (physicalDifferences.length) relationshipIssues.push(`Physical or comparison inputs changed: ${fieldNames(physicalDifferences)}.`);
     if (!experimentMatches) relationshipIssues.push(`Experiment pressure samples differ from the starting case ${referenceCase.metadata.name}.`);
-    if (rule && expectedChangedSettings.length === 0) relationshipIssues.push(`No ${variable === "time-step" ? "time-step" : variable} setting differs from the starting case ${referenceCase.metadata.name}.`);
-    if (extraChangedSettings.length) relationshipIssues.push(`More than one CFD setting group changed. Additional changes: ${fieldNames(extraChangedSettings)}.`);
+    if (rule && parameterDefinition && expectedChangedSettings.length === 0) relationshipIssues.push(`The declared ${parameterDefinition.label.toLowerCase()} does not differ from the starting case ${referenceCase.metadata.name}.`);
+    if (extraChangedSettings.length) relationshipIssues.push(`More than the declared CFD parameter changed. Additional changes: ${fieldNames(extraChangedSettings)}.`);
     const controlled = Boolean(rule)
+      && parameterMatchesVariable
       && referenceCase.id !== candidate.id
       && referenceInFamily
       && physicalCaseMatches
@@ -288,6 +287,7 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       baselineCaseId: baseline.id,
       causeId: fallbackCause,
       changedVariable: variable,
+      changedParameter,
       state: "unknown" as const,
       strength: "moderate" as const,
       caseId: candidate.id,
@@ -382,6 +382,7 @@ export function buildCaseHistoryEvidence(cases: AnalysisCase[], baselineCaseId: 
       baselineCaseId: baseline.id,
       causeId: rule.causeId,
       changedVariable: variable,
+      changedParameter,
       state,
       strength: "strong",
       caseId: candidate.id,
