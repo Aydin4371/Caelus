@@ -508,6 +508,20 @@ button { color: inherit; }
 .decision-scope span { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .decision-scope b { color: var(--text); font-weight: 680; }
 .decision-reasoning { margin: 16px 14px 0; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: #f7fbfa; }
+.decision-reasoning > summary { cursor: pointer; color: var(--ink); font-weight: 720; font-size: 14px; }
+.decision-reasoning[open] > summary { margin-bottom: 14px; }
+.next-run-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px; }
+.automatic-pairing { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--test); border-radius: 6px; background: #edf8f7; }
+.automatic-pairing > span, .solver-manifest-importer > div:first-child > span { display: block; color: var(--test); font: 720 10px var(--font-geist-mono), monospace; letter-spacing: .08em; }
+.automatic-pairing strong, .solver-manifest-importer > div:first-child > strong { display: block; margin-top: 3px; }
+.automatic-pairing p, .solver-manifest-importer p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.solver-manifest-importer { margin: 10px 0 16px; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: #f7fbfa; }
+.solver-import-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.solver-import-actions label { width: auto; }
+.solver-import-review { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.solver-import-review > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px; margin: 8px 0; }
+.solver-import-review > div span { display: grid; gap: 2px; padding: 7px; border-radius: 4px; background: var(--paper); font-size: 11px; }
+.solver-import-review > div b { color: var(--quiet); font: 680 9px var(--font-geist-mono), monospace; text-transform: uppercase; }
 .decision-reasoning-heading > span { color: var(--test); font: 720 11px var(--font-geist-mono), monospace; text-transform: uppercase; letter-spacing: .08em; }
 .decision-outcomes > div:first-child > span { color: var(--test); font-size: 13px; font-weight: 700; }
 .decision-reasoning-heading h3 { margin: 4px 0 0; font-size: 17px; font-weight: 650; letter-spacing: -.015em; }

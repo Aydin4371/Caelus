@@ -130,6 +130,7 @@ const CASE_INPUT_HELP_BASE: Array<Omit<CaseInputHelpGroup, "items"> & { items: A
       { key: "combustionModel", label: "Combustion model", definition: "Any turbulence–chemistry or flame model applied in addition to the chemical mechanism. Enter None when unused." },
       { key: "wallBoundaryCondition", label: "Wall thermal condition", definition: "The thermal wall treatment, such as adiabatic, isothermal with its temperature, or conjugate heat transfer." },
       { key: "inletBoundaryCondition", label: "Inlet treatment", definition: "How reactants enter the domain, including imposed total state, mass flow, injector representation, and backflow handling." },
+      { key: "inletForcingMethod", label: "Inlet forcing method", definition: "Whether the inlet uses no forcing, a synthetic perturbation, or a measured time history, including its source and synchronization." },
       { key: "outletBoundaryCondition", label: "Outlet treatment", definition: "The downstream boundary formulation, including imposed pressure and any non-reflecting treatment." },
       { key: "initializationMethod", label: "Ignition / initialization", definition: "How the rotating detonation was started or initialized, including ignition-kernel location and imposed initial wave state." },
     ],
@@ -462,6 +463,13 @@ const INPUT_HELP_DETAILS = {
     "obtainFrom": "CFD boundary input and hardware/injector description.",
     "usedFor": "Defines the baseline for an inlet-representation sensitivity.",
     "missingEffect": "Inlet-related recommendations cannot name or reproduce the current condition."
+  },
+  "inletForcingMethod": {
+    "format": "None, named synthetic forcing, or measured time-history file and mapping.",
+    "requirement": "Required",
+    "obtainFrom": "CFD boundary input and inlet-data provenance.",
+    "usedFor": "Separates the imposed inlet state from the unsteady forcing tested in a controlled rerun.",
+    "missingEffect": "An inlet-unsteadiness comparison cannot be reproduced or verified as atomic."
   },
   "outletBoundaryCondition": {
     "format": "Exact downstream pressure/non-reflecting formulation.",

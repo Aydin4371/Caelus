@@ -227,7 +227,9 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /EXPERIMENT REUSED/);
   assert.match(page, /Upload and map the CFD result for this comparison/);
   assert.match(page, /rerunFieldLocked/);
-  assert.match(page, /chooseChangedVariable/);
+  assert.match(page, /chooseChangedParameter/);
+  assert.match(page, /Download frozen run spec/);
+  assert.match(page, /AUTOMATIC PAIRING/);
   assert.match(page, /Review rerun →/);
   assert.match(page, /Review one-change rerun/);
   assert.match(page, /Operating point and experiment are locked/);

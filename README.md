@@ -19,6 +19,15 @@ Diagnosis, next action, expected result, comparable-case history, and input
 provenance now appear in one engineering-decision card. Technical ranking and
 conditional branches remain available under disclosures.
 
+The no-data workflow is now executable rather than only descriptive. Every
+controlled rerun names one atomic CFD parameter, locks unrelated model-card
+fields, and can start from a frozen, downloadable next-run work order. Baseline
+model cards can be prefilled from a Kythros JSON manifest or inspected
+OpenFOAM dictionaries. When a result is loaded, Kythros verifies the inherited
+operating point, probe mapping, synchronization state, and common time window,
+then saves a pairing fingerprint with the case. These controls improve
+reproducibility but do not replace external matched experiment and CFD data.
+
 The application starts as an empty workspace and accepts multiple operating
 points. It does not run CFD. Work remains in memory until the user downloads a
 versioned workspace file; refreshing the page does not provide durable browser
@@ -43,6 +52,24 @@ values. The source values are tabulated in
 `public/data/published-paired-validation.csv`; calculated errors and outcome
 labels are not stored in that file. None of these checks appears on the homepage
 or counts as an end-to-end Comparison demonstration.
+
+## Comparison workflow hardening
+
+- Separates mesh resolution from spatial method, flow time step from temporal
+  method, chemistry mechanism from chemistry integration and combustion model,
+  and inlet treatment from inlet forcing. A qualifying rerun can change only
+  one named parameter family.
+- Generates a frozen JSON work order containing the starting case, exact
+  parameter, locked settings, required outputs, comparison question, and
+  versioned classification rule.
+- Preserves the work-order identifier and recommendation snapshot on reruns
+  started from the decision panel.
+- Adds a generic CFD model-card manifest and an initial OpenFOAM dictionary
+  inspector. Detected values are always reviewed before application.
+- Replaces the manual pairing checkbox with calculated checks and a saved
+  pairing fingerprint.
+- Keeps the full reasoning ledger under a disclosure so the next action remains
+  the primary interface.
 
 ## v2.0.0 Kythros hierarchy and evidence-learning envelope
 
