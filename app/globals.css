@@ -1173,8 +1173,8 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
 .assembly-axis-key path { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .assembly-axis-key text { font: 800 9px var(--font-geist-mono), monospace; dominant-baseline: middle; }
 .assembly-axis-key .axis-x { color: #c84f58; fill: #c84f58; stroke: #c84f58; }
-.assembly-axis-key .axis-y { color: #2588a2; fill: #2588a2; stroke: #2588a2; }
-.assembly-axis-key .axis-z { color: #c8873d; fill: #c8873d; stroke: #c8873d; }
+.assembly-axis-key .axis-y { color: #c8873d; fill: #c8873d; stroke: #c8873d; }
+.assembly-axis-key .axis-z { color: #2588a2; fill: #2588a2; stroke: #2588a2; }
 .assembly-inspector { min-width: 0; padding: 13px; display: grid; align-content: start; gap: 10px; background: #f5f9f7; }
 .assembly-inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
 .assembly-inspector-heading > div { display: grid; gap: 3px; }
