@@ -32,6 +32,10 @@ test("keeps the RDE animation controllable, accessible, and explicitly schematic
   assert.match(assembly, /Air inlet \/ annular feed/);
   assert.match(assembly, /airInletArchitecture/);
   assert.match(assembly, /Model orientation axes: X, Y, and Z/);
+  assert.match(assembly, /className="axis-z" d="M25 38 L25 14/);
+  assert.match(assembly, /className="axis-y" d="M25 38 L43 51/);
+  assert.match(assembly, /<text className="axis-z" x="22" y="11">Z<\/text>/);
+  assert.match(assembly, /<text className="axis-y" x="47" y="57">Y<\/text>/);
   assert.match(assembly, /FLOW DIRECTION/);
   assert.match(assembly, /pointerup/);
   assert.match(assembly, /aria-label", "Interactive three-dimensional RDE assembly/);
