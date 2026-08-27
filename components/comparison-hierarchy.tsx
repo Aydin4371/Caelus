@@ -2,6 +2,7 @@
 
 import type { AnalysisCase } from "@/lib/caevera-types";
 import { operatingPointLabel, type EngineDesign, type OperatingPoint } from "@/lib/design-workspace";
+import { engineRevisionLabel, normalizedEngineRevision } from "@/lib/engine-manifest";
 
 type Props = {
   designs: EngineDesign[];
@@ -25,7 +26,7 @@ export function ComparisonHierarchy({ designs, operatingPoints, runs, activeDesi
   return <section className="comparison-hierarchy" aria-label="Engine, operating point, and run selection">
     <div className="hierarchy-path"><span>Engine / design</span><i>→</i><span>Operating point</span><i>→</i><span>Runs</span></div>
     <div className="hierarchy-controls">
-      <label><span>Engine / design</span><select value={activeDesignId ?? ""} onChange={(event) => onSelectDesign(event.target.value)}><option value="" disabled>Select engine</option>{designs.map((design) => <option key={design.id} value={design.id}>{design.name}</option>)}</select><small>Fixed geometry, injector, propellants, and walls</small></label>
+      <label><span>Engine / design revision</span><select value={activeDesignId ?? ""} onChange={(event) => onSelectDesign(event.target.value)}><option value="" disabled>Select engine</option>{designs.map((design) => <option key={design.id} value={design.id}>{engineRevisionLabel(design)}</option>)}</select><small>{designs.find((design) => design.id === activeDesignId) ? `${normalizedEngineRevision(designs.find((design) => design.id === activeDesignId)!).fingerprint} · fixed geometry, injector, propellants, materials, and cooling` : "Fixed geometry, injector, propellants, materials, and cooling"}</small></label>
       <label><span>Operating point</span><select value={activeOperatingPointId ?? ""} onChange={(event) => onSelectOperatingPoint(event.target.value)}><option value="" disabled>Select operating point</option>{designPoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}</select><small>{designPoints.find((point) => point.id === activeOperatingPointId) ? operatingPointLabel(designPoints.find((point) => point.id === activeOperatingPointId)!) : "Pressure, flow, φ, temperature, and back pressure"}</small></label>
       <label><span>Run</span><select value={activeRunId ?? ""} onChange={(event) => onSelectRun(event.target.value)}><option value="" disabled>Select run</option>{pointRuns.map((run, index) => <option key={run.id} value={run.id}>{index === 0 && !run.relationship ? `Baseline CFD: ${run.metadata.name}` : `CFD rerun: ${run.metadata.name}`}</option>)}</select><small>Each CFD run is compared with the experiment stored on this operating point · {pointRuns.length} completed</small></label>
     </div>

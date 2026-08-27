@@ -82,6 +82,14 @@ export type EngineDesign = {
   inletTemperatureK: number;
   backPressureBar: number;
   build?: EngineBuildDefinition;
+  revision?: EngineRevision;
+};
+
+export type EngineRevision = {
+  number: number;
+  createdAt: string;
+  supersedesDesignId: string | null;
+  fingerprint: string;
 };
 
 export type OperatingPoint = {
@@ -236,7 +244,7 @@ export const EMPTY_ENGINE_DESIGN: EngineDesign = {
 };
 
 export function cloneEngineDesign(design: EngineDesign): EngineDesign {
-  return { ...design, build: design.build ? { ...design.build } : undefined };
+  return { ...design, build: design.build ? { ...design.build } : undefined, revision: design.revision ? { ...design.revision } : undefined };
 }
 
 export function cloneOperatingPoint(point: OperatingPoint): OperatingPoint {

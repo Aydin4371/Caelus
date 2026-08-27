@@ -24,7 +24,15 @@ export function SolverManifestImporter({ metadata, onApply }: { metadata: CaseMe
     const files = [...(event.target.files ?? [])];
     if (!files.length) return;
     try {
-      setResult(parseOpenFoamCaseFiles(await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })))));
+      const inspectable = files.filter((file) => {
+        const path = (file.webkitRelativePath || file.name).replaceAll("\\", "/").toLowerCase();
+        const base = path.split("/").at(-1) ?? path;
+        return ["controldict", "fvschemes", "fvsolution", "momentumtransport", "turbulenceproperties", "combustionproperties", "chemistryproperties"].includes(base)
+          || path.endsWith("/0/p")
+          || base.includes("checkmesh") && (base.endsWith(".log") || base.endsWith(".txt"));
+      });
+      if (!inspectable.length) throw new Error("No supported OpenFOAM dictionaries, 0/p field, or checkMesh log were found in this selection.");
+      setResult(parseOpenFoamCaseFiles(await Promise.all(inspectable.map(async (file) => ({ name: file.webkitRelativePath || file.name, text: await file.text() })))));
       setError("");
     } catch (reason) {
       setResult(null);
@@ -46,7 +54,8 @@ export function SolverManifestImporter({ metadata, onApply }: { metadata: CaseMe
     <div><span>CFD MODEL CARD</span><strong>Import solver settings</strong><p>Prefill recognized settings, then review every field before analysis.</p></div>
     <div className="solver-import-actions">
       <label className="button secondary">Import Kythros JSON<input type="file" accept=".json" onChange={readManifest} hidden /></label>
-      <label className="button secondary">Inspect OpenFOAM dictionaries<input type="file" accept=".dict,.txt" multiple onChange={readOpenFoam} hidden /></label>
+      <label className="button secondary">Inspect OpenFOAM files<input type="file" multiple onChange={readOpenFoam} hidden /></label>
+      <label className="button secondary">Inspect OpenFOAM case folder<input type="file" multiple onChange={readOpenFoam} hidden {...({ webkitdirectory: "" } as Record<string, string>)} /></label>
       <button type="button" className="button secondary" onClick={downloadTemplate}>Download manifest template</button>
     </div>
     {result && <div className="solver-import-review"><strong>{result.detected.length} setting{result.detected.length === 1 ? "" : "s"} detected</strong><div>{result.detected.map((item) => <span key={item.field}><b>{item.field}</b>{String(item.value)}</span>)}</div>{result.warnings.map((warning) => <p key={warning}>{warning}</p>)}<button type="button" className="button primary" onClick={() => onApply(result.metadata)}>Apply detected settings</button></div>}

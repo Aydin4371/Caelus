@@ -21,8 +21,8 @@ import { WAVE_METHOD_SOURCES } from "../lib/wave-method-sources.ts";
 import { mapProbeTable, parseDelimitedTable, suggestImportMapping } from "../lib/data-import.ts";
 import { deserializeWorkspace, serializeWorkspace, WORKSPACE_SCHEMA } from "../lib/workspace.ts";
 import { PUBLISHED_VALIDATION_SOURCES, PUBLISHED_WAVE_SPEED_BENCHMARKS, RAW_DATASET_VALIDATION_CASES, waveSpeedFromPassageFrequency } from "../lib/published-benchmarks.ts";
-import { createNextRunWorkOrder } from "../lib/next-run-work-order.ts";
-import { parseCfdRunManifest, parseOpenFoamCaseFiles, CFD_RUN_MANIFEST_SCHEMA } from "../lib/cfd-run-manifest.ts";
+import { completeRunPlan, createNextRunWorkOrder, freezeRunPlan, sameWorkOrderDefinition } from "../lib/next-run-work-order.ts";
+import { buildOpenFoamNextRunHandoff, parseCfdRunManifest, parseOpenFoamCaseFiles, CFD_RUN_MANIFEST_SCHEMA } from "../lib/cfd-run-manifest.ts";
 import { auditComparisonPairing } from "../lib/comparison-pairing.ts";
 
 function sineSignal({
@@ -122,6 +122,19 @@ test("solver manifests prefill documented CFD settings without inventing the res
   assert.equal(openFoam.metadata.cfl, 0.25);
 });
 
+test("OpenFOAM folder inspection extracts available case metadata without treating dictionary format as solver version", () => {
+  const openFoam = parseOpenFoamCaseFiles([
+    { name: "case/system/controlDict", text: "application rhoReactingFoam;\ndeltaT 2e-8;\nfunctions { probes { probeLocations ((0 1 0) (0 -1 0)); } }" },
+    { name: "case/constant/momentumTransport", text: "simulationType RAS;\nRAS { RASModel kOmegaSST; }" },
+    { name: "case/checkMesh.log", text: "Mesh stats\n    cells: 2450000" },
+    { name: "case/0/p", text: "boundaryField { inlet { type fixedValue; } outlet { type waveTransmissive; } outerWall { type zeroGradient; } }" },
+  ]);
+  assert.equal(openFoam.metadata.meshCells, 2_450_000);
+  assert.match(String(openFoam.metadata.turbulenceModel), /kOmegaSST/);
+  assert.equal(openFoam.metadata.solverVersion, undefined);
+  assert.ok(openFoam.warnings.some((warning) => /Cartesian probe locations/i.test(warning)));
+});
+
 test("automatic pairing audits probes, synchronization, and the common time window", () => {
   const demo = makeDemoProbeSignals();
   const audit = auditComparisonPairing(DEMO_METADATA, demo.test, demo.cfd);
@@ -139,11 +152,24 @@ test("a recommendation freezes one exact CFD parameter into a work order", () =>
   const baseline: AnalysisCase = { id: "baseline", source: "demo", metadata: DEMO_METADATA, testSignals: demo.test, cfdSignals: demo.cfd };
   const workOrder = createNextRunWorkOrder(assessment.nextRun, baseline, "2026-08-25T00:00:00.000Z");
   assert.ok(workOrder);
+  const laterCopy = createNextRunWorkOrder(assessment.nextRun, baseline, "2026-08-25T01:00:00.000Z");
+  assert.ok(laterCopy);
+  assert.equal(sameWorkOrderDefinition(workOrder, laterCopy), true);
+  assert.equal(sameWorkOrderDefinition(workOrder, { ...laterCopy, lockedSettings: { ...laterCopy.lockedSettings, solver: "changed-after-freeze" } }), false);
   assert.equal(workOrder.change.parameter, assessment.nextRun.decisionPolicy.changedParameter);
   assert.ok(workOrder.change.allowedMetadataFields.length > 0);
   assert.ok(workOrder.lockedMetadataFields.every((field) => !workOrder.change.allowedMetadataFields.includes(field)));
   assert.equal(workOrder.lockedSettings.solver, DEMO_METADATA.solver);
   assert.deepEqual(workOrder.comparisonDefinition.probePositionsDeg, DEMO_METADATA.probePositionsDeg);
+  const plan = freezeRunPlan(workOrder);
+  assert.equal(plan.status, "pending");
+  assert.equal(completeRunPlan(plan, "result-case", "2026-08-26T00:00:00.000Z").resultCaseId, "result-case");
+  const restoredPlan = deserializeWorkspace(serializeWorkspace({ cases: [baseline], activeCaseId: baseline.id, baselineCaseId: baseline.id, designs: [], activeDesignId: null, operatingPoints: [], activeOperatingPointId: null, frozenRunPlans: [plan] })).frozenRunPlans[0];
+  assert.equal(restoredPlan.workOrder.id, workOrder.id);
+  assert.equal(restoredPlan.status, "pending");
+  const handoff = buildOpenFoamNextRunHandoff(workOrder);
+  assert.equal(handoff.workOrderId, workOrder.id);
+  assert.ok(handoff.files.some((file) => file.path === "kythros-work-order.json"));
 });
 
 test("identical signals produce exact waveform agreement and cycle metrics", () => {

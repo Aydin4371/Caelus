@@ -37,6 +37,8 @@ test("renders development preview metadata", async () => {
   assert.match(html, /Nine candidate conditions, not operating predictions/);
   assert.match(html, /Coverage candidates only/);
   assert.match(html, /Diagnosis and next-run recommendation/);
+  assert.match(html, /Public pressure-record analyzer check/);
+  assert.match(html, /REAL EXPERIMENT · NO MATCHED CFD/);
   assert.doesNotMatch(html, /Published checks/);
   assert.doesNotMatch(html, /What Kythros has actually reproduced/);
   assert.doesNotMatch(html, /Download audit values/);
@@ -229,6 +231,9 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /rerunFieldLocked/);
   assert.match(page, /chooseChangedParameter/);
   assert.match(page, /Download frozen run spec/);
+  assert.match(page, /Download OpenFOAM handoff/);
+  assert.match(page, /ProspectiveValidationLedger/);
+  assert.match(page, /engineManifestFingerprint/);
   assert.match(page, /AUTOMATIC PAIRING/);
   assert.match(page, /Review rerun →/);
   assert.match(page, /Review one-change rerun/);

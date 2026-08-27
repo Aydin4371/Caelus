@@ -45,6 +45,40 @@ export type NextRunWorkOrder = {
   evidenceBoundary: string;
 };
 
+export type FrozenRunPlan = {
+  workOrder: NextRunWorkOrder;
+  status: "pending" | "completed";
+  resultCaseId: string | null;
+  completedAt: string | null;
+};
+
+export function freezeRunPlan(workOrder: NextRunWorkOrder): FrozenRunPlan {
+  return { workOrder, status: "pending", resultCaseId: null, completedAt: null };
+}
+
+export function completeRunPlan(plan: FrozenRunPlan, resultCaseId: string, completedAt = new Date().toISOString()): FrozenRunPlan {
+  return { ...plan, status: "completed", resultCaseId, completedAt };
+}
+
+export function sameWorkOrderDefinition(left: NextRunWorkOrder, right: NextRunWorkOrder) {
+  const definition = (workOrder: NextRunWorkOrder) => ({
+    analysisVersion: workOrder.analysisVersion,
+    policyVersion: workOrder.policyVersion,
+    engineDesignId: workOrder.engineDesignId,
+    operatingPointId: workOrder.operatingPointId,
+    startingCase: workOrder.startingCase,
+    change: workOrder.change,
+    lockedMetadataFields: workOrder.lockedMetadataFields,
+    lockedSettings: workOrder.lockedSettings,
+    comparisonDefinition: workOrder.comparisonDefinition,
+    requiredOutputs: workOrder.requiredOutputs,
+    question: workOrder.question,
+    compare: workOrder.compare,
+    decisionRule: workOrder.decisionRule,
+  });
+  return JSON.stringify(definition(left)) === JSON.stringify(definition(right));
+}
+
 function stableToken(value: string) {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {

@@ -19,13 +19,15 @@ Diagnosis, next action, expected result, comparable-case history, and input
 provenance now appear in one engineering-decision card. Technical ranking and
 conditional branches remain available under disclosures.
 
-The no-data workflow is now executable rather than only descriptive. Every
+The pre-validation workflow is executable rather than only descriptive. Every
 controlled rerun names one atomic CFD parameter, locks unrelated model-card
-fields, and can start from a frozen, downloadable next-run work order. Baseline
-model cards can be prefilled from a Kythros JSON manifest or inspected
-OpenFOAM dictionaries. When a result is loaded, Kythros verifies the inherited
-operating point, probe mapping, synchronization state, and common time window,
-then saves a pairing fingerprint with the case. These controls improve
+fields, and can start from a frozen, downloadable next-run work order. Frozen
+plans are persisted before their result is loaded and completed through a
+prospective CFD ledger. Baseline model cards can be prefilled from a Kythros
+JSON manifest or inspected from selected OpenFOAM files or a case folder. When
+a result is loaded, Kythros verifies the immutable engine revision, operating
+point, probe mapping, synchronization state, and common time window, then saves
+the engine and pairing fingerprints with the case. These controls improve
 reproducibility but do not replace external matched experiment and CFD data.
 
 The application starts as an empty workspace and accepts multiple operating
@@ -42,16 +44,18 @@ The current release is a research prototype. It does not certify a model or
 prove the cause of a discrepancy.
 
 Automated regression tests use public evidence without presenting partial
-checks as customer-facing workflow demonstrations. Existing Zenodo raw pressure
-records exercise the production analyzer but have no matched CFD files. Tobias
+checks as complete experiment-CFD validation. Three compact Zenodo pressure
+records also appear in an explicitly experiment-only analyzer panel; they
+exercise the production analyzer but have no matched CFD files or comparable
+pressure-amplitude unit. Tobias
 et al. Case A includes experiment and CFD results in the paper, so its printed
 values exercise paired-comparison arithmetic, but the source does not release
 matched numeric pressure arrays. The Strakey et al. combustion-model rerun
 similarly exercises before-and-after outcome classification from reported
 values. The source values are tabulated in
 `public/data/published-paired-validation.csv`; calculated errors and outcome
-labels are not stored in that file. None of these checks appears on the homepage
-or counts as an end-to-end Comparison demonstration.
+labels are not stored in that file. None counts as an end-to-end Comparison
+demonstration or validates the next-run recommendation engine.
 
 ## Comparison workflow hardening
 
@@ -63,11 +67,17 @@ or counts as an end-to-end Comparison demonstration.
   parameter, locked settings, required outputs, comparison question, and
   versioned classification rule.
 - Preserves the work-order identifier and recommendation snapshot on reruns
-  started from the decision panel.
-- Adds a generic CFD model-card manifest and an initial OpenFOAM dictionary
-  inspector. Detected values are always reviewed before application.
-- Replaces the manual pairing checkbox with calculated checks and a saved
-  pairing fingerprint.
+  started from the decision panel, and keeps pending and completed plans in a
+  prospective ledger.
+- Adds a generic CFD model-card manifest, OpenFOAM case-folder inspection, and
+  a solver handoff containing the frozen work order, locked-setting checklist,
+  and an exact `deltaT` include only when a numerical target is safe to emit.
+  Detected values and generated edits are always reviewed before application.
+- Replaces the manual pairing checkbox with calculated checks and saved engine,
+  operating-point, and pressure-pairing fingerprints.
+- Makes every Build revision immutable. Refining geometry, materials, cooling,
+  or operating limits creates a new engine ID while earlier evidence remains
+  attached to the prior revision.
 - Keeps the full reasoning ledger under a disclosure so the next action remains
   the primary interface.
 

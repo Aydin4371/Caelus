@@ -127,6 +127,8 @@ export type AnalysisCase = {
   pairingAudit?: {
     verifiedAt: string;
     fingerprint: string;
+    engineManifestFingerprint?: string | null;
+    operatingPointId?: string | null;
     checks: Array<{ id: string; label: string; passed: boolean; detail: string }>;
   } | null;
   wallFields?: { experiment: WallFieldImport | null; cfd: WallFieldImport | null } | null;

@@ -16,6 +16,7 @@ import {
   type PlannedOperatingPoint,
 } from "@/lib/design-workspace";
 import { RDE_MATERIALS, calculateRdeBuildScreening } from "@/lib/rde-build";
+import { buildEngineManifest, engineRevisionLabel, normalizedEngineRevision } from "@/lib/engine-manifest";
 
 type Props = {
   designs: EngineDesign[];
@@ -205,12 +206,7 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
 
   function saveManifest() {
     const payload = {
-      schema: "kythros-engine-screening-plan",
-      version: 1,
-      generatedAt: new Date().toISOString(),
-      design: activeDesign,
-      calculatedFromInputs: calculations,
-      preliminaryBuildScreening: buildScreening,
+      ...buildEngineManifest(activeDesign, calculations, buildScreening, physicalPoints.map((point) => point.id)),
       screeningPlan: plan,
       evidenceStatus: {
         measuredOperatingPoints: physicalPoints.length,
@@ -220,7 +216,6 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
         backflowModel: "Not available",
         performanceModel: "Not available",
       },
-      limitation: "This manifest contains entered values, direct calculations, an assumption-driven thermal and hydraulic screen, and a coverage plan. It contains no CFD result, certified material allowable, stress analysis, manufacturability approval, or predicted RDE operability, performance, backflow, or heat flux.",
     };
     download(JSON.stringify(payload, null, 2), designFileName(activeDesign, "json"), "application/json");
   }
@@ -232,7 +227,9 @@ export function DesignPlanner({ designs, activeDesignId, operatingPoints, onSele
   }
 
   return <section className="design-workspace" aria-label="Build an RDE workspace">
-    <div className="design-heading"><div><span className="workspace-label">Build an RDE</span><h1>{activeDesign.name}</h1><p>{activeDesign.application} · {activeDesign.fuel} and {activeDesign.oxidizer} · annular configuration{activeDesign.source === "published" ? " · published source record" : ""}</p></div><div className="design-heading-actions"><label><span>RDE build</span><select value={activeDesign.id} onChange={(event) => onSelectDesign(event.target.value)}>{designs.map((design) => <option key={design.id} value={design.id}>{design.name}</option>)}</select></label>{activeDesign.source !== "published" && <button className="button secondary" onClick={() => setEditing(true)}>Refine build</button>}<button className="button secondary" onClick={() => setCreating(true)}>New build</button></div></div>
+    <div className="design-heading"><div><span className="workspace-label">Build an RDE</span><h1>{activeDesign.name}</h1><p>{activeDesign.application} · {activeDesign.fuel} and {activeDesign.oxidizer} · annular configuration{activeDesign.source === "published" ? " · published source record" : ""}</p><div className="engine-revision-line"><strong>Revision {normalizedEngineRevision(activeDesign).number}</strong><span>{normalizedEngineRevision(activeDesign).fingerprint}</span><small>Immutable evidence identity</small></div></div><div className="design-heading-actions"><label><span>RDE build revision</span><select value={activeDesign.id} onChange={(event) => onSelectDesign(event.target.value)}>{designs.map((design) => <option key={design.id} value={design.id}>{engineRevisionLabel(design)}</option>)}</select></label>{activeDesign.source !== "published" && <button className="button secondary" onClick={() => setEditing(true)}>Create revised build</button>}<button className="button secondary" onClick={() => setCreating(true)}>New build</button></div></div>
+
+    {activeDesign.revision?.supersedesDesignId && <section className="revision-trace-note"><strong>This is a new immutable engine revision.</strong><span>Earlier operating points and CFD runs remain attached to {activeDesign.revision.supersedesDesignId}; they were not silently rewritten.</span></section>}
 
     {activeDesign.source === "published" && <section className="published-design-note"><strong>Source-backed example, not a completed design definition</strong><span>Reported geometry and operating conditions are shown as entered evidence. Injector orifice size, injection angle, plenum volume, and inlet/plenum pressure were not tabulated, so Kythros leaves those quantities unavailable and does not create a screening plan from them.</span></section>}
 

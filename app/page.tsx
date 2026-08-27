@@ -9,6 +9,8 @@ import { RdePhysicsVisual } from "@/components/rde-physics-visual";
 import { DesignPlanner } from "@/components/design-planner";
 import { OperatingEnvelope } from "@/components/operating-envelope";
 import { ComparisonHierarchy } from "@/components/comparison-hierarchy";
+import { ProspectiveValidationLedger } from "@/components/prospective-validation-ledger";
+import { PublicExperimentBenchmarks } from "@/components/public-experiment-benchmarks";
 import { buildCaseDelta, buildCaseHistoryEvidence, caseFieldLabel, selectIndependentPrecedents, selectPlanningEvidence, summarizeCase, type CaseHistoryEvidence } from "@/lib/case-history";
 import {
   EMPTY_METADATA,
@@ -20,7 +22,7 @@ import {
   type SensitivityVariable,
 } from "@/lib/caevera-types";
 import { CONTROLLED_PARAMETER_DEFINITIONS, CONTROLLED_PARAMETERS, parameterLabel, type ControlledParameter } from "@/lib/controlled-parameters";
-import { createNextRunWorkOrder, nextRunWorkOrderFileName, recommendationSnapshot } from "@/lib/next-run-work-order";
+import { completeRunPlan, createNextRunWorkOrder, freezeRunPlan, nextRunWorkOrderFileName, recommendationSnapshot, sameWorkOrderDefinition, type FrozenRunPlan } from "@/lib/next-run-work-order";
 import { auditComparisonPairing } from "@/lib/comparison-pairing";
 import { buildCaseAssessment, type ControlledNextRun, type DiagnosticEvidence, type MetricAssessment } from "@/lib/diagnostics";
 import { buildDecisionQuality, type DecisionQuality } from "@/lib/decision-quality";
@@ -28,6 +30,8 @@ import { KNOWLEDGE_BASE_VERSION, sourcesFor, type DiagnosticResearchClaim, type 
 import { CASE_INPUT_HELP } from "@/lib/case-input-help";
 import { WAVE_METHOD_SOURCES } from "@/lib/wave-method-sources";
 import { calculateDesign, operatingPointLabel, type EngineDesign, type OperatingPoint, type PlannedOperatingPoint } from "@/lib/design-workspace";
+import { createEngineRevision, normalizeEngineDesign } from "@/lib/engine-manifest";
+import { buildOpenFoamNextRunHandoff } from "@/lib/cfd-run-manifest";
 import { GE_2022_DESIGN, GE_2022_DESIGN_ID, buildGe2022OperatingPoints } from "@/lib/published-envelope-data";
 import type { MappedProbeImport } from "@/lib/data-import";
 import { PUBLISHED_VALIDATION_SOURCES, PUBLISHED_VALIDATION_SUMMARY, RAW_DATASET_VALIDATION_CASES } from "@/lib/published-benchmarks";
@@ -394,6 +398,7 @@ function EngineeringDecisionPanel({
   onEdit,
   onDownloadReport,
   onDownloadNextRun,
+  onDownloadOpenFoam,
   onStartNextRun,
   onSaveWorkspace,
   onViewHistory,
@@ -411,6 +416,7 @@ function EngineeringDecisionPanel({
   onEdit: () => void;
   onDownloadReport: () => void;
   onDownloadNextRun: (() => void) | null;
+  onDownloadOpenFoam: (() => void) | null;
   onStartNextRun: (() => void) | null;
   onSaveWorkspace: () => void;
   onViewHistory: (() => void) | null;
@@ -463,7 +469,7 @@ function EngineeringDecisionPanel({
         <p><strong>Keep unchanged</strong><span>{nextRun.holdFixed.join(" · ")}</span></p>
         <p><strong>Compare</strong><span>{nextRun.expectedOutcome}</span></p>
       </div>
-      {(onStartNextRun || onDownloadNextRun) && <div className="next-run-buttons">{onStartNextRun && <button className="button primary" onClick={onStartNextRun}>Start recommended rerun</button>}{onDownloadNextRun && <button className="button secondary" onClick={onDownloadNextRun}>Download frozen run spec</button>}</div>}
+      {(onStartNextRun || onDownloadNextRun || onDownloadOpenFoam) && <div className="next-run-buttons">{onStartNextRun && <button className="button primary" onClick={onStartNextRun}>Start recommended rerun</button>}{onDownloadNextRun && <button className="button secondary" onClick={onDownloadNextRun}>Download frozen run spec</button>}{onDownloadOpenFoam && <button className="button secondary" onClick={onDownloadOpenFoam}>Download OpenFOAM handoff</button>}</div>}
       <details className="decision-reasoning" aria-label="Why Kythros recommends this run">
         <summary>Why Kythros recommends this run</summary>
         <div className="decision-reasoning-heading">
@@ -527,6 +533,7 @@ export default function Home() {
   const [cases, setCases] = useState<AnalysisCase[]>([]);
   const [designs, setDesigns] = useState<EngineDesign[]>([]);
   const [operatingPoints, setOperatingPoints] = useState<OperatingPoint[]>([]);
+  const [frozenRunPlans, setFrozenRunPlans] = useState<FrozenRunPlan[]>([]);
   const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
   const [activeOperatingPointId, setActiveOperatingPointId] = useState<string | null>(null);
   const [draftDesignId, setDraftDesignId] = useState<string | null>(null);
@@ -538,6 +545,7 @@ export default function Home() {
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CaseMetadata>(() => cloneMetadata(EMPTY_METADATA));
   const [draftRelationship, setDraftRelationship] = useState<CaseRelationship | null>(null);
+  const [draftFrozenPlanId, setDraftFrozenPlanId] = useState<string | null>(null);
   const [testPending, setTestPending] = useState<MappedProbeImport | null>(null);
   const [cfdPending, setCfdPending] = useState<MappedProbeImport | null>(null);
   const [testWallPending, setTestWallPending] = useState<WallFieldImport | null>(null);
@@ -701,6 +709,7 @@ export default function Home() {
     setEditingCaseId(null);
     setDraft(nextDraft);
     setDraftRelationship(null);
+    setDraftFrozenPlanId(null);
     setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
 
@@ -713,6 +722,7 @@ export default function Home() {
     setDraftNewOperatingPoint(null);
     setLoaderMode("comparison-run");
     setDraftRelationship(activeCase.relationship ?? null);
+    setDraftFrozenPlanId(null);
     setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
 
@@ -726,6 +736,7 @@ export default function Home() {
     setLoaderMode("comparison-run");
     setDraftDesignId(baseline.designId ?? activeDesignId);
     setDraftRelationship({ baselineCaseId: baseline.id, referenceCaseId: baseline.id, changedVariable: "other", changedParameter: null, description: "" });
+    setDraftFrozenPlanId(null);
     const inherited = cloneMetadata(baseline.metadata);
     inherited.name = `${baseline.metadata.name} rerun`;
     clearCfdPhysics(inherited);
@@ -762,6 +773,7 @@ export default function Home() {
     setEditingCaseId(null);
     setDraft(nextDraft);
     setDraftRelationship(null);
+    setDraftFrozenPlanId(null);
     setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
 
@@ -855,6 +867,14 @@ export default function Home() {
     if (!draftRelationship || editingCaseId) return applyCase();
     if (!draftReferenceCase) return setError("Choose the exact starting run for this rerun.");
     if (!draftRelationship.changedParameter) return setError("Choose the single CFD parameter being tested.");
+    if (draftFrozenPlanId) {
+      const frozenPlan = frozenRunPlans.find((plan) => plan.workOrder.id === draftFrozenPlanId && plan.status === "pending");
+      if (!frozenPlan) return setError("This frozen run plan is no longer pending. Start or resume the current recommendation instead.");
+      if (frozenPlan.workOrder.startingCase.id !== draftReferenceCase.id || frozenPlan.workOrder.change.parameter !== draftRelationship.changedParameter) return setError("The rerun no longer matches its frozen starting case and one-parameter recommendation.");
+      const target = frozenPlan.workOrder.change.suggestedTargetValue;
+      const primaryField = CONTROLLED_PARAMETERS[draftRelationship.changedParameter].primaryField;
+      if (target !== null && !metadataValueEqual(draft[primaryField], target)) return setError(`The frozen run requires ${parameterLabel(draftRelationship.changedParameter).toLowerCase()} = ${String(target)}. Create a new plan to use a different target.`);
+    }
     if (!changedRerunFields.length) return setError(`Change at least one ${parameterLabel(draftRelationship.changedParameter).toLowerCase()} field before reviewing this rerun.`);
     if (!cfdPending) return setError("Upload and map the new CFD result before reviewing this rerun.");
     if (cfdPending.signals.length !== draft.probePositionsDeg.length) return setError(`The CFD file contains ${cfdPending.signals.length} probes, but the starting run uses ${draft.probePositionsDeg.length}.`);
@@ -980,11 +1000,6 @@ export default function Home() {
       if (!nextTest) return setError("Upload the experimental multi-probe file for this operating point.");
       if (!nextCfd) return setError(effectiveRelationship ? "Upload the new CFD multi-probe result for this rerun." : "Upload the CFD multi-probe file for this baseline run.");
       if (nextTest.length !== draft.probePositionsDeg.length || nextCfd.length !== draft.probePositionsDeg.length) return setError(`The files contain ${nextTest.length} experiment and ${nextCfd.length} CFD probes, but ${draft.probePositionsDeg.length} probe angles were entered.`);
-      const pairingAudit = auditComparisonPairing(draft, nextTest, nextCfd);
-      if (!pairingAudit.passed) return setError(`Automatic experiment–CFD pairing failed: ${pairingAudit.checks.filter((check) => !check.passed).map((check) => check.detail).join(" ")}`);
-      compareProbeSets(nextTest, nextCfd);
-      analyzeRdeProbeSet(nextTest, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed, sensorBandwidthKHz: draft.experimentSensorBandwidthKHz, filterCutoffKHz: draft.experimentFilterCutoffKHz });
-      analyzeRdeProbeSet(nextCfd, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed });
       const id = editingCaseId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       if (effectiveRelationship?.baselineCaseId === id) return setError("A run cannot be its own baseline.");
       if (effectiveRelationship) {
@@ -998,11 +1013,19 @@ export default function Home() {
       if (!operatingPointId) return setError("Choose or create an operating point before adding a run.");
       const designId = editingCase?.designId ?? referenceCase?.designId ?? draftDesignId;
       if (!designId) return setError("Choose an engine design before adding an operating point.");
+      const pairedDesign = designs.find((item) => item.id === designId);
+      const pairedOperatingPoint = operatingPoints.find((item) => item.id === operatingPointId) ?? draftNewOperatingPoint;
+      if (!pairedDesign || !pairedOperatingPoint) return setError("The engine revision and physical operating point must exist before CFD can be paired.");
+      const pairingAudit = auditComparisonPairing(draft, nextTest, nextCfd, { design: pairedDesign, operatingPoint: pairedOperatingPoint });
+      if (!pairingAudit.passed) return setError(`Automatic experiment–CFD pairing failed: ${pairingAudit.checks.filter((check) => !check.passed).map((check) => check.detail).join(" ")}`);
+      compareProbeSets(nextTest, nextCfd);
+      analyzeRdeProbeSet(nextTest, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed, sensorBandwidthKHz: draft.experimentSensorBandwidthKHz, filterCutoffKHz: draft.experimentFilterCutoffKHz });
+      analyzeRdeProbeSet(nextCfd, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed });
       const experimentWallField = testWallPending ?? editingCase?.wallFields?.experiment ?? referenceCase?.wallFields?.experiment ?? draftOperatingPoint?.experiment?.wallField ?? null;
       const cfdWallField = cfdWallPending ?? editingCase?.wallFields?.cfd ?? null;
       const nextMetadata = cloneMetadata(draft);
       nextMetadata.comparisonMatchConfirmed = true;
-      const nextCase: AnalysisCase = { id, designId, operatingPointId, source: editingCase?.source ?? "uploaded", relationship: nextRelationship, metadata: nextMetadata, testSignals: nextTest, cfdSignals: nextCfd, imports: nextImports, pairingAudit: { verifiedAt: new Date().toISOString(), fingerprint: pairingAudit.fingerprint, checks: pairingAudit.checks }, wallFields: { experiment: experimentWallField, cfd: cfdWallField } };
+      const nextCase: AnalysisCase = { id, designId, operatingPointId, source: editingCase?.source ?? "uploaded", relationship: nextRelationship, metadata: nextMetadata, testSignals: nextTest, cfdSignals: nextCfd, imports: nextImports, pairingAudit: { verifiedAt: new Date().toISOString(), fingerprint: pairingAudit.fingerprint, engineManifestFingerprint: pairingAudit.engineManifestFingerprint, operatingPointId: pairingAudit.operatingPointId, checks: pairingAudit.checks }, wallFields: { experiment: experimentWallField, cfd: cfdWallField } };
       if (!nextRelationship) {
         const existingPoint = operatingPoints.find((item) => item.id === operatingPointId);
         const nextPoint: OperatingPoint = {
@@ -1035,8 +1058,9 @@ export default function Home() {
         setOperatingPoints((current) => current.some((item) => item.id === operatingPointId) ? current.map((item) => item.id === operatingPointId ? nextPoint : item) : [...current, nextPoint]);
       }
       setCases((current) => editingCaseId ? current.map((item) => item.id === editingCaseId ? nextCase : item) : [...current, nextCase]);
+      if (!editingCaseId && draftFrozenPlanId) setFrozenRunPlans((current) => current.map((plan) => plan.workOrder.id === draftFrozenPlanId ? completeRunPlan(plan, id) : plan));
       if (!caseBaselineId) setCaseBaselineId(id);
-      setActiveDesignId(designId); setActiveOperatingPointId(operatingPointId); setActiveCaseId(id); setWorkspaceView("case"); setProductView("comparison"); setActiveProbe(0); setReviewingRerun(false); setShowLoader(false); setDraftNewOperatingPoint(null); setTestWallPending(null); setCfdWallPending(null); setError("");
+      setActiveDesignId(designId); setActiveOperatingPointId(operatingPointId); setActiveCaseId(id); setWorkspaceView("case"); setProductView("comparison"); setActiveProbe(0); setReviewingRerun(false); setShowLoader(false); setDraftNewOperatingPoint(null); setDraftFrozenPlanId(null); setTestWallPending(null); setCfdWallPending(null); setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The two datasets could not be compared.");
     }
@@ -1147,7 +1171,7 @@ export default function Home() {
     ];
     const demoOperatingPoint: OperatingPoint = { id: operatingPointId, designId, name: "Synthetic baseline", source: "demo", inletPressureBar: 8, inletTemperatureK: 300, equivalenceRatio: 1, massFlowKgS: 0.62, backPressureBar: 1 };
     setCases((current) => [...current, ...examples]);
-    setDesigns((current) => [...current, demoDesign]);
+    setDesigns((current) => [...current, normalizeEngineDesign(demoDesign)]);
     setOperatingPoints((current) => [...current, demoOperatingPoint]);
     setActiveDesignId(designId);
     setActiveOperatingPointId(operatingPointId);
@@ -1157,7 +1181,7 @@ export default function Home() {
 
   function loadPublishedEnvelopeExample() {
     const points = buildGe2022OperatingPoints();
-    setDesigns((current) => current.some((item) => item.id === GE_2022_DESIGN_ID) ? current : [...current, { ...GE_2022_DESIGN }]);
+    setDesigns((current) => current.some((item) => item.id === GE_2022_DESIGN_ID) ? current : [...current, normalizeEngineDesign({ ...GE_2022_DESIGN })]);
     setOperatingPoints((current) => {
       const existing = new Set(current.map((item) => item.id));
       return [...current, ...points.filter((item) => !existing.has(item.id))];
@@ -1221,38 +1245,64 @@ export default function Home() {
     const link = document.createElement("a"); link.href = url; link.download = "kythros-rde-run-report.json"; link.click(); URL.revokeObjectURL(url);
   }
 
-  function downloadNextRunWorkOrder() {
-    if (!planningCase || !planAssessment) return;
-    const workOrder = createNextRunWorkOrder(planAssessment.nextRun, planningCase);
-    if (!workOrder) return;
-    const url = URL.createObjectURL(new Blob([JSON.stringify(workOrder, null, 2)], { type: "application/json" }));
+  function downloadFrozenPlan(plan: FrozenRunPlan) {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(plan.workOrder, null, 2)], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = nextRunWorkOrderFileName(workOrder);
+    link.download = nextRunWorkOrderFileName(plan.workOrder);
     link.click();
     URL.revokeObjectURL(url);
   }
 
-  function startRecommendedRerun() {
-    if (!planningCase || !planAssessment) return;
+  function currentFrozenPlan() {
+    if (!planningCase || !planAssessment) return null;
     const workOrder = createNextRunWorkOrder(planAssessment.nextRun, planningCase);
-    if (!workOrder) return;
+    if (!workOrder) return null;
+    const existing = frozenRunPlans.find((plan) => plan.status === "pending" && sameWorkOrderDefinition(plan.workOrder, workOrder));
+    if (existing) return existing;
+    const created = freezeRunPlan(workOrder);
+    setFrozenRunPlans((current) => [...current, created]);
+    return created;
+  }
+
+  function downloadNextRunWorkOrder() {
+    const plan = currentFrozenPlan();
+    if (plan) downloadFrozenPlan(plan);
+  }
+
+  function downloadOpenFoamHandoff() {
+    const plan = currentFrozenPlan();
+    if (!plan) return;
+    const handoff = buildOpenFoamNextRunHandoff(plan.workOrder);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(handoff, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `kythros-openfoam-handoff-${plan.workOrder.id}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function openFrozenRunPlan(plan: FrozenRunPlan) {
+    const workOrder = plan.workOrder;
+    const startingCase = cases.find((item) => item.id === workOrder.startingCase.id);
+    if (!startingCase || plan.status !== "pending") return;
     const definition = CONTROLLED_PARAMETERS[workOrder.change.parameter];
-    const inherited = cloneMetadata(planningCase.metadata);
-    inherited.name = `${planningCase.metadata.name} · ${definition.label}`;
+    const inherited = cloneMetadata(startingCase.metadata);
+    inherited.name = `${startingCase.metadata.name} · ${definition.label}`;
     clearCfdPhysics(inherited);
     if (typeof workOrder.change.suggestedTargetValue === "number") {
       (inherited[definition.primaryField] as number) = workOrder.change.suggestedTargetValue;
     }
-    const baselineCaseId = planningCase.relationship?.baselineCaseId ?? planningCase.id;
+    const baselineCaseId = startingCase.relationship?.baselineCaseId ?? startingCase.id;
     setEditingCaseId(null);
-    setDraftDesignId(planningCase.designId ?? activeDesignId);
-    setDraftOperatingPointId(planningCase.operatingPointId ?? activeOperatingPointId);
+    setDraftDesignId(startingCase.designId ?? activeDesignId);
+    setDraftOperatingPointId(startingCase.operatingPointId ?? activeOperatingPointId);
     setDraftNewOperatingPoint(null);
+    setDraftFrozenPlanId(workOrder.id);
     setLoaderMode("comparison-run");
     setDraftRelationship({
       baselineCaseId,
-      referenceCaseId: planningCase.id,
+      referenceCaseId: startingCase.id,
       changedVariable: definition.variable,
       changedParameter: definition.id,
       description: definition.guidance,
@@ -1262,9 +1312,14 @@ export default function Home() {
     setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
   }
 
+  function startRecommendedRerun() {
+    const plan = currentFrozenPlan();
+    if (plan) openFrozenRunPlan(plan);
+  }
+
   function downloadWorkspace() {
     if (!cases.length && !designs.length) return;
-    const content = serializeWorkspace({ cases, activeCaseId, baselineCaseId: caseBaselineId, designs, activeDesignId, operatingPoints, activeOperatingPointId });
+    const content = serializeWorkspace({ cases, activeCaseId, baselineCaseId: caseBaselineId, designs, activeDesignId, operatingPoints, activeOperatingPointId, frozenRunPlans });
     const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
@@ -1283,6 +1338,7 @@ export default function Home() {
       setCases(restored.cases);
       setDesigns(restored.designs);
       setOperatingPoints(restored.operatingPoints);
+      setFrozenRunPlans(restored.frozenRunPlans);
       setActiveDesignId(restored.activeDesignId);
       setActiveOperatingPointId(restored.activeOperatingPointId);
       setActiveCaseId(restored.activeCaseId);
@@ -1290,6 +1346,7 @@ export default function Home() {
       setEditingCaseId(null);
       setDraft(cloneMetadata(EMPTY_METADATA));
       setDraftRelationship(null);
+      setDraftFrozenPlanId(null);
       setTestPending(null);
       setCfdPending(null);
       setShowLoader(false);
@@ -1310,10 +1367,10 @@ export default function Home() {
   const numberValue = (value: number | undefined) => typeof value === "number" && Number.isFinite(value) ? value : "";
 
   function saveEngineDesign(design: EngineDesign) {
-    setDesigns((current) => current.some((item) => item.id === design.id)
-      ? current.map((item) => item.id === design.id ? design : item)
-      : [...current, design]);
-    setActiveDesignId(design.id);
+    const previous = designs.find((item) => item.id === design.id) ?? null;
+    const saved = createEngineRevision(design, previous);
+    setDesigns((current) => [...current, saved]);
+    setActiveDesignId(saved.id);
   }
 
   return <main className="app-shell">
@@ -1340,6 +1397,8 @@ export default function Home() {
           <div className="home-evidence-boundary"><article><span>BEFORE EVIDENCE</span><strong>Coverage candidates only</strong><p>The nine rows are starting conditions for investigation. Kythros has not yet determined whether any row is operable.</p></article><article><span>AFTER EXPERIMENT + MATCHED CFD</span><strong>Diagnosis and next-run recommendation</strong><p>Kythros compares the uploaded evidence, ranks the supported mismatch explanations, and recommends the next controlled CFD rerun.</p></article></div>
         </section>
 
+        <PublicExperimentBenchmarks />
+
       </section> : productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onLoadDemo={loadExampleCaseHistory} onLoadPublished={loadPublishedEnvelopeExample} onOpenDesign={() => setProductView("design")} onAddBaselineCfd={openBaselineCfdForOperatingPoint} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
         <span className="empty-kicker">RDE EXPERIMENT + CFD COMPARISON</span><h1>{activeOperatingPoint?.experiment ? "Measured operating point ready" : "Welcome to Kythros"}</h1>
         <p>{activeOperatingPoint?.experiment ? "The experimental observation is already part of the measured envelope. Add a baseline CFD result only when you want to compare simulation with this measurement." : "Choose an engine and add a measured operating point. CFD comparisons are created separately and stay attached to that physical condition."}</p>
@@ -1348,6 +1407,7 @@ export default function Home() {
         <div className="empty-requirements"><span><b>1</b><i><strong>Compare</strong> matched experiment and CFD pressure traces</i></span><span><b>2</b><i><strong>Diagnose</strong> pressure and rotating-wave mismatches</i></span><span><b>3</b><i><strong>Run and update</strong> the adaptive CFD plan</i></span></div>
       </section> : <>
         <ComparisonHierarchy designs={designs} operatingPoints={operatingPoints} runs={cases} activeDesignId={activeDesignId} activeOperatingPointId={activeOperatingPointId} activeRunId={activeCaseId} onSelectDesign={selectDesign} onSelectOperatingPoint={selectOperatingPoint} onSelectRun={(id) => { setActiveCaseId(id); setActiveProbe(0); setWorkspaceView("case"); }} onAddOperatingPoint={() => activeDesignId && openOperatingPoint(activeDesignId)} onAddRun={openNewRunForOperatingPoint} onViewHistory={() => setWorkspaceView("compare")} onSaveWorkspace={downloadWorkspace} />
+        <ProspectiveValidationLedger plans={frozenRunPlans} cases={cases} activeOperatingPointId={activeOperatingPointId} onResume={openFrozenRunPlan} onDownload={downloadFrozenPlan} />
 
         {workspaceView === "compare" && baselineSummary ? <section className="case-history-comparison" aria-label="Case history">
           <div className="case-history-heading"><div><span className="empty-kicker">RUN HISTORY</span><h1>{activeOperatingPoint.name}</h1><p>{operatingPointLabel(activeOperatingPoint)}. Every row is a run at this one physical condition. A rerun affects the plan only when exactly one named CFD parameter changes.</p></div><label className="baseline-select"><span>Baseline run</span><select value={baselineSummary.item.id} onChange={(event) => setCaseBaselineId(event.target.value)}>{caseSummaries.filter((summary) => !summary.item.relationship).map((summary) => <option key={summary.item.id} value={summary.item.id}>{summary.item.metadata.name}</option>)}</select></label></div>
@@ -1371,7 +1431,7 @@ export default function Home() {
         </section> : <>
           <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration run" : "User-provided run"}</span></div><h1>{activeCase.metadata.name}</h1><p>{activeOperatingPoint.name} · {activeCase.relationship ? `one-change ${activeCase.relationship.changedParameter ? parameterLabel(activeCase.relationship.changedParameter).toLowerCase() : changeLabel(activeCase.relationship.changedVariable).toLowerCase()} CFD rerun starting from ${activeReferenceName ?? baselineCaseName ?? "the baseline run"}` : `experiment + baseline CFD with ${caseHistoryEvidence.length} related rerun${caseHistoryEvidence.length === 1 ? "" : "s"}`}</p></div>
 
-          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} publishedSources={likelySources} researchClaims={likelyHypothesis?.researchClaims ?? []} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onDownloadNextRun={planAssessment.nextRun.decisionPolicy.changedParameter ? downloadNextRunWorkOrder : null} onStartNextRun={planAssessment.nextRun.decisionPolicy.changedParameter ? startRecommendedRerun : null} onSaveWorkspace={downloadWorkspace} onViewHistory={operatingPointRuns.length > 1 ? () => setWorkspaceView("compare") : null} />
+          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} publishedSources={likelySources} researchClaims={likelyHypothesis?.researchClaims ?? []} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onDownloadNextRun={planAssessment.nextRun.decisionPolicy.changedParameter ? downloadNextRunWorkOrder : null} onDownloadOpenFoam={planAssessment.nextRun.decisionPolicy.changedParameter ? downloadOpenFoamHandoff : null} onStartNextRun={planAssessment.nextRun.decisionPolicy.changedParameter ? startRecommendedRerun : null} onSaveWorkspace={downloadWorkspace} onViewHistory={operatingPointRuns.length > 1 ? () => setWorkspaceView("compare") : null} />
 
           <RdePhysicsVisual design={activeDesign} rows={physicsComparisons} experimentWallField={activeCase.wallFields?.experiment ?? activeOperatingPoint.experiment?.wallField} cfdWallField={activeCase.wallFields?.cfd} onEdit={openCaseEditor}/>
 

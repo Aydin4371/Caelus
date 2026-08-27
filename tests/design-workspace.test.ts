@@ -4,6 +4,7 @@ import { EMPTY_ENGINE_DESIGN, buildScreeningPlan, calculateDesign, selectCoverag
 import { deserializeWorkspace, serializeWorkspace } from "../lib/workspace.ts";
 import { makeDemoProbeSignals } from "../lib/rde-analysis.ts";
 import { GE_2022_DESIGN, buildGe2022OperatingPoints } from "../lib/published-envelope-data.ts";
+import { createEngineRevision, engineManifestFingerprint, normalizedEngineRevision } from "../lib/engine-manifest.ts";
 
 const design = {
   ...EMPTY_ENGINE_DESIGN,
@@ -33,6 +34,17 @@ test("calculates geometry and flow quantities directly from entered design value
   assert.ok(result.annulusAreaMm2 > 0);
   assert.ok(result.injectorAreaRatioPct > 0);
   assert.equal(result.minimumPressureRatio, 6);
+});
+
+test("creates immutable engine revisions without changing the prior evidence identity", () => {
+  const first = createEngineRevision(design, null, "2026-08-27T00:00:00.000Z");
+  const second = createEngineRevision({ ...first, chamberLengthMm: 130 }, first, "2026-08-28T00:00:00.000Z");
+  assert.equal(normalizedEngineRevision(first).number, 1);
+  assert.equal(normalizedEngineRevision(second).number, 2);
+  assert.equal(second.revision?.supersedesDesignId, first.id);
+  assert.notEqual(second.id, first.id);
+  assert.notEqual(engineManifestFingerprint(second), engineManifestFingerprint(first));
+  assert.equal(first.chamberLengthMm, 120);
 });
 
 test("requires and preserves a real air-breathing inlet definition", () => {
@@ -82,6 +94,8 @@ test("saves engine designs without saving generated recommendations", () => {
   const restored = deserializeWorkspace(text);
   assert.equal(restored.designs[0].name, design.name);
   assert.equal(restored.activeDesignId, design.id);
+  assert.equal(restored.designs[0].revision?.number, 1);
+  assert.equal(restored.designs[0].revision?.fingerprint, engineManifestFingerprint(restored.designs[0]));
 });
 
 test("saves a measured operating point before any CFD run exists", () => {
