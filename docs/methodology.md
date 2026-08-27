@@ -526,6 +526,13 @@ probe count, time ordering, case identifier, and schema version. Derived
 metrics are recalculated by the current deterministic engine so saved results
 cannot become detached from the saved raw evidence.
 
+Workspace format 6 also stores immutable engine-revision fingerprints and a
+prospective CFD ledger. A frozen next-run record exists before its result is
+loaded, retains its starting case and policy version, and may be completed only
+by a saved result case. Revising an engine produces a new design identifier;
+earlier operating points and CFD cases remain linked to their original engine
+revision.
+
 ## 16. Published validation boundary
 
 Exact published frequency, wave-count, annulus-diameter, and wave-speed values

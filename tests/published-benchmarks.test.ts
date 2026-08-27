@@ -6,6 +6,7 @@ import test from "node:test";
 import { RAW_DATASET_VALIDATION_CASES } from "../lib/published-benchmarks.ts";
 import type { Signal } from "../lib/rde-analysis.ts";
 import { analyzeRdeProbeSet, circumferentialWaveSpeedMps } from "../lib/wave-dynamics.ts";
+import { analyzePublicPressureBenchmark, parsePublicPressureBenchmark } from "../lib/public-pressure-benchmark.ts";
 
 type PublishedFixture = {
   schema: string;
@@ -21,11 +22,11 @@ type PublishedFixture = {
 };
 
 function loadFixture(id: "bd0041" | "bd0038" | "ce2029") {
-  return JSON.parse(readFileSync(new URL(`./fixtures/zenodo-${id}.json`, import.meta.url), "utf8")) as PublishedFixture;
+  return JSON.parse(readFileSync(new URL(`../public/data/benchmarks/zenodo-${id}.json`, import.meta.url), "utf8")) as PublishedFixture;
 }
 
 function fixtureHash(id: "bd0041" | "bd0038" | "ce2029") {
-  const contents = readFileSync(new URL(`./fixtures/zenodo-${id}.json`, import.meta.url));
+  const contents = readFileSync(new URL(`../public/data/benchmarks/zenodo-${id}.json`, import.meta.url));
   return createHash("sha256").update(contents).digest("hex");
 }
 
@@ -52,6 +53,15 @@ test("published BD0041 pressure record does not produce a false single-mode iden
   assert.equal(result.complexModeDetected, false);
   assert.ok(result.phaseResidualDeg > 40, "same-frequency counter-rotation should defeat a one-mode phase fit");
   assert.ok(!Number.isFinite(result.waveSpeedMps), "speed must not be reported when the mode count is unresolved");
+});
+
+test("the public experiment adapter preserves the experiment-only evidence boundary", () => {
+  const text = readFileSync(new URL("../public/data/benchmarks/zenodo-bd0038.json", import.meta.url), "utf8");
+  const result = analyzePublicPressureBenchmark(parsePublicPressureBenchmark(text));
+  assert.equal(result.benchmark.caseId, "BD0038");
+  assert.equal(result.amplitudeComparable, false);
+  assert.match(result.evidenceRole, /no matched CFD/i);
+  assert.equal(result.analysis.identifiability, "Not identifiable");
 });
 
 test("published BD0038 pressure record exposes the second counter-rotating component", () => {

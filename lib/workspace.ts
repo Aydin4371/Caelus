@@ -4,10 +4,12 @@ import { ANALYSIS_VERSION } from "./rde-analysis.ts";
 import { experimentPhysicsFromMetadata } from "./physics-evidence.ts";
 import { wallFieldImportIsValid } from "./spatial-field.ts";
 import { CONTROLLED_PARAMETERS } from "./controlled-parameters.ts";
+import { engineManifestFingerprint, normalizeEngineDesign } from "./engine-manifest.ts";
+import { NEXT_RUN_WORK_ORDER_SCHEMA, NEXT_RUN_WORK_ORDER_VERSION, type FrozenRunPlan } from "./next-run-work-order.ts";
 
 export const WORKSPACE_SCHEMA = "kythros-pressure-wave-workspace";
 export const LEGACY_WORKSPACE_SCHEMA = "caevera-pressure-wave-workspace";
-export const WORKSPACE_FORMAT_VERSION = 5;
+export const WORKSPACE_FORMAT_VERSION = 6;
 
 export type WorkspaceState = {
   cases: AnalysisCase[];
@@ -17,6 +19,7 @@ export type WorkspaceState = {
   activeDesignId: string | null;
   operatingPoints: OperatingPoint[];
   activeOperatingPointId: string | null;
+  frozenRunPlans: FrozenRunPlan[];
 };
 
 type WorkspaceEnvelope = {
@@ -26,6 +29,8 @@ type WorkspaceEnvelope = {
   savedAt: string;
   state: WorkspaceState;
 };
+
+type WorkspaceInputState = Omit<WorkspaceState, "frozenRunPlans"> & { frozenRunPlans?: FrozenRunPlan[] };
 
 function numberReplacer(_key: string, value: unknown) {
   if (typeof value === "number" && !Number.isFinite(value)) {
@@ -152,13 +157,13 @@ function validateCase(value: unknown, index: number): asserts value is AnalysisC
   }
 }
 
-export function serializeWorkspace(state: WorkspaceState) {
+export function serializeWorkspace(state: WorkspaceInputState) {
   const envelope: WorkspaceEnvelope = {
     schema: WORKSPACE_SCHEMA,
     formatVersion: WORKSPACE_FORMAT_VERSION,
     analysisVersion: ANALYSIS_VERSION,
     savedAt: new Date().toISOString(),
-    state,
+    state: { ...state, designs: state.designs.map(normalizeEngineDesign), frozenRunPlans: state.frozenRunPlans ?? [] },
   };
   return JSON.stringify(envelope, numberReplacer, 2);
 }
@@ -171,7 +176,7 @@ export function deserializeWorkspace(text: string): WorkspaceState {
     throw new Error("This is not valid JSON.");
   }
   if (!isObject(parsed) || parsed.schema !== WORKSPACE_SCHEMA && parsed.schema !== LEGACY_WORKSPACE_SCHEMA) throw new Error("This is not a Kythros pressure-and-wave workspace.");
-  if (![1, 2, 3, 4, WORKSPACE_FORMAT_VERSION].includes(Number(parsed.formatVersion))) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
+  if (![1, 2, 3, 4, 5, WORKSPACE_FORMAT_VERSION].includes(Number(parsed.formatVersion))) throw new Error(`Workspace format ${String(parsed.formatVersion)} is not supported by this release.`);
   if (!isObject(parsed.state) || !Array.isArray(parsed.state.cases)) throw new Error("The workspace does not contain a case list.");
   parsed.state.cases.forEach(validateCase);
   const cases = parsed.state.cases as AnalysisCase[];
@@ -191,7 +196,13 @@ export function deserializeWorkspace(text: string): WorkspaceState {
   }
   const requestedActive = typeof parsed.state.activeCaseId === "string" ? parsed.state.activeCaseId : null;
   const requestedBaseline = typeof parsed.state.baselineCaseId === "string" ? parsed.state.baselineCaseId : null;
-  const designs = Array.isArray(parsed.state.designs) ? parsed.state.designs as EngineDesign[] : [];
+  const rawDesigns = Array.isArray(parsed.state.designs) ? parsed.state.designs as EngineDesign[] : [];
+  if (Number(parsed.formatVersion) === WORKSPACE_FORMAT_VERSION) {
+    for (const design of rawDesigns) {
+      if (!design.revision || design.revision.fingerprint !== engineManifestFingerprint(design)) throw new Error(`Engine design ${design.name || design.id} has an invalid immutable-revision fingerprint.`);
+    }
+  }
+  const designs = rawDesigns.map(normalizeEngineDesign);
   const designIdentifiers = new Set<string>();
   designs.forEach((design, index) => {
     if (!isObject(design) || typeof design.id !== "string" || !design.id) throw new Error(`Engine design ${index + 1} has no valid identifier.`);
@@ -267,6 +278,22 @@ export function deserializeWorkspace(text: string): WorkspaceState {
   for (const run of cases) {
     if (run.operatingPointId && !operatingPointIdentifiers.has(run.operatingPointId)) throw new Error(`Run ${run.metadata.name} links to an operating point that is not present.`);
   }
+  const frozenRunPlans = Array.isArray(parsed.state.frozenRunPlans) ? parsed.state.frozenRunPlans as FrozenRunPlan[] : [];
+  const planIds = new Set<string>();
+  for (const [index, plan] of frozenRunPlans.entries()) {
+    if (!isObject(plan) || !isObject(plan.workOrder)
+      || plan.workOrder.schema !== NEXT_RUN_WORK_ORDER_SCHEMA
+      || plan.workOrder.formatVersion !== NEXT_RUN_WORK_ORDER_VERSION
+      || typeof plan.workOrder.id !== "string"
+      || !isObject(plan.workOrder.startingCase)
+      || typeof plan.workOrder.startingCase.id !== "string"
+      || !identifiers.has(plan.workOrder.startingCase.id)
+      || plan.status !== "pending" && plan.status !== "completed") throw new Error(`Frozen run plan ${index + 1} is malformed.`);
+    if (planIds.has(plan.workOrder.id)) throw new Error("The workspace contains duplicate frozen run plans.");
+    if (plan.status === "completed" && (!plan.resultCaseId || !identifiers.has(plan.resultCaseId))) throw new Error(`Frozen run plan ${index + 1} does not link to its completed result.`);
+    if (plan.status === "pending" && plan.resultCaseId) throw new Error(`Frozen run plan ${index + 1} is pending but already links to a result.`);
+    planIds.add(plan.workOrder.id);
+  }
   const requestedDesign = typeof parsed.state.activeDesignId === "string" ? parsed.state.activeDesignId : null;
   const requestedOperatingPoint = typeof parsed.state.activeOperatingPointId === "string" ? parsed.state.activeOperatingPointId : null;
   return {
@@ -279,6 +306,7 @@ export function deserializeWorkspace(text: string): WorkspaceState {
     activeOperatingPointId: requestedOperatingPoint && operatingPointIdentifiers.has(requestedOperatingPoint)
       ? requestedOperatingPoint
       : points.find((point) => point.id === cases.find((item) => item.id === requestedActive)?.operatingPointId)?.id ?? points[0]?.id ?? null,
+    frozenRunPlans,
   };
 }
 

@@ -38,7 +38,7 @@ rotating detonation waves,” Zenodo (2026). DOI:
 The CC BY 4.0 archive contains raw and processed MATLAB pressure records plus
 high-speed-imaging labels for BD0041, BD0038, and CE2029. It is experiment-only.
 
-Three 4,096-sample compact fixtures are committed and run through the
+Three 4,096-sample compact fixtures are served by the public analyzer-check panel and run through the
 production `analyzeRdeProbeSet` function on every test run. Each fixture uses
 zero-based source index 70,921, retains every second sample from the 500 kHz
 processed pressure record, and rounds stored channel values to six decimal
