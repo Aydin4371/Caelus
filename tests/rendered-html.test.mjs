@@ -34,6 +34,9 @@ test("renders development preview metadata", async () => {
   assert.match(html, /KYTHROS/);
   assert.match(html, />Home</);
   assert.match(html, /From engine definition to the next CFD run/);
+  assert.match(html, /Start from one place/);
+  assert.match(html, /Load published observations/);
+  assert.match(html, /Load synthetic demonstration/);
   assert.match(html, /Nine candidate conditions, not operating predictions/);
   assert.match(html, /Coverage candidates only/);
   assert.match(html, /Diagnosis and next-run recommendation/);
@@ -48,7 +51,7 @@ test("renders development preview metadata", async () => {
   assert.match(html, /rel="manifest"/);
   assert.match(html, />Install Kythros</);
   assert.match(html, />Help</);
-  assert.match(html, /Open workspace/);
+  assert.match(html, /Open saved workspace/);
   assert.match(html, /Go to Kythros home/);
   assert.doesNotMatch(html, /Create first engine design/);
   assert.doesNotMatch(html, /Synthetic baseline/);
@@ -88,6 +91,9 @@ test("keeps design planning, operating envelopes, and run comparison separate", 
   assert.match(envelope, /performance, feed-system, thermal, and repeatability evidence/);
   assert.match(envelope, /Next-test recommendation/);
   assert.match(envelope, /Open comparison/);
+  assert.doesNotMatch(envelope, /Load synthetic demonstration/);
+  assert.doesNotMatch(envelope, /Load published test data/);
+  assert.doesNotMatch(envelope, /onLoadDemo|onLoadPublished/);
   assert.match(design, /Nine candidate conditions, not operating predictions/);
   assert.doesNotMatch(design, /Intended Kythros workflow/);
   assert.match(design, /Total injector-orifice area ÷ annulus flow area × 100/);

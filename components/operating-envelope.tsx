@@ -16,11 +16,10 @@ type Props = {
   runs: AnalysisCase[];
   onSelectDesign: (id: string) => void;
   onAddOperatingPoint: (designId: string, point?: PlannedOperatingPoint) => void;
-  onLoadDemo: () => void;
-  onLoadPublished: () => void;
   onOpenRun: (runId: string) => void;
   onAddBaselineCfd: (operatingPointId: string) => void;
   onOpenDesign: () => void;
+  onOpenHome: () => void;
 };
 
 const PLOT = { left: 76, right: 674, top: 32, bottom: 364 };
@@ -63,7 +62,7 @@ function conditionSummary(point: EnvelopePoint) {
   return `${inlet} · ${point.massFlowKgS.toFixed(4)} kg/s total · φ ${point.equivalenceRatio.toFixed(2)} · ${point.inletTemperatureK.toFixed(0)} K · Pb ${point.backPressureBar.toFixed(3)} bar`;
 }
 
-export function OperatingEnvelope({ designs, activeDesignId, operatingPoints, runs, onSelectDesign, onAddOperatingPoint, onLoadDemo, onLoadPublished, onOpenRun, onAddBaselineCfd, onOpenDesign }: Props) {
+export function OperatingEnvelope({ designs, activeDesignId, operatingPoints, runs, onSelectDesign, onAddOperatingPoint, onOpenRun, onAddBaselineCfd, onOpenDesign, onOpenHome }: Props) {
   const activeDesign = designs.find((design) => design.id === activeDesignId) ?? designs[0] ?? null;
   const designPoints = useMemo(() => activeDesign ? operatingPoints.filter((point) => point.designId === activeDesign.id) : [], [activeDesign, operatingPoints]);
   const dataset = useMemo(() => buildEnvelopeDataset(designPoints, runs), [designPoints, runs]);
@@ -98,7 +97,7 @@ export function OperatingEnvelope({ designs, activeDesignId, operatingPoints, ru
   const fixedAxes = FEATURE_KEYS.filter((key) => key !== effectiveXAxis && key !== effectiveYAxis && !(publishedPhiTemperatureSweep && key === "massFlowKgS") && observedValues(designPoints, key, fixedValues[key]).length > 0);
   const ticks = [0, 0.25, 0.5, 0.75, 1];
 
-  if (!activeDesign) return <section className="envelope-empty" aria-label="Operating envelope workspace"><span className="workspace-label">Operating Envelope</span><h1>Define an engine design or load published observations</h1><p>An envelope contains operating points from one documented geometry, injector configuration, and propellant pair.</p><div className="empty-actions"><button className="button primary" onClick={onOpenDesign}>Create engine design</button><button className="button secondary" onClick={onLoadPublished}>Load published test data</button><button className="button secondary" onClick={onLoadDemo}>Load synthetic demonstration</button></div></section>;
+  if (!activeDesign) return <section className="envelope-empty" aria-label="Operating envelope workspace"><span className="workspace-label">Operating Envelope</span><h1>No engine or observations selected</h1><p>Load a saved workspace, published observations, or the synthetic demonstration from Home. An envelope always remains attached to one exact engine revision.</p><div className="empty-actions"><button className="button primary" onClick={onOpenHome}>Go to Home</button><button className="button secondary" onClick={onOpenDesign}>Create engine design</button></div></section>;
 
   const predictionCells = model?.status === "Exploratory model ready" && domain ? Array.from({ length: 18 * 18 }, (_, index) => {
     const column = index % 18;
@@ -115,7 +114,7 @@ export function OperatingEnvelope({ designs, activeDesignId, operatingPoints, ru
     <div className="envelope-heading"><div><span className="workspace-label">Operating Envelope</span><h1>{activeDesign.name}</h1><p>Engine revision {normalizedEngineRevision(activeDesign).number} · {normalizedEngineRevision(activeDesign).fingerprint}. This is an observed propagation-mode map first. It becomes a predictive envelope only after raw-data and validation gates pass. Blank space is untested.</p></div><label className="design-map-selector"><span>Engine / design revision</span><select value={activeDesign.id} onChange={(event) => onSelectDesign(event.target.value)}>{designs.map((design) => <option key={design.id} value={design.id}>{engineRevisionLabel(design)}</option>)}</select></label></div>
 
     {activeDesign.source === "published" && <section className="published-data-banner"><div><strong>Two intersecting published sweeps · not a filled 2D envelope</strong><span>Thirteen unique Table 1 conditions vary inlet temperature at φ 1.19 or vary φ at 713 K while air flow stays 1.110 kg/s. Case 14 repeats Case 10 for a 3.13146 s duration check and is attached as repeatability evidence, not a duplicate marker. Blank regions were not tested; synchronized pressure files and tabulated plenum pressures were not published.</span></div><a href={physicalPoints[0]?.sourceUrl ?? "#"} target="_blank" rel="noreferrer">Open source paper</a></section>}
-    {!physicalPoints.length && <section className="map-empty-banner"><div><strong>No real observed operating points yet</strong><span>Add synchronized experimental pressure data, or load the published example to test the observed-envelope workflow. CFD stays separate in Comparison.</span></div><div className="banner-actions"><button className="button secondary" onClick={onLoadPublished}>Load published test data</button><button className="button primary" onClick={() => onAddOperatingPoint(activeDesign.id)}>Add measured operating point</button></div></section>}
+    {!physicalPoints.length && <section className="map-empty-banner"><div><strong>No real observed operating points yet</strong><span>Add synchronized experimental pressure data for this engine. Published and synthetic examples are loaded only from Home; CFD stays separate in Comparison.</span></div><div className="banner-actions"><button className="button secondary" onClick={onOpenHome}>Go to Home</button><button className="button primary" onClick={() => onAddOperatingPoint(activeDesign.id)}>Add measured operating point</button></div></section>}
 
     <section className="envelope-readiness measured-summary" aria-label="Observed envelope summary">
       <article className="measured-stable"><span>{activeDesign.source === "published" ? "Single-wave observations" : "Stable rotating-wave points"}</span><strong>{dataset.stablePointCount}</strong><small>{activeDesign.source === "published" ? "Author reported a sustained single-wave mode" : "Uploaded measurements; synthetic data excluded"}</small></article>
