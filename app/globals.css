@@ -1520,3 +1520,263 @@ footer { padding: 26px 2px 0; display: flex; justify-content: space-between; gap
   .subsystem-definition-grid article { border-right: 0; }
   .screening-workflow { grid-template-columns: 1fr; }
 }
+
+/* Professional interface hierarchy
+   Keeps engineering detail available while making the active task and decision dominant. */
+body { font-size: 14px; line-height: 1.5; }
+.button { min-height: 42px; padding-inline: 17px; font-size: 13px; }
+.product-tabs button { padding-inline: 18px; font-size: 13px; }
+.brand small { font-size: 9px; }
+.workspace-label, .empty-kicker { font-size: 11px; letter-spacing: .11em; }
+.content { padding-top: 32px; }
+.content :where(p, li, dd, td, th, small) { text-wrap: pretty; }
+.content :where(input, select, textarea) { min-height: 42px; font-size: 13px; }
+.content label { font-size: 12px; }
+
+/* Home: product context first, loading task fully visible in the first desktop viewport. */
+.home-hero {
+  max-width: none;
+  padding: 30px 2px 26px;
+  display: grid;
+  grid-template-columns: minmax(0, 880px) auto;
+  column-gap: 28px;
+  align-items: end;
+}
+.home-hero > :not(.home-actions) { grid-column: 1; }
+.home-hero h1 { margin-block: 9px 10px; font-size: clamp(38px, 4.6vw, 56px); }
+.home-hero > p { font-size: 16px; line-height: 1.55; }
+.home-actions { grid-column: 2; grid-row: 1 / span 3; margin: 0 0 3px; }
+.home-load-heading { padding: 20px 24px; }
+.home-load-heading > span, .home-load-options article > span { font-size: 11px; }
+.home-load-heading p, .home-load-options p, .home-evidence-boundary p { font-size: 14px; }
+.home-load-options strong { font-size: 16px; }
+.home-load-options article { padding: 22px 24px; }
+
+.home-supporting-details {
+  margin-top: 18px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgba(255, 253, 247, .72);
+}
+.home-supporting-details > summary {
+  min-height: 72px;
+  padding: 15px 20px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 5px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+.home-supporting-details > summary::-webkit-details-marker { display: none; }
+.home-supporting-details > summary::after { content: "Open"; color: var(--test); font-size: 13px; font-weight: 700; }
+.home-supporting-details[open] > summary::after { content: "Close"; }
+.home-supporting-details > summary > span { grid-row: 1 / span 2; color: var(--test); font: 720 11px var(--font-geist-mono), monospace; letter-spacing: .08em; }
+.home-supporting-details > summary > strong { font-size: 16px; }
+.home-supporting-details > summary > small { color: var(--muted); font-size: 13px; }
+.home-supporting-content { padding: 0 18px 18px; display: grid; gap: 18px; }
+.home-supporting-content .home-workflow-card { margin: 0; }
+
+/* Builder: readable controls and material decisions, with a resilient 3D surface. */
+.design-editor-heading, .design-heading { align-items: center; }
+.design-form-section { margin-bottom: 18px; padding: 26px; }
+.design-form-section h2 { margin-bottom: 18px; font-size: 20px; }
+.design-form-help, .application-definition span { font-size: 13px; line-height: 1.55; }
+.application-definition strong { font-size: 14px; }
+.design-form-grid label, .design-heading-actions label, .design-map-selector { font-size: 12px; }
+.design-form-grid input, .design-form-grid select, .design-heading-actions select, .design-map-selector select { height: 44px; font-size: 13px; }
+.material-tradeoff-heading span { font-size: 13px; text-align: left; }
+.material-tradeoff-grid header span { font-size: 11px; }
+.material-tradeoff-grid header > b, .material-tradeoff-grid dt, .material-tradeoff-grid p b { font-size: 10px; }
+.material-tradeoff-grid dd, .material-tradeoff-grid p { font-size: 13px; line-height: 1.5; }
+.material-tradeoff-grid footer { font-size: 12px; }
+.material-component-rows header span, .subsystem-definition-grid span { font-size: 11px; }
+.material-component-rows header strong { font-size: 17px; }
+.material-component-rows header p, .material-guidance-columns p { font-size: 14px; line-height: 1.55; }
+.material-guidance-columns b { font-size: 11px; }
+.subsystem-definition-grid strong { font-size: 14px; }
+.subsystem-definition-grid small { font-size: 12px; }
+.card-heading p { font-size: 14px; }
+.card-heading > small { font-size: 12px; }
+.design-calculations dt { font-size: 12px; }
+.design-calculations dd small { font-size: 11px; }
+
+.assembly-canvas-host.webgl-ready .assembly-webgl-fallback { display: none; }
+.assembly-webgl-fallback {
+  min-height: 420px;
+  padding: 42px;
+  display: grid;
+  place-content: center;
+  justify-items: start;
+  gap: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(216, 235, 240, .5), rgba(255, 253, 247, .85)),
+    repeating-linear-gradient(0deg, transparent, transparent 31px, rgba(39, 127, 153, .06) 32px);
+}
+.assembly-webgl-fallback span { color: var(--test); font: 720 11px var(--font-geist-mono), monospace; letter-spacing: .08em; }
+.assembly-webgl-fallback strong { max-width: 620px; font-size: 22px; line-height: 1.25; }
+.assembly-webgl-fallback p { max-width: 650px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+
+/* Operating Envelope: concise status first, map next, methodology on demand. */
+.envelope-heading { margin-bottom: 20px; }
+.envelope-heading p { font-size: 14px; }
+.envelope-readiness.measured-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+}
+.envelope-readiness.measured-summary > article {
+  min-height: 0;
+  padding: 18px 20px;
+}
+.envelope-readiness.measured-summary > article > span { font-size: 13px; }
+.envelope-readiness.measured-summary > article > strong { font-size: 25px; }
+.envelope-readiness.measured-summary > article > small { font-size: 12px; }
+.envelope-readiness.measured-summary > article:last-child {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(180px, .45fr) minmax(0, 1.55fr);
+  column-gap: 24px;
+  align-items: start;
+}
+.envelope-readiness.measured-summary > article:last-child > span,
+.envelope-readiness.measured-summary > article:last-child > strong,
+.envelope-readiness.measured-summary > article:last-child > small { grid-column: 1; }
+.model-gate-list {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+}
+.model-gate-list li { min-width: 0; padding: 4px 13px; align-content: start; border-left: 1px solid var(--line); border-bottom: 0; }
+.model-gate-list li span { font-size: 12px; }
+.model-gate-list li small { font-size: 11px; line-height: 1.45; }
+.map-empty-banner span { font-size: 13px; }
+
+.prediction-validation-panel {
+  padding: 0;
+  overflow: hidden;
+}
+.prediction-validation-panel > .prediction-validation-summary {
+  min-height: 62px;
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 5px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+.prediction-validation-summary::-webkit-details-marker { display: none; }
+.prediction-validation-summary > span { color: var(--test); font: 720 11px var(--font-geist-mono), monospace; letter-spacing: .08em; }
+.prediction-validation-summary > strong { font-size: 15px; }
+.prediction-validation-summary > small { padding: 5px 9px; border-radius: 999px; background: var(--surface-blue); color: var(--test); font-size: 12px; font-weight: 700; }
+.prediction-validation-summary::after { content: "Open"; color: var(--test); font-size: 12px; font-weight: 700; }
+.prediction-validation-panel[open] .prediction-validation-summary::after { content: "Close"; }
+.prediction-validation-summary > small { grid-column: 3; }
+.prediction-validation-summary::after { grid-column: 4; }
+.prediction-validation-content { padding: 0 20px 20px; border-top: 1px solid var(--line); }
+.prediction-validation-heading p, .prototype-gate-note { font-size: 13px; }
+
+/* Comparison: decision and signal plots dominate; optional physics stays one click away. */
+.engineering-decision-card { margin-bottom: 18px; }
+.decision-quality-copy p, .decision-latest-result p { font-size: 13px; line-height: 1.5; }
+.decision-quality-factors small { font-size: 11px; }
+.decision-quality-factors strong { font-size: 12px; }
+.decision-conclusion-block .engineering-decision-heading p,
+.decision-next-run-block p,
+.decision-scope span,
+.decision-scope strong { font-size: 14px; line-height: 1.55; }
+.next-run-action strong, .next-run-action span { font-size: 14px; }
+.decision-outcomes {
+  margin-top: 12px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .52);
+}
+.decision-outcomes > summary {
+  min-height: 58px;
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 4px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.decision-outcomes > summary::-webkit-details-marker { display: none; }
+.decision-outcomes > summary > span { color: var(--test); font: 720 10px var(--font-geist-mono), monospace; letter-spacing: .08em; }
+.decision-outcomes > summary > strong { font-size: 14px; }
+.decision-outcomes > summary::after { content: "Show rules"; color: var(--test); font-size: 12px; font-weight: 700; }
+.decision-outcomes[open] > summary::after { content: "Hide rules"; }
+.decision-outcomes-content { padding: 0 14px 14px; border-top: 1px solid var(--line); }
+.outcome-rules span, .outcome-rules small { font-size: 12px; line-height: 1.45; }
+
+.comparison-secondary-details {
+  margin: 0 0 18px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgba(255, 253, 247, .72);
+}
+.comparison-secondary-details > summary {
+  min-height: 70px;
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 4px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+.comparison-secondary-details > summary::-webkit-details-marker { display: none; }
+.comparison-secondary-details > summary > span { grid-row: 1 / span 2; color: var(--test); font: 720 11px var(--font-geist-mono), monospace; letter-spacing: .08em; }
+.comparison-secondary-details > summary > strong { font-size: 15px; }
+.comparison-secondary-details > summary > small { color: var(--muted); font-size: 13px; }
+.comparison-secondary-details > summary::after { content: "Open"; color: var(--test); font-size: 12px; font-weight: 700; }
+.comparison-secondary-details[open] > summary::after { content: "Close"; }
+.comparison-secondary-content { padding: 0 16px 16px; display: grid; gap: 16px; }
+.comparison-secondary-content > * { margin: 0; }
+.primary-signal-evidence { margin-top: 0; }
+.evidence-heading p, .metric-note { font-size: 14px; }
+.comparison-table th, .comparison-table td { font-size: 13px; }
+.wave-summary span { font-size: 12px; }
+.wave-summary b { font-size: 14px; }
+
+@media (max-width: 1050px) {
+  .home-hero { grid-template-columns: 1fr; }
+  .home-actions { grid-column: 1; grid-row: auto; margin-top: 18px; }
+  .envelope-readiness.measured-summary > article:last-child { grid-template-columns: 1fr; }
+  .model-gate-list { grid-column: 1; grid-row: auto; margin-top: 14px; grid-template-columns: repeat(2, 1fr); }
+  .model-gate-list li:nth-child(odd) { border-left: 0; }
+  .model-gate-list li { border-top: 1px solid var(--line); }
+}
+
+@media (max-width: 720px) {
+  .content { padding-top: 22px; }
+  .home-hero { padding-top: 16px; }
+  .home-hero h1 { font-size: 36px; }
+  .home-supporting-details > summary,
+  .comparison-secondary-details > summary { grid-template-columns: 1fr auto; }
+  .home-supporting-details > summary > span,
+  .comparison-secondary-details > summary > span { grid-row: auto; }
+  .home-supporting-details > summary > small,
+  .comparison-secondary-details > summary > small { grid-column: 1 / -1; }
+  .envelope-readiness.measured-summary { grid-template-columns: 1fr; }
+  .envelope-readiness.measured-summary > article:last-child { grid-column: 1; }
+  .model-gate-list { grid-template-columns: 1fr; }
+  .model-gate-list li { border-left: 0; }
+  .prediction-validation-panel > .prediction-validation-summary { grid-template-columns: 1fr auto; }
+  .prediction-validation-summary > span { grid-column: 1; }
+  .prediction-validation-summary > strong { grid-column: 1; }
+  .prediction-validation-summary > small { grid-column: 2; grid-row: 1 / span 2; }
+  .prediction-validation-summary::after { display: none; }
+  .assembly-webgl-fallback { min-height: 330px; padding: 28px; }
+}
+

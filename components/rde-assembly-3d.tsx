@@ -94,7 +94,15 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, anim
     camera.position.set(10.5, 7.5, 11.5);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    } catch {
+      sceneRef.current = null;
+      cameraRef.current = null;
+      partGroups.clear();
+      return;
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
@@ -103,6 +111,7 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, anim
     renderer.domElement.setAttribute("role", "application");
     renderer.domElement.setAttribute("aria-label", "Interactive three-dimensional RDE assembly. Drag to rotate, use the wheel or pinch to zoom, click a component to inspect it, or use the component buttons beside the model.");
     host.appendChild(renderer.domElement);
+    host.classList.add("webgl-ready");
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -361,6 +370,7 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, anim
       });
       renderer.dispose();
       renderer.domElement.remove();
+      host.classList.remove("webgl-ready");
       partGroups.clear();
       sceneRef.current = null;
       cameraRef.current = null;
@@ -399,7 +409,13 @@ function RdeAssemblyCanvas({ design, selectedPart, viewPreset, viewRequest, anim
     controls.update();
   }, [viewPreset, viewRequest]);
 
-  return <div className="assembly-canvas-host" ref={hostRef}/>;
+  return <div className="assembly-canvas-host" ref={hostRef}>
+    <div className="assembly-webgl-fallback" role="status">
+      <span>3D VIEW UNAVAILABLE</span>
+      <strong>The interactive model could not start in this browser</strong>
+      <p>The build definition, dimensions, materials, cooling method, and calculations remain available. Use the component inspector beside this panel or open Kythros in a WebGL-enabled browser to rotate the assembly.</p>
+    </div>
+  </div>;
 }
 
 export function RdeAssembly3D({ design, animationPaused = false }: { design: EngineDesign; animationPaused?: boolean }) {
