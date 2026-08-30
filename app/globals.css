@@ -1780,3 +1780,97 @@ body { font-size: 14px; line-height: 1.5; }
   .assembly-webgl-fallback { min-height: 330px; padding: 28px; }
 }
 
+/* Connected 2D RDE development workflow */
+.home-evidence-boundary { grid-template-columns: repeat(3, 1fr); }
+.home-evidence-boundary article { border-right: 1px solid var(--line); background: #fff9ee; }
+.home-evidence-boundary article:nth-child(2) { background: #f8f6ef; }
+.home-evidence-boundary article:last-child { border-right: 0; background: var(--surface-blue); }
+
+.simulation-workspace { display: grid; gap: 18px; }
+.simulation-heading { padding: 24px 26px; display: flex; align-items: end; justify-content: space-between; gap: 24px; border: 1px solid var(--line-strong); border-radius: 12px; background: linear-gradient(135deg, #f7fbf8, #edf6f6); }
+.simulation-heading h1 { margin: 5px 0 7px; font-size: clamp(28px, 4vw, 42px); letter-spacing: -.035em; }
+.simulation-heading p { max-width: 760px; margin: 0; color: var(--quiet); font-size: 14px; line-height: 1.55; }
+.simulation-stage { min-width: 290px; display: flex; align-items: center; gap: 5px; color: var(--quiet); font-size: 10px; font-weight: 750; }
+.simulation-stage span, .simulation-stage strong { padding: 7px 8px; border-radius: 99px; white-space: nowrap; }
+.simulation-stage strong { background: var(--test); color: white; }
+.simulation-context-bar { padding: 15px 18px; display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.simulation-context-bar label, .simulation-context-bar > div { min-width: 0; display: grid; gap: 5px; }
+.simulation-context-bar span, .simulation-form-grid label > span, .simulation-readiness-summary span, .simulation-next-step > span { color: var(--test); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.simulation-context-bar select, .simulation-form-grid input { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; color: var(--text); }
+.simulation-context-bar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.simulation-primary-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; }
+.simulation-domain-card, .simulation-setup-card, .simulation-readiness-card { overflow: hidden; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); }
+.simulation-domain-card > .card-heading, .simulation-setup-card > .card-heading { padding: 18px 20px; border-bottom: 1px solid var(--line); }
+.simulation-domain-card svg { display: block; width: 100%; min-height: 320px; padding: 20px; background: #fbfcf8; }
+.simulation-domain-card svg text { fill: #45636e; font-size: 11px; font-weight: 700; }
+.simulation-domain-stats { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); }
+.simulation-domain-stats span { min-width: 0; padding: 13px; display: grid; gap: 3px; color: var(--quiet); font-size: 10px; }
+.simulation-domain-stats span + span { border-left: 1px solid var(--line); }
+.simulation-domain-stats b { overflow: hidden; color: var(--text); font-size: 14px; text-overflow: ellipsis; }
+.simulation-form-grid { padding: 18px 20px 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.simulation-form-grid label { min-width: 0; display: grid; align-content: start; gap: 6px; }
+.simulation-form-grid label.wide { grid-column: 1 / -1; }
+.simulation-form-grid small { color: var(--quiet); font-size: 10px; }
+.input-with-unit { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+.input-with-unit input { grid-column: 1 / -1; grid-row: 1; padding-right: 42px; }
+.input-with-unit i { z-index: 1; grid-column: 2; grid-row: 1; padding-right: 11px; color: var(--quiet); font-size: 11px; font-style: normal; }
+.simulation-readiness-card { padding: 20px; }
+.simulation-readiness-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.simulation-readiness-summary > div { padding: 15px; display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 9px; }
+.simulation-readiness-summary strong { font-size: 18px; }
+.simulation-readiness-summary strong.ready { color: #23725f; }
+.simulation-readiness-summary strong.blocked, .simulation-readiness-summary strong.review { color: #9b6725; }
+.simulation-readiness-summary p { margin: 0; color: var(--quiet); font-size: 12px; line-height: 1.45; }
+.simulation-readiness-card details { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
+.simulation-readiness-card summary { cursor: pointer; color: #1c6073; font-size: 12px; font-weight: 750; }
+.simulation-readiness-card ol { margin-bottom: 0; padding-left: 22px; color: var(--quiet); font-size: 12px; line-height: 1.55; }
+.simulation-actions { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 9px; }
+.simulation-actions button:disabled { cursor: not-allowed; opacity: .45; }
+.simulation-next-step { margin-top: 15px; padding: 15px; display: grid; justify-items: start; gap: 5px; border-left: 3px solid #23725f; background: #eef8f4; }
+.simulation-next-step p { margin: 0 0 6px; color: var(--quiet); font-size: 12px; }
+
+.help-workflow { margin-top: 24px; display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.help-workflow article { min-width: 0; padding: 14px; display: grid; align-content: start; gap: 5px; background: #fffaf1; }
+.help-workflow article + article { border-left: 1px solid var(--line); }
+.help-workflow b { width: 24px; height: 24px; display: grid; place-content: center; border-radius: 50%; background: var(--test); color: white; font-size: 11px; }
+.help-workflow strong { font-size: 13px; }
+.help-workflow span { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.help-boundary { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.help-boundary article { padding: 15px 17px; display: grid; gap: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-blue); }
+.help-boundary article:last-child { background: #fff8e9; }
+.help-boundary span { color: var(--test); font: 720 10px var(--font-geist-mono), monospace; letter-spacing: .08em; }
+.help-boundary strong { font-size: 15px; }
+.help-boundary p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.help-workspaces { margin-top: 18px; }
+.help-workspaces h3 { margin: 0 0 9px; font-size: 16px; }
+.help-workspaces > div { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+.help-workspaces article { padding: 12px 13px; border: 1px solid var(--line); border-radius: 7px; }
+.help-workspaces strong { font-size: 13px; }
+.help-workspaces p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.help-input-reference { margin-top: 18px; border: 1px solid var(--line-strong); border-radius: 9px; overflow: hidden; }
+.help-input-reference > summary { padding: 14px 16px; cursor: pointer; color: var(--text); font-size: 14px; font-weight: 720; background: #f8f6ef; }
+.help-input-reference > p { margin: 0; padding: 13px 16px 0; color: var(--muted); font-size: 12px; }
+.help-input-reference .help-groups { margin: 13px 14px 14px; }
+
+@media (max-width: 1050px) {
+  .simulation-heading { align-items: stretch; flex-direction: column; }
+  .simulation-stage { min-width: 0; flex-wrap: wrap; }
+  .simulation-context-bar, .simulation-primary-grid { grid-template-columns: 1fr; }
+  .help-workflow { grid-template-columns: 1fr 1fr; }
+  .help-workflow article + article { border-left: 0; border-top: 1px solid var(--line); }
+  .help-workspaces > div { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 720px) {
+  .home-evidence-boundary { grid-template-columns: 1fr; }
+  .home-evidence-boundary article { border-right: 0; border-bottom: 1px solid var(--line); }
+  .home-evidence-boundary article:last-child { border-bottom: 0; }
+  .simulation-heading { padding: 18px; }
+  .simulation-form-grid, .simulation-readiness-summary { grid-template-columns: 1fr; }
+  .simulation-form-grid label.wide { grid-column: auto; }
+  .simulation-domain-stats { grid-template-columns: 1fr 1fr; }
+  .simulation-domain-stats span:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
+  .simulation-domain-stats span:nth-child(4) { border-top: 1px solid var(--line); }
+  .help-workflow, .help-boundary, .help-workspaces > div { grid-template-columns: 1fr; }
+}
+
