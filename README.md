@@ -31,9 +31,13 @@ the engine and pairing fingerprints with the case. These controls improve
 reproducibility but do not replace external matched experiment and CFD data.
 
 The application starts as an empty workspace and accepts multiple operating
-points. It does not run CFD. Work remains in memory until the user downloads a
-versioned workspace file; refreshing the page does not provide durable browser
-storage.
+points. Its optional localhost companion can run OpenFOAM mesh checks and a
+separately reviewed reacting-flow case on the user's own hardware. The browser
+cannot invent solver output: reacting execution remains disabled until the
+runner detects OpenFOAM, a complete case template, a solver executable, and a
+result adapter. See `runner/README.md`. Work remains in memory until the user
+downloads a versioned workspace file; refreshing the page does not provide
+durable browser storage.
 
 The header Help guide defines every case-loader input. Pressure, spectrum,
 residual, propagation-phase, and cycle-stability graphs remain absent until a
