@@ -1,1603 +1,35 @@
-"use client";
-
-import { ChangeEvent, useMemo, useState } from "react";
-import { PwaInstallButton } from "@/components/pwa-install-button";
-import { PressureFileMapper } from "@/components/pressure-file-mapper";
-import { SolverManifestImporter } from "@/components/solver-manifest-importer";
-import { SpatialFieldMapper } from "@/components/spatial-field-mapper";
-import { RdePhysicsVisual } from "@/components/rde-physics-visual";
-import { DesignPlanner } from "@/components/design-planner";
-import { OperatingEnvelope } from "@/components/operating-envelope";
-import { ComparisonHierarchy } from "@/components/comparison-hierarchy";
-import { ProspectiveValidationLedger } from "@/components/prospective-validation-ledger";
-import { PublicExperimentBenchmarks } from "@/components/public-experiment-benchmarks";
-import { Rde2dWorkspace } from "@/components/rde-2d-workspace";
-import { buildCaseDelta, buildCaseHistoryEvidence, caseFieldLabel, selectIndependentPrecedents, selectPlanningEvidence, summarizeCase, type CaseHistoryEvidence } from "@/lib/case-history";
-import {
-  EMPTY_METADATA,
-  cloneMetadata,
-  type AnalysisCase,
-  type CaseRelationship,
-  type CaseMetadata,
-  type Dimensionality,
-  type SensitivityVariable,
-} from "@/lib/caevera-types";
-import { CONTROLLED_PARAMETER_DEFINITIONS, CONTROLLED_PARAMETERS, parameterLabel, type ControlledParameter } from "@/lib/controlled-parameters";
-import { completeRunPlan, createNextRunWorkOrder, freezeRunPlan, nextRunWorkOrderFileName, recommendationSnapshot, sameWorkOrderDefinition, type FrozenRunPlan } from "@/lib/next-run-work-order";
-import { auditComparisonPairing } from "@/lib/comparison-pairing";
-import { buildCaseAssessment, type ControlledNextRun, type DiagnosticEvidence, type MetricAssessment } from "@/lib/diagnostics";
-import { buildDecisionQuality, type DecisionQuality } from "@/lib/decision-quality";
-import { KNOWLEDGE_BASE_VERSION, sourcesFor, type DiagnosticResearchClaim, type DiagnosticSource } from "@/lib/diagnostic-knowledge";
-import { CASE_INPUT_HELP } from "@/lib/case-input-help";
-import { WAVE_METHOD_SOURCES } from "@/lib/wave-method-sources";
-import { calculateDesign, operatingPointLabel, type EngineDesign, type OperatingPoint, type PlannedOperatingPoint } from "@/lib/design-workspace";
-import { createEngineRevision, normalizeEngineDesign } from "@/lib/engine-manifest";
-import { buildOpenFoamNextRunHandoff } from "@/lib/cfd-run-manifest";
-import { GE_2022_DESIGN, GE_2022_DESIGN_ID, buildGe2022OperatingPoints } from "@/lib/published-envelope-data";
-import type { MappedProbeImport } from "@/lib/data-import";
-import { PUBLISHED_VALIDATION_SOURCES, PUBLISHED_VALIDATION_SUMMARY, RAW_DATASET_VALIDATION_CASES } from "@/lib/published-benchmarks";
-import { deserializeWorkspace, serializeWorkspace, workspaceFileName } from "@/lib/workspace";
-import {
-  ANALYSIS_VERSION,
-  REVIEW_THRESHOLDS,
-  makeDemoProbeSignals,
-  type Comparison,
-  type Signal,
-} from "@/lib/rde-analysis";
-import { analyzeRdeProbeSet, compareProbeSets, type RdeModeResult } from "@/lib/wave-dynamics";
-import { buildPhysicsComparison, cfdPhysicsFromMetadata, experimentPhysicsFromMetadata, PHYSICS_EVIDENCE_SOURCES, PHYSICS_MEASUREMENT_DEFINITIONS, PHYSICS_SOURCE_LIMITATION, physicsMetadataValues } from "@/lib/physics-evidence";
-import type { WallFieldImport } from "@/lib/spatial-field";
-
-const TEST_COLOR = "#2588a2";
-const CFD_COLOR = "#6679bd";
-const RESIDUAL_COLOR = "#c8873d";
-const RERUN_ALWAYS_EDITABLE_FIELDS: (keyof CaseMetadata)[] = [
-  "name", "solverRuntimeHours", "cfdPressureUncertaintyPct", "cfdTimingUncertaintyUs",
-  "cfdNetThrustN", "cfdSpecificImpulseS", "cfdPressureGainPct", "cfdInjectorPressureRatio",
-  "cfdBackflowFractionPct", "cfdWallHeatFluxMWm2", "cfdPeakWallTemperatureK", "cfdSustainedDurationS",
-];
-const EXPERIMENT_OWNED_FIELDS: (keyof CaseMetadata)[] = [
-  "annulusMeanDiameterMm", "annulusDiameterUncertaintyMm", "probePositionsDeg", "maximumWaveCount", "probeSynchronizationConfirmed",
-  "experimentSensorBandwidthKHz", "experimentFilterCutoffKHz", "inletPressureBar", "inletTemperatureK", "equivalenceRatio", "massFlowKgS",
-  "backPressureBar", "pressureUncertaintyPct", "timingUncertaintyUs",
-  "experimentNetThrustN", "experimentSpecificImpulseS", "experimentPressureGainPct", "experimentInjectorPressureRatio",
-  "experimentBackflowFractionPct", "experimentWallHeatFluxMWm2", "experimentPeakWallTemperatureK", "experimentSustainedDurationS",
-];
-
-function formatPhysicsValue(value: number | null, unit: string) {
-  if (value === null) return "Not provided";
-  const digits = Math.abs(value) >= 100 ? 1 : Math.abs(value) >= 10 ? 2 : 3;
-  return `${value.toFixed(digits)}${unit ? ` ${unit}` : ""}`;
-}
-
-function clearCfdPhysics(metadata: CaseMetadata) {
-  for (const item of PHYSICS_MEASUREMENT_DEFINITIONS) metadata[item.cfdKey] = Number.NaN as never;
-}
-
-function average(values: number[]) {
-  const finite = values.filter(Number.isFinite);
-  return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : Number.NaN;
-}
-
-function metadataValueEqual(left: unknown, right: unknown) {
-  return Array.isArray(left) && Array.isArray(right)
-    ? JSON.stringify(left) === JSON.stringify(right)
-    : Object.is(left, right);
-}
-
-function signed(value: number, digits: number) {
-  if (!Number.isFinite(value)) return "Not available";
-  if (Math.abs(value) < 0.5 * 10 ** -digits) return (0).toFixed(digits);
-  return `${value > 0 ? "+" : "âˆ’"}${Math.abs(value).toFixed(digits)}`;
-}
-
-function outcomeLabel(evidence: CaseHistoryEvidence) {
-  if (evidence.sequenceStatus === "converged") return "Numerically converged";
-  if (evidence.state === "supports" && ["mesh", "time-step"].includes(evidence.changedVariable)) return "Numerical sensitivity found";
-  if (evidence.state === "supports") return "Supports explanation";
-  if (evidence.state === "weakens") return "Does not support explanation";
-  return "Inconclusive";
-}
-
-function outcomeTone(evidence: CaseHistoryEvidence): DecisionSummary["tone"] {
-  if (evidence.sequenceStatus === "converged") return "converged";
-  if (evidence.state === "supports") return "confirmed";
-  if (evidence.state === "weakens") return "rejected";
-  return "inconclusive";
-}
-
-function latestResultLabel(status: ControlledNextRun["latestControlledResult"]["status"], policy: ControlledNextRun["decisionPolicy"]) {
-  if (status === "Confirmed") return policy.evaluationMode === "numerical-convergence" ? "Numerical sensitivity found" : "Supports explanation";
-  if (status === "Converged") return "Numerically converged";
-  if (status === "Rejected") return "Does not support explanation";
-  return status;
-}
-
-function changeLabel(variable: SensitivityVariable) {
-  return variable === "time-step" ? "Time-step" : variable.charAt(0).toUpperCase() + variable.slice(1);
-}
-
-function outcomeMeaning(evidence: CaseHistoryEvidence) {
-  if (evidence.sequenceStatus === "converged") return `Keep ${evidence.caseName}. The numerical setting passed the convergence rule, so the next unresolved explanation can now be tested.`;
-  if (evidence.state === "supports" && evidence.planDisposition === "continue") return `Keep ${evidence.caseName}. The changed numerical setting still affects the CFD result, so run the next adjacent level before changing the physics.`;
-  if (evidence.state === "supports") return `Keep ${evidence.caseName}. This one-change result supports the tested explanation, so the next unresolved explanation can now be tested.`;
-  if (evidence.state === "weakens") return `Do not keep the tested change. Return to ${evidence.referenceCaseName} and test the next unresolved explanation.`;
-  return `Do not keep the tested change yet. Repeat from ${evidence.referenceCaseName} with a clearer one-variable difference.`;
-}
-
-function conciseOutcomeDetail(evidence: CaseHistoryEvidence) {
-  if (evidence.sequenceStatus === "converged" && Number.isFinite(evidence.incrementalResponsePct)) return `Targeted CFD values changed ${evidence.incrementalResponsePct!.toFixed(1)}% between adjacent levels Â· convergence rule passed`;
-  if (evidence.state === "supports" && Number.isFinite(evidence.errorReductionPct)) return `Mean targeted CFD-to-experiment error fell ${Math.abs(evidence.errorReductionPct!).toFixed(1)}%${evidence.newMismatchMetricIds?.length ? " Â· a new mismatch appeared" : " Â· no new mismatch appeared"}`;
-  if (evidence.state === "weakens" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted CFD values changed ${evidence.responseMagnitudePct!.toFixed(1)}% Â· a rejection rule was met`;
-  if (evidence.state === "unknown" && Number.isFinite(evidence.responseMagnitudePct)) return `Targeted CFD values changed ${evidence.responseMagnitudePct!.toFixed(1)}% Â· no classification rule was met`;
-  return evidence.controlled ? evidence.detail.split(".")[0] : evidence.relationshipIssues[0] ?? "The one-change relationship could not be verified";
-}
-
-function comparisonOnlyMeaning(evidence: CaseHistoryEvidence) {
-  const issues = evidence.relationshipIssues.length ? evidence.relationshipIssues.join(" ") : "The declared relationship could not be verified.";
-  return `Kythros did not use this rerun to update the plan. ${issues}`;
-}
-
-function evidenceBasisLabel(basis: DiagnosticEvidence["basis"]) {
-  if (basis === "case-history") return "Calculated from a related one-change rerun";
-  if (basis === "literature") return "Supported by published research";
-  if (basis === "policy") return "Result still required";
-  return "Calculated from this run";
-}
-
-function EvidenceLedgerColumn({
-  title,
-  emptyMessage,
-  items,
-  tone,
-}: {
-  title: string;
-  emptyMessage: string;
-  items: DiagnosticEvidence[];
-  tone: "supports" | "weakens" | "unknowns";
-}) {
-  return <article className={`reasoning-column reasoning-${tone}`}>
-    <header><span>{title}</span><b>{items.length}</b></header>
-    {items.length ? <ul>{items.slice(0, 2).map((item, index) => <li key={`${item.basis}-${item.observation}-${index}`}>
-      <small>{evidenceBasisLabel(item.basis)}</small>
-      <strong>{item.observation}</strong>
-    </li>)}</ul> : <div className="reasoning-empty">{emptyMessage}</div>}
-    {items.length > 2 && <small className="reasoning-more">+{items.length - 2} more findings in the report</small>}
-  </article>;
-}
-
-function ResearchBasis({ claims, sources }: { claims: DiagnosticResearchClaim[]; sources: DiagnosticSource[] }) {
-  return <details className="research-basis">
-    <summary>Research supporting this test Â· {sources.length ? `${sources.length} published source${sources.length === 1 ? "" : "s"}` : "no directly applicable paper"}</summary>
-    {claims.length ? <div className="research-claims">{claims.map((claim) => {
-      const claimSources = sourcesFor(claim.sourceIds);
-      return <article key={claim.statement}>
-        <p>{claim.statement}</p>
-        <div>{claimSources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.authors.split(";")[0]} ({source.year})</a>)}</div>
-        <small>What the research does not establish: {claim.boundary}</small>
-      </article>;
-    })}</div> : <p className="research-unmapped">No published paper is mapped to this specific recommendation. Kythros treats it as a prototype product rule, not a research conclusion.</p>}
-  </details>;
-}
-
-type AnalysisInputSummary = {
-  source: AnalysisCase["source"];
-  experimentSamples: number;
-  cfdSamples: number;
-  probeCount: number;
-  experimentName: string;
-  cfdName: string;
-};
-
-function summarizeAnalysisInput(item: AnalysisCase | null): AnalysisInputSummary {
-  return {
-    source: item?.source ?? "uploaded",
-    experimentSamples: item?.testSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
-    cfdSamples: item?.cfdSignals.reduce((sum, signal) => sum + signal.pressure.length, 0) ?? 0,
-    probeCount: item?.testSignals.length ?? 0,
-    experimentName: item?.imports?.experiment.fileName ?? item?.testSignals[0]?.name.split(" Â· ")[0] ?? "Experiment data",
-    cfdName: item?.imports?.cfd.fileName ?? item?.cfdSignals[0]?.name.split(" Â· ")[0] ?? "CFD data",
-  };
-}
-
-type DecisionSummary = {
-  label: string;
-  lead: string;
-  title: string;
-  meaning: string;
-  detail: string | null;
-  tone: "neutral" | "confirmed" | "converged" | "rejected" | "inconclusive";
-};
-
-function metricDigits(metric: MetricAssessment) {
-  if (["frequency", "amplitude", "peak-pressure", "mean-pressure", "impulse"].includes(metric.id)) return metric.id === "frequency" ? 2 : 3;
-  if (metric.id === "speed") return 0;
-  if (metric.id === "rise-time") return 1;
-  if (metric.id === "harmonics") return 3;
-  if (["cycle-variability", "phase-pattern", "frequency-drift", "phase-jitter"].includes(metric.id)) return 1;
-  return 0;
-}
-
-function formatMetricValue(metric: MetricAssessment, value: number | string) {
-  if (typeof value === "string") return value;
-  if (!Number.isFinite(value)) return "Not assessed";
-  const digits = metricDigits(metric);
-  if (metric.id === "cycle-variability") return `${value.toFixed(digits)} %`;
-  return `${value.toFixed(digits)}${metric.unit ? ` ${metric.unit}` : ""}`;
-}
-
-function formatMetricDifference(metric: MetricAssessment) {
-  if (typeof metric.difference === "string") return metric.difference;
-  const absolute = metric.id === "cycle-variability"
-    ? `${signed(metric.difference, metricDigits(metric))} pt`
-    : `${signed(metric.difference, metricDigits(metric))}${metric.unit ? ` ${metric.unit}` : ""}`;
-  return metric.percentDifference === null || !Number.isFinite(metric.percentDifference)
-    ? absolute
-    : `${absolute} (${signed(metric.percentDifference, 1)}%)`;
-}
-
-function polylinePoints(values: number[], width: number, height: number, min: number, max: number, left = 0, top = 0) {
-  const range = Math.max(max - min, 1e-9);
-  return values.map((value, index) => {
-    const x = left + (index / Math.max(values.length - 1, 1)) * width;
-    const y = top + height - ((value - min) / range) * height;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
-}
-
-function PlotGrid({ left, top, width, height }: { left: number; top: number; width: number; height: number }) {
-  return <>
-    {Array.from({ length: 7 }, (_, index) => <line key={`v-${index}`} x1={left + index * width / 6} y1={top} x2={left + index * width / 6} y2={top + height} className="grid-line" />)}
-    {Array.from({ length: 5 }, (_, index) => <line key={`h-${index}`} x1={left} y1={top + index * height / 4} x2={left + width} y2={top + index * height / 4} className="grid-line" />)}
-  </>;
-}
-
-function SignalChart({ comparison }: { comparison: Comparison }) {
-  const all = [...comparison.test, ...comparison.cfd];
-  const minimum = Math.min(...all);
-  const maximum = Math.max(...all);
-  const middle = (minimum + maximum) / 2;
-  const start = comparison.time[0] ?? 0;
-  const end = comparison.time.at(-1) ?? 0;
-  const left = 96; const top = 16; const width = 734; const height = 236;
-  return <div className="chart" role="img" aria-label="Aligned experimental and CFD pressure histories">
-    <svg viewBox="0 0 860 324">
-      <PlotGrid left={left} top={top} width={width} height={height} />
-      <polyline className="series-cfd" points={polylinePoints(comparison.cfd, width, height, minimum, maximum, left, top)} fill="none" stroke={CFD_COLOR} vectorEffect="non-scaling-stroke" />
-      <polyline className="series-experiment" points={polylinePoints(comparison.test, width, height, minimum, maximum, left, top)} fill="none" stroke={TEST_COLOR} vectorEffect="non-scaling-stroke" />
-      <text x="82" y={top + 4} textAnchor="end" className="axis-value">{maximum.toFixed(2)}</text>
-      <text x="82" y={top + height / 2 + 4} textAnchor="end" className="axis-value">{middle.toFixed(2)}</text>
-      <text x="82" y={top + height + 4} textAnchor="end" className="axis-value">{minimum.toFixed(2)}</text>
-      <text x={left} y="278" className="axis-value">{start.toFixed(2)}</text>
-      <text x={left + width} y="278" textAnchor="end" className="axis-value">{end.toFixed(2)}</text>
-      <text x={left + width / 2} y="313" textAnchor="middle" className="axis-title">TIME (ms)</text>
-      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">PRESSURE (MPa)</text>
-    </svg>
-  </div>;
-}
-
-function SpectrumChart({ comparison }: { comparison: Comparison }) {
-  const maximumFrequency = Math.min(Math.max(comparison.testFrequency, comparison.cfdFrequency) * 2.2, comparison.testSpectrum.frequency.at(-1) ?? 20);
-  const trim = (data: { frequency: number[]; amplitude: number[] }) => data.amplitude
-    .map((value, index) => ({ frequency: data.frequency[index], value: Math.log10(Math.max(value, 1e-5)) }))
-    .filter((point) => point.frequency <= maximumFrequency);
-  const test = trim(comparison.testSpectrum).map((point) => point.value);
-  const cfd = trim(comparison.cfdSpectrum).map((point) => point.value);
-  const all = [...test, ...cfd];
-  const minimum = Math.min(...all); const maximum = Math.max(...all);
-  const middle = (minimum + maximum) / 2;
-  const left = 96; const top = 16; const width = 734; const height = 236;
-  return <div className="chart" role="img" aria-label="Experimental and CFD pressure spectra">
-    <svg viewBox="0 0 860 324">
-      <PlotGrid left={left} top={top} width={width} height={height} />
-      <polyline className="series-cfd" points={polylinePoints(cfd, width, height, minimum, maximum, left, top)} fill="none" stroke={CFD_COLOR} vectorEffect="non-scaling-stroke" />
-      <polyline className="series-experiment" points={polylinePoints(test, width, height, minimum, maximum, left, top)} fill="none" stroke={TEST_COLOR} vectorEffect="non-scaling-stroke" />
-      <text x="82" y={top + 4} textAnchor="end" className="axis-value">{maximum.toFixed(2)}</text>
-      <text x="82" y={top + height / 2 + 4} textAnchor="end" className="axis-value">{middle.toFixed(2)}</text>
-      <text x="82" y={top + height + 4} textAnchor="end" className="axis-value">{minimum.toFixed(2)}</text>
-      <text x={left} y="278" className="axis-value">0</text>
-      <text x={left + width / 2} y="278" textAnchor="middle" className="axis-value">{(maximumFrequency / 2).toFixed(1)}</text>
-      <text x={left + width} y="278" textAnchor="end" className="axis-value">{maximumFrequency.toFixed(1)}</text>
-      <text x={left + width / 2} y="313" textAnchor="middle" className="axis-title">FREQUENCY (kHz)</text>
-      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">LOG AMPLITUDE</text>
-    </svg>
-  </div>;
-}
-
-function ResidualChart({ comparison }: { comparison: Comparison }) {
-  const residual = comparison.test.map((value, index) => value - comparison.cfd[index]);
-  const bound = Math.max(...residual.map(Math.abs), 1e-4);
-  const start = comparison.time[0] ?? 0; const end = comparison.time.at(-1) ?? 0;
-  const left = 96; const top = 16; const width = 734; const height = 236;
-  return <div className="chart" role="img" aria-label="Experimental pressure minus CFD pressure residual">
-    <svg viewBox="0 0 860 324">
-      <PlotGrid left={left} top={top} width={width} height={height} />
-      <line x1={left} y1={top + height / 2} x2={left + width} y2={top + height / 2} className="zero-line" />
-      <polyline className="series-residual" points={polylinePoints(residual, width, height, -bound, bound, left, top)} fill="none" stroke={RESIDUAL_COLOR} vectorEffect="non-scaling-stroke" />
-      <text x="82" y={top + 4} textAnchor="end" className="axis-value">+{bound.toFixed(2)}</text>
-      <text x="82" y={top + height / 2 + 4} textAnchor="end" className="axis-value">0</text>
-      <text x="82" y={top + height + 4} textAnchor="end" className="axis-value">âˆ’{bound.toFixed(2)}</text>
-      <text x={left} y="278" className="axis-value">{start.toFixed(2)}</text>
-      <text x={left + width} y="278" textAnchor="end" className="axis-value">{end.toFixed(2)}</text>
-      <text x={left + width / 2} y="313" textAnchor="middle" className="axis-title">TIME (ms)</text>
-      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">PRESSURE DIFFERENCE (MPa)</text>
-    </svg>
-  </div>;
-}
-
-function PhaseChart({ experiment, simulation, positionsDeg }: { experiment: RdeModeResult; simulation: RdeModeResult; positionsDeg: number[] }) {
-  const left = 96; const top = 16; const width = 734; const height = 236;
-  const order = positionsDeg.map((position, index) => ({ position: ((position % 360) + 360) % 360, index })).sort((a, b) => a.position - b.position);
-  const points = (values: number[]) => positionsDeg.map((position, index) => {
-    const ordered = order[index];
-    const x = left + ordered.position / 360 * width;
-    const y = top + height - (values[ordered.index] + 180) / 360 * height;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
-  return <div className="chart" role="img" aria-label="Circumferential phase pattern at the dominant passage frequency">
-    <svg viewBox="0 0 860 324">
-      <PlotGrid left={left} top={top} width={width} height={height} />
-      <line x1={left} y1={top + height / 2} x2={left + width} y2={top + height / 2} className="zero-line" />
-      <polyline className="series-cfd" points={points(simulation.probePhasesDeg)} fill="none" stroke={CFD_COLOR} vectorEffect="non-scaling-stroke" />
-      <polyline className="series-experiment" points={points(experiment.probePhasesDeg)} fill="none" stroke={TEST_COLOR} vectorEffect="non-scaling-stroke" />
-      {positionsDeg.map((position, index) => <g key={index}><circle cx={left + (((position % 360) + 360) % 360) / 360 * width} cy={top + height - (experiment.probePhasesDeg[index] + 180) / 360 * height} r="4" fill={TEST_COLOR} /><circle cx={left + (((position % 360) + 360) % 360) / 360 * width} cy={top + height - (simulation.probePhasesDeg[index] + 180) / 360 * height} r="4" fill={CFD_COLOR} /></g>)}
-      <text x="82" y={top + 4} textAnchor="end" className="axis-value">+180</text><text x="82" y={top + height / 2 + 4} textAnchor="end" className="axis-value">0</text><text x="82" y={top + height + 4} textAnchor="end" className="axis-value">âˆ’180</text>
-      <text x={left} y="278" className="axis-value">0</text><text x={left + width / 2} y="278" textAnchor="middle" className="axis-value">180</text><text x={left + width} y="278" textAnchor="end" className="axis-value">360</text>
-      <text x={left + width / 2} y="313" textAnchor="middle" className="axis-title">PROBE POSITION (deg)</text>
-      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">RELATIVE PHASE (deg)</text>
-    </svg>
-  </div>;
-}
-
-function CycleChart({ experiment, simulation }: { experiment: RdeModeResult; simulation: RdeModeResult }) {
-  const all = [...experiment.cycleSeries, ...simulation.cycleSeries];
-  const start = Math.min(...all.map((point) => point.timeMs));
-  const end = Math.max(...all.map((point) => point.timeMs));
-  const render = (key: "frequencyKHz" | "peakPressureMpa", label: string, digits: number) => {
-    const left = 96; const top = 12; const width = 734; const height = 124;
-    const minimum = Math.min(...all.map((point) => point[key]));
-    const maximum = Math.max(...all.map((point) => point[key]));
-    const points = (mode: RdeModeResult) => mode.cycleSeries.map((point) => {
-      const x = left + (point.timeMs - start) / Math.max(end - start, 1e-12) * width;
-      const y = top + height - (point[key] - minimum) / Math.max(maximum - minimum, 1e-12) * height;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    }).join(" ");
-    return <svg key={key} viewBox="0 0 860 210" aria-label={label}>
-      <PlotGrid left={left} top={top} width={width} height={height} />
-      <polyline className="series-cfd" points={points(simulation)} fill="none" stroke={CFD_COLOR} vectorEffect="non-scaling-stroke" />
-      <polyline className="series-experiment" points={points(experiment)} fill="none" stroke={TEST_COLOR} vectorEffect="non-scaling-stroke" />
-      <text x="82" y={top + 4} textAnchor="end" className="axis-value">{maximum.toFixed(digits)}</text><text x="82" y={top + height + 4} textAnchor="end" className="axis-value">{minimum.toFixed(digits)}</text>
-      <text x={left} y="162" className="axis-value">{start.toFixed(2)}</text><text x={left + width} y="162" textAnchor="end" className="axis-value">{end.toFixed(2)}</text>
-      <text x={left + width / 2} y="197" textAnchor="middle" className="axis-title">TIME (ms)</text>
-      <text x="22" y={top + height / 2} transform={`rotate(-90 22 ${top + height / 2})`} textAnchor="middle" className="axis-title">{label}</text>
-    </svg>;
-  };
-  return <div className="chart cycle-chart-stack" role="img" aria-label="Cycle-by-cycle passage frequency and peak pressure">
-    {render("frequencyKHz", "FREQUENCY (kHz)", 2)}
-    {render("peakPressureMpa", "PEAK PRESSURE (MPa)", 2)}
-  </div>;
-}
-
-function Legend({ residual = false }: { residual?: boolean }) {
-  return <div className="legend" aria-label="Chart legend">{residual
-    ? <div className="legend-item"><i className="legend-residual" /><span><strong>Pressure difference</strong><small>Measured experiment minus CFD simulation</small></span></div>
-    : <><div className="legend-item"><i className="legend-test" /><span><strong>Measured experiment</strong><small>Solid teal line</small></span></div><div className="legend-item"><i className="legend-cfd" /><span><strong>CFD simulation</strong><small>Dashed blue line</small></span></div></>
-  }</div>;
-}
-
-function EngineeringDecisionPanel({
-  summary,
-  nextRun,
-  showLatestResult,
-  decisionQuality,
-  selectedCaseName,
-  selectedAnalysisInput,
-  planningCaseName,
-  publishedSources,
-  researchClaims,
-  publishedValidation,
-  onEdit,
-  onDownloadReport,
-  onDownloadNextRun,
-  onDownloadOpenFoam,
-  onStartNextRun,
-  onSaveWorkspace,
-  onViewHistory,
-}: {
-  summary: DecisionSummary;
-  nextRun: ControlledNextRun;
-  showLatestResult: boolean;
-  decisionQuality: DecisionQuality;
-  selectedCaseName: string;
-  selectedAnalysisInput: AnalysisInputSummary;
-  planningCaseName: string;
-  publishedSources: DiagnosticSource[];
-  researchClaims: DiagnosticResearchClaim[];
-  publishedValidation: typeof PUBLISHED_VALIDATION_SUMMARY;
-  onEdit: () => void;
-  onDownloadReport: () => void;
-  onDownloadNextRun: (() => void) | null;
-  onDownloadOpenFoam: (() => void) | null;
-  onStartNextRun: (() => void) | null;
-  onSaveWorkspace: () => void;
-  onViewHistory: (() => void) | null;
-}) {
-  const precedent = nextRun.precedent;
-  const isDemo = selectedAnalysisInput.source === "demo";
-  const planUsesDifferentCase = selectedCaseName !== planningCaseName;
-  const ledger = nextRun.reasoningLedger;
-  const policy = nextRun.decisionPolicy;
-  const isNumericalPolicy = policy.evaluationMode === "numerical-convergence" && policy.changedVariable != null && policy.convergenceResponsePct != null;
-  const isModelSensitivityPolicy = policy.evaluationMode === "model-sensitivity" && policy.changedVariable != null;
-  const testedVariable = policy.changedParameter ? parameterLabel(policy.changedParameter).toLowerCase() : policy.changedVariable ? changeLabel(policy.changedVariable).toLowerCase() : "selected";
-  const conclusionHeading = summary.label === "Result of this rerun" ? "What this rerun concluded" : "What this operating point shows";
-  const startingPointReason = summary.tone === "rejected"
-    ? "The selected change was rejected and is not carried forward."
-    : summary.tone === "inconclusive"
-      ? "The selected change was inconclusive and is not carried forward."
-      : summary.label === "Current diagnosis"
-        ? "This is the latest accepted setting at this operating point."
-        : "This accepted setting is carried forward.";
-  return <section className={`engineering-decision-card decision-${summary.tone}${isDemo ? " decision-demo" : ""}`} aria-label="Engineering decision">
-    <div className="decision-quality" aria-label={`Recommendation evidence: ${decisionQuality.label}`}>
-      <div className="decision-quality-verdict"><span>Recommendation evidence</span><strong>{decisionQuality.label}</strong></div>
-      <div className="decision-quality-copy"><small>{decisionQuality.sourceLabel}</small><p>{decisionQuality.explanation}</p></div>
-      <div className="decision-quality-factors" aria-label="Evidence conditions">
-        {decisionQuality.gates.map((gate) => <span key={gate.id} className={`factor-${gate.status}`}><i aria-hidden="true">{gate.status === "passed" ? "âœ“" : gate.status === "blocked" ? "Ã—" : gate.status === "review" ? "!" : "â—‹"}</i><small>{gate.label}</small><strong>{gate.statusLabel}</strong></span>)}
-      </div>
-    </div>
-    <section className="decision-block decision-conclusion-block" aria-labelledby="decision-conclusion-heading">
-      <div className="decision-block-heading"><b>1</b><h2 id="decision-conclusion-heading">{conclusionHeading}</h2></div>
-      <header className="engineering-decision-heading">
-        <div><span>{summary.label}</span></div>
-        <h3><span>{summary.lead}</span> {summary.title}</h3>
-        {summary.detail && <p className="decision-detail">{summary.detail}</p>}
-        <p className="decision-meaning">{summary.meaning}</p>
-      </header>
-      {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Latest result at this operating point: {latestResultLabel(nextRun.latestControlledResult.status, policy)}</strong><span>{nextRun.latestControlledResult.caseName}</span></div>}
-    </section>
-    <section className="decision-block decision-recommendation-block" aria-labelledby="decision-recommendation-heading">
-      <div className="decision-block-heading"><b>2</b><h2 id="decision-recommendation-heading">Next CFD run at this operating point</h2></div>
-      {planUsesDifferentCase && <div className="decision-scope">
-        <strong>Starting point</strong>
-        <span>Use <b>{planningCaseName}</b>. {startingPointReason}</span>
-      </div>}
-      <div className="decision-next-run">
-        <span>Do this next</span><h3>{nextRun.title}</h3>
-      </div>
-      <div className="next-run-action">
-        <p><strong>Change</strong><span>{nextRun.change}</span></p>
-        <p><strong>Keep unchanged</strong><span>{nextRun.holdFixed.join(" Â· ")}</span></p>
-        <p><strong>Compare</strong><span>{nextRun.expectedOutcome}</span></p>
-      </div>
-      {(onStartNextRun || onDownloadNextRun || onDownloadOpenFoam) && <div className="next-run-buttons">{onStartNextRun && <button className="button primary" onClick={onStartNextRun}>Start recommended rerun</button>}{onDownloadNextRun && <button className="button secondary" onClick={onDownloadNextRun}>Download frozen run spec</button>}{onDownloadOpenFoam && <button className="button secondary" onClick={onDownloadOpenFoam}>Download OpenFOAM handoff</button>}</div>}
-      <details className="decision-reasoning" aria-label="Why Kythros recommends this run">
-        <summary>Why Kythros recommends this run</summary>
-        <div className="decision-reasoning-heading">
-          <span>Question being tested</span>
-          <h3>{nextRun.question}</h3>
-          <p>These findings are calculated from the analyzed cases. They are not columns or labels in the CSV files.</p>
-        </div>
-        <div className="reasoning-ledger">
-          <EvidenceLedgerColumn title="Findings that support this explanation" emptyMessage="No analyzed finding directly supports this explanation." items={ledger.supports} tone="supports" />
-          <EvidenceLedgerColumn title="Findings that contradict this explanation" emptyMessage="No finding in the analyzed cases contradicts this explanation. That does not confirm it." items={ledger.weakens} tone="weakens" />
-          <EvidenceLedgerColumn title="Evidence still needed" emptyMessage="Kythros has not identified another missing result for this decision." items={ledger.unknowns} tone="unknowns" />
-        </div>
-        <div className="decision-priority">
-          <strong>Why this is the next test</strong>
-          <p>{nextRun.whyThisRunFirst}</p>
-        </div>
-      </details>
-      <details className="decision-outcomes" aria-label="How the result changes the plan">
-        <summary><span>Decision rule</span><strong>How Kythros will classify the rerun result</strong></summary>
-        <div className="decision-outcomes-content">
-        <div><span>How Kythros will classify the result</span>{policy.basis === "prototype-policy" && <small>Prototype product policy {policy.version}. Kythros chose these decision limits; the cited papers did not.</small>}</div>
-        {isNumericalPolicy ? <>
-          <div className="outcome-rules">
-            <article className="branch-converged"><strong>Numerically converged</strong><span>The targeted CFD values change by no more than {policy.convergenceResponsePct!.toFixed(1)}% between the two adjacent levels.</span><small>Keep the newer setting and move to the next unresolved explanation.</small></article>
-            <article className="branch-confirmed"><strong>{policy.changedParameter ? parameterLabel(policy.changedParameter) : changeLabel(policy.changedVariable!)} still changes the result</strong><span>The targeted CFD values change by more than {policy.convergenceResponsePct!.toFixed(1)}% between the two adjacent levels.</span><small>Keep the newer setting and test the next {testedVariable} level before changing the physics.</small></article>
-            <article className="branch-inconclusive"><strong>Cannot classify</strong><span>The two runs are not a valid one-change pair, or a required targeted value cannot be calculated.</span><small>Correct the run relationship or data problem, then repeat the same comparison.</small></article>
-          </div>
-          <p className="decision-agreement-note"><strong>Separate question:</strong> Kythros also reports whether the newer CFD result moved closer to the experiment, moved farther away, or created a new mismatch.</p>
-        </> : isModelSensitivityPolicy ? <div className="outcome-rules">
-          <article className="branch-confirmed"><strong>Supports this explanation</strong><span>The mean CFD-to-experiment error in the targeted values falls by at least {policy.confirmationErrorReductionPct!.toFixed(1)}%, with no new resolved mismatch.</span><small>Keep the tested setting and move to the next unresolved explanation.</small></article>
-          <article className="branch-rejected"><strong>Does not support this explanation</strong><span>The targeted CFD response is below {policy.minimumResponsePct!.toFixed(1)}%, the targeted error increases by at least {policy.rejectionErrorWorseningPct!.toFixed(1)}%, or a new resolved mismatch appears.</span><small>Return to the starting setting and test the next explanation.</small></article>
-          <article className="branch-inconclusive"><strong>Inconclusive</strong><span>The result meets neither rule above.</span><small>Repeat the same one-variable test with a larger change or lower uncertainty.</small></article>
-        </div> : <div className="outcome-rules">
-          <article className="branch-confirmed"><strong>Passes</strong><span>{nextRun.confirmationCriterion}</span><small>{nextRun.ifConfirmed}</small></article>
-          <article className="branch-rejected"><strong>Does not pass</strong><span>{nextRun.rejectionCriterion}</span><small>{nextRun.ifRejected}</small></article>
-          <article className="branch-inconclusive"><strong>Cannot classify</strong><span>{nextRun.inconclusiveCriterion}</span><small>{nextRun.ifInconclusive}</small></article>
-        </div>}
-        </div>
-      </details>
-      <div className="decision-precedent" aria-label="Comparable controlled reruns">
-        <span>Independent evidence from other operating points</span>
-        {precedent.matchedCount ? <>
-          <p><strong>{precedent.confirmedCount} of {precedent.matchedCount} comparable one-change reruns met the same decision rule.</strong></p>
-          {isDemo && <small>These are generated demonstrations, not evidence from a physical engine.</small>}
-        </> : <>
-          <p><strong>No comparable rerun from another operating point has been analyzed.</strong> The findings above come only from this operating point.</p>
-        </>}
-      </div>
-      <ResearchBasis claims={researchClaims} sources={publishedSources} />
-      <details className="decision-evidence">
-        <summary>What is this recommendation status based on?</summary>
-        <p className="evidence-calculation-note">Kythros calculates this status from the selected run and verified rerun history at this operating point. Published papers and public benchmarks do not raise it.</p>
-        <p className="selected-data-source"><strong>{selectedCaseName}</strong> Â· {selectedAnalysisInput.experimentSamples.toLocaleString()} experiment + {selectedAnalysisInput.cfdSamples.toLocaleString()} CFD values Â· {selectedAnalysisInput.probeCount} probes</p>
-        {planUsesDifferentCase && <p className="planning-data-source"><strong>Plan reference:</strong> {planningCaseName}</p>}
-        <ul>{decisionQuality.gates.map((gate) => <li key={gate.id} className={`evidence-${gate.status}`}><i>{gate.status === "passed" ? "âœ“" : gate.status === "blocked" ? "Ã—" : gate.status === "review" ? "!" : "â—‹"}</i><strong>{gate.label}</strong><b>{gate.statusLabel}</b><small>{gate.result}</small></li>)}</ul>
-        <p><strong>Method support only:</strong> {publishedSources.length} published reference{publishedSources.length === 1 ? "" : "s"} support the method, and {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} public validation cases test the analyzer. Neither confirms the explanation for this operating point.</p>
-      </details>
-      {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
-    </section>
-    <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit run</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View run history</button>}</div>
-  </section>;
-}
-export default function Home() {
-  const [cases, setCases] = useState<AnalysisCase[]>([]);
-  const [designs, setDesigns] = useState<EngineDesign[]>([]);
-  const [operatingPoints, setOperatingPoints] = useState<OperatingPoint[]>([]);
-  const [frozenRunPlans, setFrozenRunPlans] = useState<FrozenRunPlan[]>([]);
-  const [activeDesignId, setActiveDesignId] = useState<string | null>(null);
-  const [activeOperatingPointId, setActiveOperatingPointId] = useState<string | null>(null);
-  const [draftDesignId, setDraftDesignId] = useState<string | null>(null);
-  const [draftOperatingPointId, setDraftOperatingPointId] = useState<string | null>(null);
-  const [draftNewOperatingPoint, setDraftNewOperatingPoint] = useState<OperatingPoint | null>(null);
-  const [loaderMode, setLoaderMode] = useState<"measured-point" | "comparison-run">("comparison-run");
-  const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
-  const [caseBaselineId, setCaseBaselineId] = useState<string | null>(null);
-  const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<CaseMetadata>(() => cloneMetadata(EMPTY_METADATA));
-  const [draftRelationship, setDraftRelationship] = useState<CaseRelationship | null>(null);
-  const [draftFrozenPlanId, setDraftFrozenPlanId] = useState<string | null>(null);
-  const [testPending, setTestPending] = useState<MappedProbeImport | null>(null);
-  const [cfdPending, setCfdPending] = useState<MappedProbeImport | null>(null);
-  const [testWallPending, setTestWallPending] = useState<WallFieldImport | null>(null);
-  const [cfdWallPending, setCfdWallPending] = useState<WallFieldImport | null>(null);
-  const [showLoader, setShowLoader] = useState(false);
-  const [reviewingRerun, setReviewingRerun] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
-  const [error, setError] = useState("");
-  const [workspaceError, setWorkspaceError] = useState("");
-  const [activeView, setActiveView] = useState<"signals" | "spectrum" | "residual" | "phase" | "cycles">("signals");
-  const [activeProbe, setActiveProbe] = useState(0);
-  const [workspaceView, setWorkspaceView] = useState<"case" | "compare">("case");
-  const [productView, setProductView] = useState<"home" | "design" | "simulation" | "envelope" | "comparison">("home");
-
-  const activeCase = cases.find((item) => item.id === activeCaseId) ?? null;
-  const activeOperatingPoint = operatingPoints.find((item) => item.id === activeOperatingPointId) ?? null;
-  const activeDesign = designs.find((item) => item.id === activeCase?.designId) ?? null;
-  const operatingPointRuns = useMemo(() => cases.filter((item) => item.operatingPointId === activeOperatingPointId), [cases, activeOperatingPointId]);
-  const draftOperatingPointRuns = useMemo(() => cases.filter((item) => item.operatingPointId === draftOperatingPointId), [cases, draftOperatingPointId]);
-  const probeSetComparison = useMemo(() => activeCase ? compareProbeSets(activeCase.testSignals, activeCase.cfdSignals) : null, [activeCase]);
-  const comparisons = useMemo(() => probeSetComparison?.comparisons ?? [], [probeSetComparison]);
-  const testMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.testSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: activeCase.metadata.maximumWaveCount, synchronizationConfirmed: activeCase.metadata.probeSynchronizationConfirmed, sensorBandwidthKHz: activeCase.metadata.experimentSensorBandwidthKHz, filterCutoffKHz: activeCase.metadata.experimentFilterCutoffKHz }) : null, [activeCase]);
-  const cfdMode = useMemo(() => activeCase ? analyzeRdeProbeSet(activeCase.cfdSignals, activeCase.metadata.probePositionsDeg, activeCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: activeCase.metadata.maximumWaveCount, synchronizationConfirmed: activeCase.metadata.probeSynchronizationConfirmed }) : null, [activeCase]);
-  const recommendationBaselineId = activeCase?.relationship?.baselineCaseId ?? activeCase?.id ?? null;
-  const caseHistoryEvidence = useMemo(() => recommendationBaselineId ? buildCaseHistoryEvidence(cases, recommendationBaselineId) : [], [cases, recommendationBaselineId]);
-  const precedentEvidence = useMemo(() => cases
-    .filter((item) => !item.relationship)
-    .flatMap((item) => buildCaseHistoryEvidence(cases, item.id)), [cases]);
-  const assessment = useMemo(() => activeCase && testMode && cfdMode ? buildCaseAssessment(activeCase.metadata, comparisons, testMode, cfdMode) : null, [activeCase, comparisons, testMode, cfdMode]);
-  const latestAcceptedEvidence = recommendationBaselineId ? selectPlanningEvidence(caseHistoryEvidence, recommendationBaselineId) : null;
-  const planningCase = cases.find((item) => item.id === latestAcceptedEvidence?.caseId)
-    ?? cases.find((item) => item.id === recommendationBaselineId)
-    ?? activeCase;
-  const planAssessment = useMemo(() => {
-    if (!planningCase) return null;
-    const relevantPrecedents = selectIndependentPrecedents(precedentEvidence, recommendationBaselineId, planningCase.source);
-    const planningComparison = compareProbeSets(planningCase.testSignals, planningCase.cfdSignals);
-    const planningTestMode = analyzeRdeProbeSet(planningCase.testSignals, planningCase.metadata.probePositionsDeg, planningCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: planningCase.metadata.maximumWaveCount, synchronizationConfirmed: planningCase.metadata.probeSynchronizationConfirmed, sensorBandwidthKHz: planningCase.metadata.experimentSensorBandwidthKHz, filterCutoffKHz: planningCase.metadata.experimentFilterCutoffKHz });
-    const planningCfdMode = analyzeRdeProbeSet(planningCase.cfdSignals, planningCase.metadata.probePositionsDeg, planningCase.metadata.annulusMeanDiameterMm, { maximumWaveCount: planningCase.metadata.maximumWaveCount, synchronizationConfirmed: planningCase.metadata.probeSynchronizationConfirmed });
-    return buildCaseAssessment(planningCase.metadata, planningComparison.comparisons, planningTestMode, planningCfdMode, caseHistoryEvidence, relevantPrecedents);
-  }, [planningCase, recommendationBaselineId, caseHistoryEvidence, precedentEvidence]);
-  const activeAnalysisInput = summarizeAnalysisInput(activeCase);
-  const activeCaseEvidence = activeCase?.relationship ? caseHistoryEvidence.find((item) => item.caseId === activeCase.id) ?? null : null;
-  const recommendationResultEvidence = activeCaseEvidence ?? latestAcceptedEvidence;
-  const decisionQuality = activeCase && assessment && planAssessment ? buildDecisionQuality({
-    source: activeCase.source,
-    validityStatus: assessment.validity.status,
-    dataQualityStatus: assessment.dataQuality.status,
-    controlledResultStatus: recommendationResultEvidence?.sequenceStatus ?? null,
-    uploadedPrecedentCount: planAssessment.nextRun.precedent.uploadedCount,
-  }) : null;
-  const baselineCaseName = activeCase?.relationship ? cases.find((item) => item.id === activeCase.relationship?.baselineCaseId)?.metadata.name : null;
-  const activeReferenceName = activeCase?.relationship ? cases.find((item) => item.id === (activeCase.relationship?.referenceCaseId ?? activeCase.relationship?.baselineCaseId))?.metadata.name : null;
-  const activeComparison = comparisons[activeProbe];
-  const correlation = comparisons.length ? average(comparisons.map((item) => item.correlation)) : Number.NaN;
-  const nrmse = comparisons.length ? average(comparisons.map((item) => item.nrmse)) : Number.NaN;
-  const pressureBias = comparisons.length ? average(comparisons.map((item) => item.pressureBias)) : Number.NaN;
-  const physicsComparisons = activeCase ? buildPhysicsComparison(activeCase.metadata) : [];
-  const physicsProvidedCount = physicsComparisons.filter((row) => row.experiment !== null || row.cfd !== null).length;
-  const waveformWithinLimit = correlation >= REVIEW_THRESHOLDS.minimumCorrelation;
-  const caseSummaries = useMemo(() => operatingPointRuns.map(summarizeCase), [operatingPointRuns]);
-  const baselineSummary = caseSummaries.find((summary) => summary.item.id === caseBaselineId) ?? caseSummaries[0] ?? null;
-  const draftReferenceCase = draftRelationship
-    ? draftOperatingPointRuns.find((item) => item.id === (draftRelationship.referenceCaseId ?? draftRelationship.baselineCaseId)) ?? cases.find((item) => item.id === (draftRelationship.referenceCaseId ?? draftRelationship.baselineCaseId)) ?? null
-    : null;
-  const controlledRerunDraft = Boolean(draftReferenceCase && draftRelationship && !editingCaseId);
-  const measuredPointDraft = loaderMode === "measured-point";
-  const draftOperatingPoint = operatingPoints.find((item) => item.id === draftOperatingPointId) ?? null;
-  const selectedRerunFields = draftRelationship?.changedParameter ? CONTROLLED_PARAMETERS[draftRelationship.changedParameter].fields : [];
-  const changedRerunFields = draftReferenceCase
-    ? selectedRerunFields.filter((field) => !metadataValueEqual(draftReferenceCase.metadata[field], draft[field]))
-    : [];
-  const inheritedExperimentName = draftReferenceCase?.imports?.experiment.fileName
-    ?? draftReferenceCase?.testSignals[0]?.name.split(" Â· ")[0]
-    ?? "Experiment data";
-
-  function rerunFieldLocked(field: keyof CaseMetadata) {
-    if (!measuredPointDraft && EXPERIMENT_OWNED_FIELDS.includes(field)) return true;
-    if (!controlledRerunDraft) return false;
-    if (RERUN_ALWAYS_EDITABLE_FIELDS.includes(field)) return false;
-    if (field === "meshConvergencePct") return draftRelationship?.changedParameter !== "mesh-resolution";
-    if (field === "timeStepConvergencePct") return draftRelationship?.changedParameter !== "flow-time-step";
-    return !selectedRerunFields.includes(field);
-  }
-
-  const inputRows = activeCase ? [
-    ["Geometry + probes", `${activeCase.metadata.annulusMeanDiameterMm.toFixed(1)} mm mean diameter Â· ${activeCase.metadata.probePositionsDeg.length} probes Â· modes 1â€“${activeCase.metadata.maximumWaveCount}`],
-    ["Pressure evidence", `${activeCase.testSignals.length} experiment + ${activeCase.cfdSignals.length} CFD traces Â· ${activeCase.testSignals[0].time.length.toLocaleString()} samples each`],
-    ["Measurement chain", `${activeCase.metadata.experimentSensorBandwidthKHz.toFixed(1)} kHz sensor bandwidth Â· ${activeCase.metadata.experimentFilterCutoffKHz.toFixed(1)} kHz filter cutoff Â· synchronized probes`],
-    ["Operating point", `${activeCase.metadata.inletPressureBar.toFixed(1)} bar inlet Â· ${activeCase.metadata.massFlowKgS.toFixed(3)} kg/s Â· Ï† ${activeCase.metadata.equivalenceRatio.toFixed(2)} Â· ${activeCase.metadata.backPressureBar.toFixed(2)} bar back pressure Â· ${activeCase.metadata.inletTemperatureK.toFixed(0)} K`],
-    ["Solver + discretization", `${activeCase.metadata.solver} ${activeCase.metadata.solverVersion} Â· ${activeCase.metadata.dimensionality} Â· ${activeCase.metadata.spatialScheme} O${activeCase.metadata.spatialOrder} Â· ${activeCase.metadata.numericalFlux}`],
-    ["Computational cost", Number.isFinite(activeCase.metadata.solverRuntimeHours) ? `${activeCase.metadata.solverRuntimeHours.toFixed(1)} solver hours` : "Runtime not supplied"],
-    ["Time integration", `${activeCase.metadata.temporalScheme} O${activeCase.metadata.temporalOrder} Â· ${activeCase.metadata.timeStepUs.toFixed(3)} Âµs Â· CFL ${activeCase.metadata.cfl.toFixed(2)}`],
-    ["Resolution", `${activeCase.metadata.meshCells.toLocaleString()} cells Â· ${activeCase.metadata.minimumCellSizeMm.toFixed(3)} mm minimum Â· ${activeCase.metadata.cellsPerInductionLength.toFixed(1)} cells/induction length`],
-    ["Physics + boundaries", `${activeCase.metadata.chemistryModel} Â· ${activeCase.metadata.turbulenceModel} Â· ${activeCase.metadata.wallBoundaryCondition}`],
-    ["Uncertainty", `Experiment Â±${activeCase.metadata.pressureUncertaintyPct.toFixed(1)}%, Â±${activeCase.metadata.timingUncertaintyUs.toFixed(2)} Âµs Â· CFD Â±${activeCase.metadata.cfdPressureUncertaintyPct.toFixed(1)}%, Â±${activeCase.metadata.cfdTimingUncertaintyUs.toFixed(2)} Âµs`],
-  ] : [];
-
-  const reviewMetrics = assessment?.metrics.filter((metric) => metric.tone === "review").length ?? 0;
-  const inconclusiveMetrics = assessment?.metrics.filter((metric) => metric.tone === "neutral").length ?? 0;
-  const totalReview = reviewMetrics + (waveformWithinLimit ? 0 : 1) + (assessment?.validity.status === "Valid" ? 0 : 1);
-
-  const likelyHypothesis = planAssessment?.hypotheses.find((item) => item.id === planAssessment.nextRun.reasoningLedger.hypothesisId) ?? null;
-  const likelySources = likelyHypothesis ? sourcesFor(likelyHypothesis.sourceIds) : [];
-  const decisionSummary: DecisionSummary = activeCaseEvidence ? {
-    label: "Result of this rerun",
-    lead: `${activeCaseEvidence.controlled ? outcomeLabel(activeCaseEvidence) : "Comparison only"}:`,
-    title: `${activeCase?.relationship?.changedParameter ? parameterLabel(activeCase.relationship.changedParameter) : changeLabel(activeCase?.relationship?.changedVariable ?? "other")} response`,
-    detail: conciseOutcomeDetail(activeCaseEvidence),
-    meaning: activeCaseEvidence.controlled ? outcomeMeaning(activeCaseEvidence) : comparisonOnlyMeaning(activeCaseEvidence),
-    tone: activeCaseEvidence.controlled ? outcomeTone(activeCaseEvidence) : "neutral",
-  } : {
-    label: "Current diagnosis",
-    lead: "Likely issue:",
-    title: likelyHypothesis?.title ?? "Cannot assess",
-    detail: null,
-    meaning: planAssessment?.nextRun.reason ?? "Kythros cannot choose a next run from the analyzed evidence.",
-    tone: "neutral",
-  };
-  const showDetailedEvidence = false;
-
-  function openNewCase() {
-    if (activeDesignId) return openOperatingPoint(activeDesignId);
-    setProductView("design");
-  }
-
-  function openOperatingPoint(designId: string, point?: PlannedOperatingPoint) {
-    const design = designs.find((item) => item.id === designId);
-    const nextDraft = cloneMetadata(EMPTY_METADATA);
-    const operatingPointId = `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    if (design) {
-      const calculated = calculateDesign(design);
-      nextDraft.annulusMeanDiameterMm = calculated.meanDiameterMm;
-      nextDraft.inletTemperatureK = design.inletTemperatureK;
-      nextDraft.backPressureBar = design.backPressureBar;
-      if (point) {
-        nextDraft.name = `${design.name} Â· Ï† ${point.equivalenceRatio.toFixed(2)} Â· ${point.massFlowKgS.toFixed(3)} kg/s`;
-        nextDraft.equivalenceRatio = point.equivalenceRatio;
-        nextDraft.massFlowKgS = point.massFlowKgS;
-        nextDraft.inletPressureBar = point.inletPressureBar;
-        nextDraft.inletTemperatureK = point.inletTemperatureK;
-      }
-    }
-    const nextPoint: OperatingPoint = {
-      id: operatingPointId,
-      designId,
-      name: nextDraft.name || `${design?.name ?? "Engine"} operating point`,
-      source: "uploaded",
-      inletPressureBar: nextDraft.inletPressureBar,
-      inletTemperatureK: nextDraft.inletTemperatureK,
-      equivalenceRatio: nextDraft.equivalenceRatio,
-      massFlowKgS: nextDraft.massFlowKgS,
-      backPressureBar: nextDraft.backPressureBar,
-      recommendation: point?.recommendation ?? null,
-    };
-    setActiveDesignId(designId);
-    setDraftDesignId(designId);
-    setDraftOperatingPointId(operatingPointId);
-    setDraftNewOperatingPoint(nextPoint);
-    setLoaderMode("measured-point");
-    setEditingCaseId(null);
-    setDraft(nextDraft);
-    setDraftRelationship(null);
-    setDraftFrozenPlanId(null);
-    setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
-  }
-
-  function openCaseEditor() {
-    if (!activeCase) return;
-    setEditingCaseId(activeCase.id);
-    setDraft(cloneMetadata(activeCase.metadata));
-    setDraftDesignId(activeCase.designId ?? null);
-    setDraftOperatingPointId(activeCase.operatingPointId ?? null);
-    setDraftNewOperatingPoint(null);
-    setLoaderMode("comparison-run");
-    setDraftRelationship(activeCase.relationship ?? null);
-    setDraftFrozenPlanId(null);
-    setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
-  }
-
-  function openNewRunForOperatingPoint() {
-    if (!activeOperatingPointId) return;
-    const baseline = operatingPointRuns.find((item) => !item.relationship) ?? operatingPointRuns[0];
-    if (!baseline) return openBaselineCfdForOperatingPoint(activeOperatingPointId);
-    setEditingCaseId(null);
-    setDraftOperatingPointId(activeOperatingPointId);
-    setDraftNewOperatingPoint(null);
-    setLoaderMode("comparison-run");
-    setDraftDesignId(baseline.designId ?? activeDesignId);
-    setDraftRelationship({ baselineCaseId: baseline.id, referenceCaseId: baseline.id, changedVariable: "other", changedParameter: null, description: "" });
-    setDraftFrozenPlanId(null);
-    const inherited = cloneMetadata(baseline.metadata);
-    inherited.name = `${baseline.metadata.name} rerun`;
-    clearCfdPhysics(inherited);
-    setDraft(inherited);
-    setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
-  }
-
-  function openBaselineCfdForOperatingPoint(operatingPointId: string) {
-    const point = operatingPoints.find((item) => item.id === operatingPointId);
-    if (!point?.experiment) return;
-    const nextDraft = cloneMetadata(EMPTY_METADATA);
-    nextDraft.name = `${point.name} baseline CFD`;
-    nextDraft.annulusMeanDiameterMm = point.experiment.annulusMeanDiameterMm;
-    nextDraft.annulusDiameterUncertaintyMm = point.experiment.annulusDiameterUncertaintyMm;
-    nextDraft.probePositionsDeg = [...point.experiment.probePositionsDeg];
-    nextDraft.maximumWaveCount = point.experiment.maximumWaveCount;
-    nextDraft.probeSynchronizationConfirmed = point.experiment.probeSynchronizationConfirmed;
-    nextDraft.experimentSensorBandwidthKHz = point.experiment.experimentSensorBandwidthKHz;
-    nextDraft.experimentFilterCutoffKHz = point.experiment.experimentFilterCutoffKHz;
-    nextDraft.inletPressureBar = point.inletPressureBar;
-    nextDraft.inletTemperatureK = point.inletTemperatureK;
-    nextDraft.equivalenceRatio = point.equivalenceRatio;
-    nextDraft.massFlowKgS = point.massFlowKgS;
-    nextDraft.backPressureBar = point.backPressureBar;
-    nextDraft.pressureUncertaintyPct = point.experiment.pressureUncertaintyPct;
-    nextDraft.timingUncertaintyUs = point.experiment.timingUncertaintyUs;
-    Object.assign(nextDraft, physicsMetadataValues(point.experiment.physics));
-    setActiveDesignId(point.designId);
-    setActiveOperatingPointId(point.id);
-    setDraftDesignId(point.designId);
-    setDraftOperatingPointId(point.id);
-    setDraftNewOperatingPoint(null);
-    setLoaderMode("comparison-run");
-    setEditingCaseId(null);
-    setDraft(nextDraft);
-    setDraftRelationship(null);
-    setDraftFrozenPlanId(null);
-    setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
-  }
-
-  function selectDesign(designId: string) {
-    setActiveDesignId(designId);
-    const point = operatingPoints.find((item) => item.designId === designId) ?? null;
-    setActiveOperatingPointId(point?.id ?? null);
-    const run = point ? cases.find((item) => item.operatingPointId === point.id) ?? null : null;
-    setActiveCaseId(run?.id ?? null);
-    setWorkspaceView("case");
-  }
-
-  function selectOperatingPoint(operatingPointId: string) {
-    setActiveOperatingPointId(operatingPointId);
-    const run = cases.find((item) => item.operatingPointId === operatingPointId) ?? null;
-    setActiveCaseId(run?.id ?? null);
-    setCaseBaselineId(run?.relationship?.baselineCaseId ?? run?.id ?? null);
-    setWorkspaceView("case");
-    setActiveProbe(0);
-  }
-
-  function inheritStartingCase(referenceCaseId: string, previousReferenceCaseId?: string) {
-    const reference = cases.find((item) => item.id === referenceCaseId);
-    if (!reference) return;
-    if (!editingCaseId) {
-      setDraft((current) => {
-        const inherited = cloneMetadata(reference.metadata);
-        const previousReference = cases.find((item) => item.id === previousReferenceCaseId);
-        const currentName = current.name.trim();
-        const previousDefaultName = previousReference ? `${previousReference.metadata.name} rerun` : "";
-        inherited.name = !currentName || currentName === previousDefaultName
-          ? `${reference.metadata.name} rerun`
-          : current.name;
-        clearCfdPhysics(inherited);
-        return inherited;
-      });
-      setDraftDesignId(reference.designId ?? null);
-      setDraftOperatingPointId(reference.operatingPointId ?? null);
-      setDraftNewOperatingPoint(null);
-    }
-    setTestPending(null);
-    setCfdPending(null);
-    setReviewingRerun(false);
-    setError("");
-  }
-
-  function chooseCaseFamily(baselineCaseId: string) {
-    if (!baselineCaseId) {
-      setDraftRelationship(null);
-      setTestPending(null);
-      setCfdPending(null);
-      return;
-    }
-    setDraftRelationship({
-      baselineCaseId,
-      referenceCaseId: baselineCaseId,
-      changedVariable: draftRelationship?.changedVariable ?? "other",
-      changedParameter: draftRelationship?.changedParameter ?? null,
-      description: draftRelationship?.description ?? "",
-    });
-    inheritStartingCase(baselineCaseId);
-  }
-
-  function chooseStartingCase(referenceCaseId: string) {
-    setDraftRelationship((current) => current ? { ...current, referenceCaseId } : null);
-    inheritStartingCase(referenceCaseId, draftRelationship?.referenceCaseId);
-  }
-
-  function chooseChangedParameter(changedParameter: ControlledParameter | null) {
-    setDraftRelationship((current) => current ? {
-      ...current,
-      changedParameter,
-      changedVariable: changedParameter ? CONTROLLED_PARAMETERS[changedParameter].variable : "other",
-    } : null);
-    if (draftReferenceCase && !editingCaseId) {
-      setDraft((current) => {
-        const inherited = cloneMetadata(draftReferenceCase.metadata);
-        inherited.name = current.name;
-        inherited.solverRuntimeHours = current.solverRuntimeHours;
-        inherited.cfdPressureUncertaintyPct = current.cfdPressureUncertaintyPct;
-        inherited.cfdTimingUncertaintyUs = current.cfdTimingUncertaintyUs;
-        for (const item of PHYSICS_MEASUREMENT_DEFINITIONS) inherited[item.cfdKey] = current[item.cfdKey] as never;
-        return inherited;
-      });
-    }
-    setReviewingRerun(false);
-    setError("");
-  }
-
-  function reviewRerun() {
-    if (!draftRelationship || editingCaseId) return applyCase();
-    if (!draftReferenceCase) return setError("Choose the exact starting run for this rerun.");
-    if (!draftRelationship.changedParameter) return setError("Choose the single CFD parameter being tested.");
-    if (draftFrozenPlanId) {
-      const frozenPlan = frozenRunPlans.find((plan) => plan.workOrder.id === draftFrozenPlanId && plan.status === "pending");
-      if (!frozenPlan) return setError("This frozen run plan is no longer pending. Start or resume the current recommendation instead.");
-      if (frozenPlan.workOrder.startingCase.id !== draftReferenceCase.id || frozenPlan.workOrder.change.parameter !== draftRelationship.changedParameter) return setError("The rerun no longer matches its frozen starting case and one-parameter recommendation.");
-      const target = frozenPlan.workOrder.change.suggestedTargetValue;
-      const primaryField = CONTROLLED_PARAMETERS[draftRelationship.changedParameter].primaryField;
-      if (target !== null && !metadataValueEqual(draft[primaryField], target)) return setError(`The frozen run requires ${parameterLabel(draftRelationship.changedParameter).toLowerCase()} = ${String(target)}. Create a new plan to use a different target.`);
-    }
-    if (!changedRerunFields.length) return setError(`Change at least one ${parameterLabel(draftRelationship.changedParameter).toLowerCase()} field before reviewing this rerun.`);
-    if (!cfdPending) return setError("Upload and map the new CFD result before reviewing this rerun.");
-    if (cfdPending.signals.length !== draft.probePositionsDeg.length) return setError(`The CFD file contains ${cfdPending.signals.length} probes, but the starting run uses ${draft.probePositionsDeg.length}.`);
-    setError("");
-    setReviewingRerun(true);
-  }
-
-  function applyMeasuredOperatingPoint() {
-    if (!draft.name.trim()) return setError("Give this measured operating point a name.");
-    if (!draft.probeSynchronizationConfirmed) return setError("Confirm that every experimental probe uses one synchronized time base.");
-    if (!Number.isFinite(draft.annulusMeanDiameterMm) || draft.annulusMeanDiameterMm <= 0) return setError("Enter a positive annulus mean diameter.");
-    if (!Number.isFinite(draft.annulusDiameterUncertaintyMm) || draft.annulusDiameterUncertaintyMm < 0) return setError("Diameter uncertainty must be zero or greater.");
-    if (draft.probePositionsDeg.length < 3 || draft.probePositionsDeg.some((value) => !Number.isFinite(value))) return setError("Enter at least three valid probe angles.");
-    if (!Number.isInteger(draft.maximumWaveCount) || draft.maximumWaveCount < 1 || draft.maximumWaveCount > 12) return setError("Maximum expected wave count must be an integer from 1 to 12.");
-    const positiveInputs: Array<[string, number]> = [
-      ["Experiment sensor bandwidth", draft.experimentSensorBandwidthKHz], ["Experiment filter cutoff", draft.experimentFilterCutoffKHz],
-      ["Inlet pressure", draft.inletPressureBar], ["Back pressure", draft.backPressureBar], ["Inlet temperature", draft.inletTemperatureK], ["Equivalence ratio", draft.equivalenceRatio], ["Mass flow", draft.massFlowKgS],
-    ];
-    const invalidPositive = positiveInputs.find(([, value]) => !Number.isFinite(value) || value <= 0);
-    if (invalidPositive) return setError(`${invalidPositive[0]} must be a number greater than zero.`);
-    if (draft.inletPressureBar <= draft.backPressureBar) return setError("Inlet pressure must exceed back pressure.");
-    const uncertainties: Array<[string, number]> = [
-      ["Experiment pressure uncertainty", draft.pressureUncertaintyPct], ["Experiment timing uncertainty", draft.timingUncertaintyUs],
-    ];
-    const invalidUncertainty = uncertainties.find(([, value]) => !Number.isFinite(value) || value < 0);
-    if (invalidUncertainty) return setError(`${invalidUncertainty[0]} must be zero or greater.`);
-    const invalidOptionalPhysics = PHYSICS_MEASUREMENT_DEFINITIONS.find((item) => {
-      const value = draft[item.experimentKey];
-      return typeof value === "number" && Number.isFinite(value) && !item.signed && value < 0;
-    });
-    if (invalidOptionalPhysics) return setError(`${invalidOptionalPhysics.label} must be zero or greater when supplied.`);
-    if (!testPending) return setError("Upload and map the synchronized experimental pressure file.");
-    if (testPending.signals.length !== draft.probePositionsDeg.length) return setError(`The experiment file contains ${testPending.signals.length} probes, but ${draft.probePositionsDeg.length} probe angles were entered.`);
-    if (!draftOperatingPointId || !draftDesignId) return setError("Choose an engine design before adding an operating point.");
-    try {
-      analyzeRdeProbeSet(testPending.signals, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: true, sensorBandwidthKHz: draft.experimentSensorBandwidthKHz, filterCutoffKHz: draft.experimentFilterCutoffKHz });
-      const nextPoint: OperatingPoint = {
-        id: draftOperatingPointId,
-        designId: draftDesignId,
-        name: draft.name,
-        source: draftNewOperatingPoint?.source ?? "uploaded",
-        inletPressureBar: draft.inletPressureBar,
-        inletTemperatureK: draft.inletTemperatureK,
-        equivalenceRatio: draft.equivalenceRatio,
-        massFlowKgS: draft.massFlowKgS,
-        backPressureBar: draft.backPressureBar,
-        experiment: {
-          signals: testPending.signals,
-          importProvenance: testPending.provenance,
-          annulusMeanDiameterMm: draft.annulusMeanDiameterMm,
-          annulusDiameterUncertaintyMm: draft.annulusDiameterUncertaintyMm,
-          probePositionsDeg: [...draft.probePositionsDeg],
-          maximumWaveCount: draft.maximumWaveCount,
-          probeSynchronizationConfirmed: true,
-          experimentSensorBandwidthKHz: draft.experimentSensorBandwidthKHz,
-          experimentFilterCutoffKHz: draft.experimentFilterCutoffKHz,
-          pressureUncertaintyPct: draft.pressureUncertaintyPct,
-          timingUncertaintyUs: draft.timingUncertaintyUs,
-          physics: experimentPhysicsFromMetadata(draft),
-          wallField: testWallPending,
-        },
-        recommendation: draftNewOperatingPoint?.recommendation ?? null,
-      };
-      setOperatingPoints((current) => [...current, nextPoint]);
-      setActiveDesignId(draftDesignId);
-      setActiveOperatingPointId(nextPoint.id);
-      setActiveCaseId(null);
-      setProductView("envelope");
-      setShowLoader(false);
-      setDraftNewOperatingPoint(null);
-      setTestPending(null);
-      setTestWallPending(null);
-      setError("");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The experimental pressure data could not be analyzed.");
-    }
-  }
-
-  function applyCase() {
-    if (!draft.name.trim()) return setError("Give this operating point a name.");
-    if (!draft.probeSynchronizationConfirmed) return setError("Confirm that every probe in each file uses one synchronized time base.");
-    if (!Number.isFinite(draft.annulusMeanDiameterMm) || draft.annulusMeanDiameterMm <= 0) return setError("Enter a positive annulus mean diameter.");
-    if (draft.probePositionsDeg.length < 3 || draft.probePositionsDeg.some((value) => !Number.isFinite(value))) return setError("Enter at least three valid probe angles.");
-    if (!Number.isInteger(draft.maximumWaveCount) || draft.maximumWaveCount < 1 || draft.maximumWaveCount > 12) return setError("Maximum expected wave count must be an integer from 1 to 12.");
-    const positiveInputs: Array<[string, number]> = [
-      ["Experiment sensor bandwidth", draft.experimentSensorBandwidthKHz], ["Experiment filter cutoff", draft.experimentFilterCutoffKHz],
-      ["Inlet pressure", draft.inletPressureBar], ["Back pressure", draft.backPressureBar], ["Inlet temperature", draft.inletTemperatureK], ["Equivalence ratio", draft.equivalenceRatio], ["Mass flow", draft.massFlowKgS],
-      ["Spatial order", draft.spatialOrder], ["Temporal order", draft.temporalOrder], ["CFL", draft.cfl], ["Total mesh cells", draft.meshCells],
-      ["Minimum front cell", draft.minimumCellSizeMm], ["Cells per induction length", draft.cellsPerInductionLength], ["Near-wall cell", draft.nearWallCellSizeMm],
-      ["Time step", draft.timeStepUs], ["Chemistry species", draft.chemistrySpecies], ["Chemistry reactions", draft.chemistryReactions],
-    ];
-    const invalidPositive = positiveInputs.find(([, value]) => !Number.isFinite(value) || value <= 0);
-    if (invalidPositive) return setError(`${invalidPositive[0]} must be a number greater than zero.`);
-    if (draft.inletPressureBar <= draft.backPressureBar) return setError("Inlet pressure must exceed back pressure.");
-    const uncertaintyInputs: Array<[string, number]> = [
-      ["Diameter uncertainty", draft.annulusDiameterUncertaintyMm], ["Experiment pressure uncertainty", draft.pressureUncertaintyPct],
-      ["Experiment timing uncertainty", draft.timingUncertaintyUs], ["CFD pressure uncertainty", draft.cfdPressureUncertaintyPct], ["CFD timing uncertainty", draft.cfdTimingUncertaintyUs],
-    ];
-    const invalidUncertainty = uncertaintyInputs.find(([, value]) => !Number.isFinite(value) || value < 0);
-    if (invalidUncertainty) return setError(`${invalidUncertainty[0]} must be zero or greater.`);
-    if (Number.isFinite(draft.solverRuntimeHours) && draft.solverRuntimeHours <= 0) return setError("Runtime must be positive when supplied.");
-    const invalidOptionalPhysics = PHYSICS_MEASUREMENT_DEFINITIONS.find((item) => {
-      const values = [draft[item.experimentKey], draft[item.cfdKey]];
-      return values.some((value) => typeof value === "number" && Number.isFinite(value) && !item.signed && value < 0);
-    });
-    if (invalidOptionalPhysics) return setError(`${invalidOptionalPhysics.label} must be zero or greater when supplied.`);
-    const textInputs: Array<[string, string]> = [
-      ["Solver", draft.solver], ["Solver version", draft.solverVersion], ["Dimensionality", draft.dimensionality], ["Spatial scheme", draft.spatialScheme],
-      ["Numerical flux", draft.numericalFlux], ["Limiter, filter, or dissipation", draft.limiterFilter], ["Temporal scheme", draft.temporalScheme],
-      ["Turbulence model", draft.turbulenceModel], ["Combustion model", draft.combustionModel], ["Chemical mechanism", draft.chemistryModel],
-      ["Chemistry integration", draft.chemistryIntegrator], ["Wall thermal condition", draft.wallBoundaryCondition], ["Inlet treatment", draft.inletBoundaryCondition], ["Inlet forcing method", draft.inletForcingMethod],
-      ["Outlet treatment", draft.outletBoundaryCondition], ["Ignition or initialization", draft.initializationMethod],
-    ];
-    const missingText = textInputs.find(([, value]) => !value.trim());
-    if (missingText) return setError(`${missingText[0]} is required. Enter â€œNoneâ€ only when that model or treatment is not used.`);
-    try {
-      const editingCase = cases.find((item) => item.id === editingCaseId) ?? null;
-      const effectiveRelationship = editingCase?.relationship ?? draftRelationship;
-      const referenceId = effectiveRelationship?.referenceCaseId ?? effectiveRelationship?.baselineCaseId;
-      const referenceCase = referenceId ? cases.find((item) => item.id === referenceId) ?? null : null;
-      const nextTest = testPending?.signals ?? editingCase?.testSignals ?? referenceCase?.testSignals ?? draftOperatingPoint?.experiment?.signals;
-      const nextCfd = cfdPending?.signals ?? editingCase?.cfdSignals;
-      if (!nextTest) return setError("Upload the experimental multi-probe file for this operating point.");
-      if (!nextCfd) return setError(effectiveRelationship ? "Upload the new CFD multi-probe result for this rerun." : "Upload the CFD multi-probe file for this baseline run.");
-      if (nextTest.length !== draft.probePositionsDeg.length || nextCfd.length !== draft.probePositionsDeg.length) return setError(`The files contain ${nextTest.length} experiment and ${nextCfd.length} CFD probes, but ${draft.probePositionsDeg.length} probe angles were entered.`);
-      const id = editingCaseId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      if (effectiveRelationship?.baselineCaseId === id) return setError("A run cannot be its own baseline.");
-      if (effectiveRelationship) {
-        if (!referenceCase || referenceCase.id !== effectiveRelationship.baselineCaseId && referenceCase.relationship?.baselineCaseId !== effectiveRelationship.baselineCaseId) return setError("Choose a starting run from the selected operating point.");
-      }
-      const experimentProvenance = testPending?.provenance ?? editingCase?.imports?.experiment ?? referenceCase?.imports?.experiment ?? draftOperatingPoint?.experiment?.importProvenance;
-      const cfdProvenance = cfdPending?.provenance ?? editingCase?.imports?.cfd;
-      const nextImports = experimentProvenance && cfdProvenance ? { experiment: experimentProvenance, cfd: cfdProvenance } : null;
-      const nextRelationship = effectiveRelationship ? { ...effectiveRelationship, referenceCaseId: effectiveRelationship.referenceCaseId ?? effectiveRelationship.baselineCaseId } : null;
-      const operatingPointId = editingCase?.operatingPointId ?? referenceCase?.operatingPointId ?? draftOperatingPointId;
-      if (!operatingPointId) return setError("Choose or create an operating point before adding a run.");
-      const designId = editingCase?.designId ?? referenceCase?.designId ?? draftDesignId;
-      if (!designId) return setError("Choose an engine design before adding an operating point.");
-      const pairedDesign = designs.find((item) => item.id === designId);
-      const pairedOperatingPoint = operatingPoints.find((item) => item.id === operatingPointId) ?? draftNewOperatingPoint;
-      if (!pairedDesign || !pairedOperatingPoint) return setError("The engine revision and physical operating point must exist before CFD can be paired.");
-      const pairingAudit = auditComparisonPairing(draft, nextTest, nextCfd, { design: pairedDesign, operatingPoint: pairedOperatingPoint });
-      if (!pairingAudit.passed) return setError(`Automatic experimentâ€“CFD pairing failed: ${pairingAudit.checks.filter((check) => !check.passed).map((check) => check.detail).join(" ")}`);
-      compareProbeSets(nextTest, nextCfd);
-      analyzeRdeProbeSet(nextTest, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed, sensorBandwidthKHz: draft.experimentSensorBandwidthKHz, filterCutoffKHz: draft.experimentFilterCutoffKHz });
-      analyzeRdeProbeSet(nextCfd, draft.probePositionsDeg, draft.annulusMeanDiameterMm, { maximumWaveCount: draft.maximumWaveCount, synchronizationConfirmed: draft.probeSynchronizationConfirmed });
-      const experimentWallField = testWallPending ?? editingCase?.wallFields?.experiment ?? referenceCase?.wallFields?.experiment ?? draftOperatingPoint?.experiment?.wallField ?? null;
-      const cfdWallField = cfdWallPending ?? editingCase?.wallFields?.cfd ?? null;
-      const nextMetadata = cloneMetadata(draft);
-      nextMetadata.comparisonMatchConfirmed = true;
-      const nextCase: AnalysisCase = { id, designId, operatingPointId, source: editingCase?.source ?? "uploaded", relationship: nextRelationship, metadata: nextMetadata, testSignals: nextTest, cfdSignals: nextCfd, imports: nextImports, pairingAudit: { verifiedAt: new Date().toISOString(), fingerprint: pairingAudit.fingerprint, engineManifestFingerprint: pairingAudit.engineManifestFingerprint, operatingPointId: pairingAudit.operatingPointId, checks: pairingAudit.checks }, wallFields: { experiment: experimentWallField, cfd: cfdWallField } };
-      if (!nextRelationship) {
-        const existingPoint = operatingPoints.find((item) => item.id === operatingPointId);
-        const nextPoint: OperatingPoint = {
-          id: operatingPointId,
-          designId,
-          name: existingPoint?.name ?? draft.name,
-          source: existingPoint?.source ?? (editingCase?.source === "demo" ? "demo" : draftNewOperatingPoint?.source ?? "uploaded"),
-          inletPressureBar: existingPoint?.inletPressureBar ?? draft.inletPressureBar,
-          inletTemperatureK: existingPoint?.inletTemperatureK ?? draft.inletTemperatureK,
-          equivalenceRatio: existingPoint?.equivalenceRatio ?? draft.equivalenceRatio,
-          massFlowKgS: existingPoint?.massFlowKgS ?? draft.massFlowKgS,
-          backPressureBar: existingPoint?.backPressureBar ?? draft.backPressureBar,
-          experiment: existingPoint?.experiment ?? {
-            signals: nextTest,
-            importProvenance: experimentProvenance ?? null,
-            annulusMeanDiameterMm: draft.annulusMeanDiameterMm,
-            annulusDiameterUncertaintyMm: draft.annulusDiameterUncertaintyMm,
-            probePositionsDeg: [...draft.probePositionsDeg],
-            maximumWaveCount: draft.maximumWaveCount,
-            probeSynchronizationConfirmed: draft.probeSynchronizationConfirmed,
-            experimentSensorBandwidthKHz: draft.experimentSensorBandwidthKHz,
-            experimentFilterCutoffKHz: draft.experimentFilterCutoffKHz,
-            pressureUncertaintyPct: draft.pressureUncertaintyPct,
-            timingUncertaintyUs: draft.timingUncertaintyUs,
-            physics: experimentPhysicsFromMetadata(draft),
-            wallField: experimentWallField,
-          },
-          recommendation: existingPoint?.recommendation ?? draftNewOperatingPoint?.recommendation ?? null,
-        };
-        setOperatingPoints((current) => current.some((item) => item.id === operatingPointId) ? current.map((item) => item.id === operatingPointId ? nextPoint : item) : [...current, nextPoint]);
-      }
-      setCases((current) => editingCaseId ? current.map((item) => item.id === editingCaseId ? nextCase : item) : [...current, nextCase]);
-      if (!editingCaseId && draftFrozenPlanId) setFrozenRunPlans((current) => current.map((plan) => plan.workOrder.id === draftFrozenPlanId ? completeRunPlan(plan, id) : plan));
-      if (!caseBaselineId) setCaseBaselineId(id);
-      setActiveDesignId(designId); setActiveOperatingPointId(operatingPointId); setActiveCaseId(id); setWorkspaceView("case"); setProductView("comparison"); setActiveProbe(0); setReviewingRerun(false); setShowLoader(false); setDraftNewOperatingPoint(null); setDraftFrozenPlanId(null); setTestWallPending(null); setCfdWallPending(null); setError("");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The two datasets could not be compared.");
-    }
-  }
-
-  function loadExampleCaseHistory() {
-    const demo = makeDemoProbeSignals();
-    const stamp = Date.now().toString(36);
-    const baselineId = `demo-${stamp}-baseline`;
-    const meshId = `demo-${stamp}-mesh`;
-    const wallId = `demo-${stamp}-wall`;
-    const designId = `demo-${stamp}-design`;
-    const operatingPointId = `demo-${stamp}-point`;
-    const demoDesign: EngineDesign = {
-      id: designId,
-      name: "Synthetic annular demonstrator",
-      source: "demo",
-      application: "Rocket",
-      fuel: "Hydrogen",
-      oxidizer: "Air",
-      annulusInnerDiameterMm: 78,
-      annulusOuterDiameterMm: 86,
-      chamberLengthMm: 120,
-      injectorType: "Discrete orifices",
-      injectorCount: 120,
-      injectorDiameterMm: 0.8,
-      injectorAngleDeg: 0,
-      plenumVolumeCm3: 300,
-      wallCondition: "Isothermal 450 K",
-      exhaustConfiguration: "Open exit",
-      equivalenceRatioMin: 0.75,
-      equivalenceRatioMax: 1.25,
-      massFlowKgSMin: 0.4,
-      massFlowKgSMax: 0.84,
-      inletPressureBarMin: 6,
-      inletPressureBarMax: 10,
-      inletTemperatureK: 300,
-      backPressureBar: 1,
-    };
-    const baseMetadata: CaseMetadata = {
-        name: "Synthetic baseline",
-        annulusMeanDiameterMm: 82,
-        annulusDiameterUncertaintyMm: 0.1,
-        probePositionsDeg: [...demo.positionsDeg],
-        maximumWaveCount: 4,
-        probeSynchronizationConfirmed: true,
-        experimentSensorBandwidthKHz: 100,
-        experimentFilterCutoffKHz: 80,
-        inletPressureBar: 8,
-        backPressureBar: 1,
-        inletTemperatureK: 300,
-        equivalenceRatio: 1,
-        massFlowKgS: 0.62,
-        comparisonMatchConfirmed: true,
-        solver: "Research CFD solver",
-        solverVersion: "2026.1",
-        dimensionality: "3D",
-        spatialScheme: "MUSCL",
-        spatialOrder: 2,
-        numericalFlux: "HLLC",
-        limiterFilter: "Venkatakrishnan limiter",
-        temporalScheme: "SSPRK3",
-        temporalOrder: 3,
-        cfl: 0.35,
-        turbulenceModel: "SST k-Ï‰",
-        combustionModel: "Finite-rate",
-        chemistryModel: "Hydrogen reduced mechanism",
-        chemistrySpecies: 9,
-        chemistryReactions: 19,
-        chemistryIntegrator: "Implicit BDF",
-        meshCells: 2_500_000,
-        minimumCellSizeMm: 0.25,
-        cellsPerInductionLength: 8,
-        nearWallCellSizeMm: 0.1,
-        timeStepUs: 0.25,
-        solverRuntimeHours: 10,
-        wallBoundaryCondition: "Isothermal 450 K",
-        inletBoundaryCondition: "Measured total state + mass flow",
-        inletForcingMethod: "No inlet forcing applied",
-        outletBoundaryCondition: "Non-reflecting pressure outlet",
-        initializationMethod: "Single-point ignition kernel",
-        meshConvergencePct: Number.NaN,
-        timeStepConvergencePct: Number.NaN,
-        pressureUncertaintyPct: 1.5,
-        timingUncertaintyUs: 0.5,
-        cfdPressureUncertaintyPct: 2,
-        cfdTimingUncertaintyUs: 0.25,
-    };
-    const cloneSignals = (signals: Signal[]) => signals.map((signal) => ({ ...signal, time: [...signal.time], pressure: [...signal.pressure] }));
-    const blendTowardExperiment = (factor: number) => demo.cfd.map((signal, probe) => ({ ...signal, pressure: signal.pressure.map((value, index) => value + factor * (demo.test[probe].pressure[index] - value)) }));
-    const fineMetadata = { ...cloneMetadata(baseMetadata), name: "Synthetic mesh refinement", meshCells: 5_000_000, minimumCellSizeMm: 0.125, cellsPerInductionLength: 16, nearWallCellSizeMm: 0.05, solverRuntimeHours: 18 };
-    const fineSignals = blendTowardExperiment(0.95);
-    const wallSignals = fineSignals.map((signal, probe) => ({ ...signal, pressure: signal.pressure.map((value, index) => value + 0.001 * (demo.test[probe].pressure[index] - value)) }));
-    const examples: AnalysisCase[] = [
-      { id: baselineId, designId, operatingPointId, source: "demo", relationship: null, metadata: baseMetadata, testSignals: cloneSignals(demo.test), cfdSignals: cloneSignals(demo.cfd) },
-      {
-        id: meshId, designId, operatingPointId, source: "demo",
-        relationship: { baselineCaseId: baselineId, referenceCaseId: baselineId, changedVariable: "mesh", changedParameter: "mesh-resolution", description: "50% front-region cell-size refinement" },
-        metadata: fineMetadata,
-        testSignals: cloneSignals(demo.test), cfdSignals: fineSignals,
-      },
-      {
-        id: wallId, designId, operatingPointId, source: "demo",
-        relationship: { baselineCaseId: baselineId, referenceCaseId: meshId, changedVariable: "wall", changedParameter: "wall-treatment", description: "Adjacent wall thermal boundary" },
-        metadata: { ...cloneMetadata(fineMetadata), name: "Synthetic wall sensitivity", wallBoundaryCondition: "Adiabatic", solverRuntimeHours: 18.5 },
-        testSignals: cloneSignals(demo.test), cfdSignals: wallSignals,
-      },
-    ];
-    const demoOperatingPoint: OperatingPoint = { id: operatingPointId, designId, name: "Synthetic baseline", source: "demo", inletPressureBar: 8, inletTemperatureK: 300, equivalenceRatio: 1, massFlowKgS: 0.62, backPressureBar: 1 };
-    setCases((current) => [...current, ...examples]);
-    setDesigns((current) => [...current, normalizeEngineDesign(demoDesign)]);
-    setOperatingPoints((current) => [...current, demoOperatingPoint]);
-    setActiveDesignId(designId);
-    setActiveOperatingPointId(operatingPointId);
-    setCaseBaselineId(examples[0].id);
-    setActiveCaseId(examples[0].id); setWorkspaceView("case"); setProductView("comparison"); setActiveProbe(0);
-  }
-
-  function loadPublishedEnvelopeExample() {
-    const points = buildGe2022OperatingPoints();
-    setDesigns((current) => current.some((item) => item.id === GE_2022_DESIGN_ID) ? current : [...current, normalizeEngineDesign({ ...GE_2022_DESIGN })]);
-    setOperatingPoints((current) => {
-      const existing = new Set(current.map((item) => item.id));
-      return [...current, ...points.filter((item) => !existing.has(item.id))];
-    });
-    setActiveDesignId(GE_2022_DESIGN_ID);
-    setActiveOperatingPointId(points[0]?.id ?? null);
-    setActiveCaseId(null);
-    setCaseBaselineId(null);
-    setWorkspaceView("case");
-    setProductView("envelope");
-    setWorkspaceError("");
-  }
-
-  function downloadExample() {
-    const demo = makeDemoProbeSignals();
-    const header = ["time_ms", ...demo.test.map((_, index) => `p${index + 1}_MPa`)].join(",");
-    const rows = [header, ...demo.test[0].time.slice(0, 800).map((time, index) => [time, ...demo.test.map((signal) => signal.pressure[index])].map((value) => value.toFixed(6)).join(","))];
-    const url = URL.createObjectURL(new Blob([rows.join("\n")], { type: "text/csv" }));
-    const link = document.createElement("a"); link.href = url; link.download = "kythros-multi-probe-example.csv"; link.click(); URL.revokeObjectURL(url);
-  }
-
-  function downloadReport() {
-    if (!activeCase || !testMode || !cfdMode || !assessment || !decisionQuality || !planningCase) return;
-    const engineDesign = designs.find((design) => design.id === activeCase.designId) ?? null;
-    const operatingPoint = operatingPoints.find((point) => point.id === activeCase.operatingPointId) ?? null;
-    const report = {
-      schema: "kythros-rde-run-report",
-      analysisVersion: ANALYSIS_VERSION,
-      knowledgeBaseVersion: KNOWLEDGE_BASE_VERSION,
-      generatedAt: new Date().toISOString(),
-      inputs: { engineDesign, operatingPoint, metadata: activeCase.metadata, experimentPhysics: experimentPhysicsFromMetadata(activeCase.metadata), cfdPhysics: cfdPhysicsFromMetadata(activeCase.metadata), relationship: activeCase.relationship ?? null, pairingAudit: activeCase.pairingAudit ?? null, fileMappings: activeCase.imports ?? null, experimentalSources: activeCase.testSignals.map((signal) => signal.name), cfdSources: activeCase.cfdSignals.map((signal) => signal.name), units: { time: "ms", pressure: "MPa", frequency: "kHz", waveSpeed: "m/s" } },
-      outputs: { experimentMode: testMode, cfdMode, physicsComparison: buildPhysicsComparison(activeCase.metadata), validity: assessment.validity, dataQuality: assessment.dataQuality, coverage: assessment.coverage, metrics: assessment.metrics, hypotheses: assessment.hypotheses, activeCaseOutcome: activeCaseEvidence, decisionQuality, controlledNextRun: planAssessment?.nextRun ?? assessment.nextRun, caseHistoryEvidence, waveform: { correlation, normalizedRmse: nrmse, pressureBiasMpa: pressureBias, sharedAlignmentLagUs: probeSetComparison?.sharedLagUs, individualLagUs: probeSetComparison?.individualLagUs, alignmentSpreadUs: probeSetComparison?.alignmentSpreadUs } },
-      citedSources: sourcesFor([...new Set(assessment.hypotheses.flatMap((hypothesis) => hypothesis.sourceIds))]),
-      methodSources: WAVE_METHOD_SOURCES,
-      publishedValidationSources: PUBLISHED_VALIDATION_SOURCES,
-      evidenceRoles: {
-        directCaseEvidence: activeCase.source === "demo"
-          ? "Generated demonstration pressure values, entered run settings, declared uncertainties, and verified one-change relationships determine this result. It is not evidence from a physical engine."
-          : "The user-provided experiment and CFD pressure values, entered run settings, declared uncertainties, and verified one-change relationships determine the metrics and recommendation.",
-        recommendationScope: {
-          selectedCase: activeCase.metadata.name,
-          planningReferenceCase: planningCase.metadata.name,
-          sharedAcrossCaseFamily: caseHistoryEvidence.length > 0,
-          explanation: "Kythros recalculates the selected run's diagnosis or rerun result. One operating point contains its experiment, baseline CFD, and qualifying one-change CFD reruns. The next-run plan starts from the most recent rerun that passed a support or convergence rule.",
-        },
-        storageBoundary: "A saved workspace stores the entered settings, pressure values, file mappings, and run relationships. When the workspace is reopened, Kythros recalculates the metrics, diagnoses, rerun classifications, and recommendation.",
-        diagnosticRuleSources: likelySources,
-        methodSources: WAVE_METHOD_SOURCES,
-        publicAnalyzerValidation: {
-          summary: PUBLISHED_VALIDATION_SUMMARY,
-          cases: RAW_DATASET_VALIDATION_CASES,
-          role: "Software validation only. Public benchmark cases test the analyzer; they do not count as independent operating-point evidence and do not choose the recommendation for this user-provided run.",
-        },
-      },
-      predictiveModelState: { operability: "Not fitted", backflow: "Not available", performance: "Not available", thermal: "Not available", explanation: "No predictive output is substituted for a missing validated model." },
-      perProbe: comparisons,
-      methods: ["shared bounded cross-correlation", "Hann-windowed FFT pressure spectrum", "cycle-by-cycle passage tracking", "sliding-window circumferential phase-mode fit", "uncertainty resolution by RSS", "structured diagnostic rules", "adaptive controlled-rerun outcome classification"],
-      limitations: ["The ranked explanations choose which one-change CFD test to run next; they do not prove causality.", "The support, rejection, and convergence limits are Kythros prototype product rules. They are not probabilities and are not taken from the cited papers.", "Kythros propagates pressure and timing uncertainty only into the scalar outputs that support that calculation.", "Wave-mode inference requires synchronized probes and assumes one dominant rotating mode. Kythros reports ambiguous or simultaneous modes as not identifiable.", "Optional performance, feed-system, thermal, and duration differences are descriptive until quantity-specific definitions and uncertainty budgets are supplied."],
-    };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
-    const link = document.createElement("a"); link.href = url; link.download = "kythros-rde-run-report.json"; link.click(); URL.revokeObjectURL(url);
-  }
-
-  function downloadFrozenPlan(plan: FrozenRunPlan) {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(plan.workOrder, null, 2)], { type: "application/json" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = nextRunWorkOrderFileName(plan.workOrder);
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function currentFrozenPlan() {
-    if (!planningCase || !planAssessment) return null;
-    const workOrder = createNextRunWorkOrder(planAssessment.nextRun, planningCase);
-    if (!workOrder) return null;
-    const existing = frozenRunPlans.find((plan) => plan.status === "pending" && sameWorkOrderDefinition(plan.workOrder, workOrder));
-    if (existing) return existing;
-    const created = freezeRunPlan(workOrder);
-    setFrozenRunPlans((current) => [...current, created]);
-    return created;
-  }
-
-  function downloadNextRunWorkOrder() {
-    const plan = currentFrozenPlan();
-    if (plan) downloadFrozenPlan(plan);
-  }
-
-  function downloadOpenFoamHandoff() {
-    const plan = currentFrozenPlan();
-    if (!plan) return;
-    const handoff = buildOpenFoamNextRunHandoff(plan.workOrder);
-    const url = URL.createObjectURL(new Blob([JSON.stringify(handoff, null, 2)], { type: "application/json" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `kythros-openfoam-handoff-${plan.workOrder.id}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function openFrozenRunPlan(plan: FrozenRunPlan) {
-    const workOrder = plan.workOrder;
-    const startingCase = cases.find((item) => item.id === workOrder.startingCase.id);
-    if (!startingCase || plan.status !== "pending") return;
-    const definition = CONTROLLED_PARAMETERS[workOrder.change.parameter];
-    const inherited = cloneMetadata(startingCase.metadata);
-    inherited.name = `${startingCase.metadata.name} Â· ${definition.label}`;
-    clearCfdPhysics(inherited);
-    if (typeof workOrder.change.suggestedTargetValue === "number") {
-      (inherited[definition.primaryField] as number) = workOrder.change.suggestedTargetValue;
-    }
-    const baselineCaseId = startingCase.relationship?.baselineCaseId ?? startingCase.id;
-    setEditingCaseId(null);
-    setDraftDesignId(startingCase.designId ?? activeDesignId);
-    setDraftOperatingPointId(startingCase.operatingPointId ?? activeOperatingPointId);
-    setDraftNewOperatingPoint(null);
-    setDraftFrozenPlanId(workOrder.id);
-    setLoaderMode("comparison-run");
-    setDraftRelationship({
-      baselineCaseId,
-      referenceCaseId: startingCase.id,
-      changedVariable: definition.variable,
-      changedParameter: definition.id,
-      description: definition.guidance,
-      recommendation: recommendationSnapshot(workOrder),
-    });
-    setDraft(inherited);
-    setTestPending(null); setCfdPending(null); setTestWallPending(null); setCfdWallPending(null); setError(""); setReviewingRerun(false); setShowLoader(true);
-  }
-
-  function startRecommendedRerun() {
-    const plan = currentFrozenPlan();
-    if (plan) openFrozenRunPlan(plan);
-  }
-
-  function downloadWorkspace() {
-    if (!cases.length && !designs.length) return;
-    const content = serializeWorkspace({ cases, activeCaseId, baselineCaseId: caseBaselineId, designs, activeDesignId, operatingPoints, activeOperatingPointId, frozenRunPlans });
-    const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = workspaceFileName();
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function openWorkspace(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    try {
-      const restored = deserializeWorkspace(await file.text());
-      if ((cases.length || designs.length) && !window.confirm("Replace the current browser-session engines, operating points, and runs with this saved workspace?")) return;
-      setCases(restored.cases);
-      setDesigns(restored.designs);
-      setOperatingPoints(restored.operatingPoints);
-      setFrozenRunPlans(restored.frozenRunPlans);
-      setActiveDesignId(restored.activeDesignId);
-      setActiveOperatingPointId(restored.activeOperatingPointId);
-      setActiveCaseId(restored.activeCaseId);
-      setCaseBaselineId(restored.baselineCaseId);
-      setEditingCaseId(null);
-      setDraft(cloneMetadata(EMPTY_METADATA));
-      setDraftRelationship(null);
-      setDraftFrozenPlanId(null);
-      setTestPending(null);
-      setCfdPending(null);
-      setShowLoader(false);
-      setShowHelp(false);
-      setError("");
-      setWorkspaceError("");
-      setActiveProbe(0);
-      setActiveView("signals");
-      setWorkspaceView("case");
-      setProductView(restored.activeCaseId ? "comparison" : restored.activeDesignId ? "design" : "home");
-    } catch (reason) {
-      setWorkspaceError(reason instanceof Error ? reason.message : "The workspace could not be opened.");
-    }
-  }
-
-  const updateNumber = (key: keyof CaseMetadata, value: string) => setDraft((current) => ({ ...current, [key]: value === "" ? Number.NaN : Number(value) }));
-  const updateText = (key: keyof CaseMetadata, value: string) => setDraft((current) => ({ ...current, [key]: value }));
-  const numberValue = (value: number | undefined) => typeof value === "number" && Number.isFinite(value) ? value : "";
-
-  function saveEngineDesign(design: EngineDesign) {
-    const previous = designs.find((item) => item.id === design.id) ?? null;
-    const saved = createEngineRevision(design, previous);
-    setDesigns((current) => [...current, saved]);
-    setActiveDesignId(saved.id);
-  }
-
-  return <main className="app-shell">
-    <header className="product-header">
-      <a className="brand" href="#top" aria-label="Go to Kythros home" onClick={(event) => { event.preventDefault(); setProductView("home"); requestAnimationFrame(() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth", block: "start" })); }}><span className="brand-mark">K</span><span><strong>KYTHROS</strong><small>BY CAELUS</small></span></a>
-      <p>RDE design, simulation, and validation</p>
-      <nav className="product-tabs" aria-label="Kythros workspaces"><button className={productView === "home" ? "active" : ""} aria-current={productView === "home" ? "page" : undefined} onClick={() => setProductView("home")}>Home</button><button className={productView === "design" ? "active" : ""} aria-current={productView === "design" ? "page" : undefined} onClick={() => setProductView("design")}>Design</button><button className={productView === "simulation" ? "active" : ""} aria-current={productView === "simulation" ? "page" : undefined} onClick={() => setProductView("simulation")}>2D Simulation</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Envelope</button><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Experiment Validation</button></nav>
-      <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><PwaInstallButton /><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={() => setProductView(designs.length ? "simulation" : "design")}>{designs.length ? "Open 2D Simulation" : "+ New engine"}</button></div>
-    </header>
-    {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
-
-    <section className="content" id="top">
-      {productView === "home" ? <section className="home-workspace" aria-labelledby="home-title">
-        <div className="home-hero">
-          <span className="empty-kicker">DESIGN â†’ SIMULATE â†’ ANALYZE â†’ IMPROVE</span>
-          <h1 id="home-title">Develop an RDE in one connected workspace</h1>
-          <p>Define the engine, choose a fast 2D setup, run it in your CFD solver, and return the result. Kythros tells you whether to change the simulation, the engine, or neither. Add hot-fire data only for physical validation.</p>
-          <div className="home-actions"><button className="button primary" onClick={() => setProductView(designs.length ? "simulation" : "design")}>{designs.length ? "Open 2D Simulation â†’" : "Design the first RDE â†’"}</button><button className="button secondary" onClick={() => setShowHelp(true)}>See how it works</button></div>
-        </div>
-
-        <section className="home-load-card" aria-labelledby="home-load-title">
-          <div className="home-load-heading"><span>OPEN A WORKSPACE</span><h2 id="home-load-title">Continue work or inspect an example</h2><p>All workspace loaders live here. New RDE development starts with Design; saved and example projects restore their existing engines, simulations, and evidence.</p></div>
-          <div className="home-load-options">
-            <article><span>YOUR WORK</span><strong>Saved Kythros workspace</strong><p>Restore engine revisions, operating points, CFD cases, experimental evidence, and frozen next-run plans.</p><label className="button primary workspace-file-button">Open saved workspace<input type="file" accept=".json" onChange={openWorkspace} hidden /></label></article>
-            <article><span>REAL PUBLISHED SUMMARY</span><strong>Observed operating points</strong><p>Inspect source-backed operating conditions and reported wave modes. This example does not include raw CFD fields.</p><button className="button secondary" onClick={loadPublishedEnvelopeExample}>Load published observations</button></article>
-            <article><span>SYNTHETIC Â· WORKFLOW ONLY</span><strong>Analysis demonstration</strong><p>Inspect how Kythros analyzes a baseline CFD case and tracks controlled reruns. The generated values are not physical validation.</p><button className="button secondary" onClick={loadExampleCaseHistory}>Load synthetic demonstration</button></article>
-          </div>
-        </section>
-
-        <details className="home-supporting-details">
-          <summary><span>METHOD AND EVIDENCE</span><strong>What Kythros does and does not do</strong><small>Open the five-step workflow, solver boundary, and public analyzer checks.</small></summary>
-          <div className="home-supporting-content">
-        <section className="home-workflow-card" aria-label="Intended Kythros workflow">
-          <div className="card-heading"><div><span>PRIMARY WORKFLOW</span><h2>One engine record from concept through validation</h2><p>Each stage inherits the exact engine revision and operating condition, so geometry, CFD settings, outputs, recommendations, and experiments remain traceable.</p></div></div>
-          <div className="screening-workflow"><article><b>1</b><span><strong>Design</strong><small>Define geometry, injectors, propellants, materials, cooling, and operating limits.</small></span></article><article><b>2</b><span><strong>Set up 2D</strong><small>Choose a quick, balanced, or refined preset and export the periodic case.</small></span></article><article><b>3</b><span><strong>Run</strong><small>Complete and execute the reacting-flow setup in an external CFD solver.</small></span></article><article><b>4</b><span><strong>Import result</strong><small>Return the solver summary, including convergence, wave, backflow, and thermal outputs.</small></span></article><article><b>5</b><span><strong>Improve</strong><small>Receive separate engine-design and next-simulation recommendations.</small></span></article></div>
-          <div className="home-evidence-boundary"><article><span>KYTHROS PREPARES</span><strong>Traceable 2D starter package</strong><p>Geometry, operating condition, speed preset, periodic mesh, probes, and result template.</p></article><article><span>YOUR CFD SOLVER RUNS</span><strong>Reacting-flow calculation</strong><p>An engineer selects and verifies chemistry, boundaries, ignition, numerics, convergence, and execution.</p></article><article><span>KYTHROS RECOMMENDS</span><strong>What changes next</strong><p>Imported results produce one engine change to test and one next-simulation action. Experiment is optional.</p></article></div>
-        </section>
-
-        <PublicExperimentBenchmarks />
-          </div>
-        </details>
-
-      </section> : productView === "design" ? <DesignPlanner designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onSaveDesign={saveEngineDesign} onAddOperatingPoint={openOperatingPoint} onOpenEnvelope={(designId) => { selectDesign(designId); setProductView("envelope"); }} /> : productView === "simulation" ? <Rde2dWorkspace designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} onSelectDesign={selectDesign} onOpenDesign={() => setProductView("design")} onOpenEnvelope={() => setProductView("envelope")} onOpenValidation={() => setProductView("comparison")} /> : productView === "envelope" ? <OperatingEnvelope designs={designs} activeDesignId={activeDesignId} operatingPoints={operatingPoints} runs={cases} onSelectDesign={selectDesign} onAddOperatingPoint={openOperatingPoint} onOpenDesign={() => setProductView("design")} onOpenHome={() => setProductView("home")} onAddBaselineCfd={openBaselineCfdForOperatingPoint} onOpenRun={(caseId) => { const run = cases.find((item) => item.id === caseId); if (run?.operatingPointId) setActiveOperatingPointId(run.operatingPointId); setActiveCaseId(caseId); setActiveProbe(0); setWorkspaceView("case"); setProductView("comparison"); }} /> : !activeCase || !activeOperatingPoint || !testMode || !cfdMode || !activeComparison || !assessment || !planAssessment || !decisionQuality || !planningCase ? <section className="empty-workspace">
-        <span className="empty-kicker">EXPERIMENT VALIDATION Â· OPTIONAL</span><h1>{activeOperatingPoint?.experiment ? "Measured operating point ready" : "Validate CFD against a physical engine"}</h1>
-        <p>{activeOperatingPoint?.experiment ? "The experimental observation is already part of the measured envelope. Add a baseline CFD result only when you want to compare simulation with this measurement." : "Choose an engine and add a measured operating point. CFD comparisons are created separately and stay attached to that physical condition."}</p>
-        <span className="empty-status">{activeOperatingPoint?.experiment ? "No CFD comparison has been added for this operating point" : "No measured operating point has been selected"}</span>
-        <div className="empty-actions"><button className="button primary" onClick={() => activeOperatingPoint?.experiment ? openBaselineCfdForOperatingPoint(activeOperatingPoint.id) : openNewCase()}>{activeOperatingPoint?.experiment ? "Add baseline CFD comparison â†’" : activeDesignId ? "Add first measured operating point â†’" : "Define an engine first â†’"}</button><button className="button secondary" onClick={() => setProductView("home")}>Go to Home</button></div>
-        <div className="empty-requirements"><span><b>1</b><i><strong>Compare</strong> matched experiment and CFD pressure traces</i></span><span><b>2</b><i><strong>Diagnose</strong> pressure and rotating-wave mismatches</i></span><span><b>3</b><i><strong>Run and update</strong> the adaptive CFD plan</i></span></div>
-      </section> : <>
-        <section className="experiment-validation-notice"><div><span>EXPERIMENT VALIDATION</span><strong>This screen answers whether CFD matches hot-fire data.</strong><p>For 2D-only development and engine-change recommendations, use the 2D Simulation workspace.</p></div><button className="button secondary" onClick={() => setProductView("simulation")}>Back to 2D Simulation â†’</button></section>
-        <ComparisonHierarchy designs={designs} operatingPoints={operatingPoints} runs={cases} activeDesignId={activeDesignId} activeOperatingPointId={activeOperatingPointId} activeRunId={activeCaseId} onSelectDesign={selectDesign} onSelectOperatingPoint={selectOperatingPoint} onSelectRun={(id) => { setActiveCaseId(id); setActiveProbe(0); setWorkspaceView("case"); }} onAddOperatingPoint={() => activeDesignId && openOperatingPoint(activeDesignId)} onAddRun={openNewRunForOperatingPoint} onViewHistory={() => setWorkspaceView("compare")} onSaveWorkspace={downloadWorkspace} />
-        <ProspectiveValidationLedger plans={frozenRunPlans} cases={cases} activeOperatingPointId={activeOperatingPointId} onResume={openFrozenRunPlan} onDownload={downloadFrozenPlan} />
-
-        {workspaceView === "compare" && baselineSummary ? <section className="case-history-comparison" aria-label="Case history">
-          <div className="case-history-heading"><div><span className="empty-kicker">RUN HISTORY</span><h1>{activeOperatingPoint.name}</h1><p>{operatingPointLabel(activeOperatingPoint)}. Every row is a run at this one physical condition. A rerun affects the plan only when exactly one named CFD parameter changes.</p></div><label className="baseline-select"><span>Baseline run</span><select value={baselineSummary.item.id} onChange={(event) => setCaseBaselineId(event.target.value)}>{caseSummaries.filter((summary) => !summary.item.relationship).map((summary) => <option key={summary.item.id} value={summary.item.id}>{summary.item.metadata.name}</option>)}</select></label></div>
-          <div className="case-history-table-wrap"><table className="case-history-table direct-delta-table">
-            <thead><tr><th>Run</th><th>Operating-point check</th><th>Experimental change</th><th>CFD error change</th><th>Run status</th></tr></thead>
-            <tbody>{caseSummaries.map((summary) => {
-              const delta = buildCaseDelta(baselineSummary, summary);
-              const isBaseline = summary.item.id === baselineSummary.item.id;
-              const relationEvidence = buildCaseHistoryEvidence(cases, baselineSummary.item.id).find((item) => item.caseId === summary.item.id);
-              const caseReviews = summary.assessment.metrics.filter((metric) => metric.tone === "review").length;
-              return <tr key={summary.item.id} className={isBaseline ? "baseline-row" : ""}>
-                <th scope="row"><button onClick={() => { setActiveCaseId(summary.item.id); setActiveProbe(0); setWorkspaceView("case"); }}>{summary.item.metadata.name}<span>{isBaseline ? "Selected baseline" : "Open analysis â†’"}</span></button></th>
-                <td>{isBaseline ? <strong>Reference condition</strong> : <><strong>Ï† {signed(delta.condition.equivalenceRatio, 2)} Â· pressure {signed(delta.condition.inletPressureBar, 1)} bar</strong><span>Temperature {signed(delta.condition.inletTemperatureK, 0)} K</span><span>Mass flow {signed(delta.condition.massFlowKgS, 2)} kg/s</span></>}</td>
-                <td>{isBaseline ? <strong>Reference behavior</strong> : <><strong>Frequency {signed(delta.experiment.frequencyKHz, 2)} kHz</strong><span>Peak pressure {signed(delta.experiment.peakPressureMpa, 3)} MPa</span><span>Amplitude {signed(delta.experiment.pressureAmplitudeMpa, 3)} MPa Â· variability {signed(delta.experiment.cycleVariabilityPoints, 1)} pt</span></>}</td>
-                <td>{isBaseline ? <strong>Reference error</strong> : <><strong>Frequency error {signed(delta.cfdAgreement.frequencyErrorPointChange, 1)} pt</strong><span>Peak error {signed(delta.cfdAgreement.peakPressureErrorPointChange, 1)} pt</span><span>Amplitude error {signed(delta.cfdAgreement.amplitudeErrorPointChange, 1)} pt</span></>}</td>
-                <td><span className={`comparison-status ${relationEvidence?.state === "supports" || relationEvidence?.sequenceStatus === "converged" ? "pass" : relationEvidence?.controlled ? "review" : summary.assessment.validity.status === "Blocked" || caseReviews ? "review" : "neutral"}`}>{isBaseline ? "Baseline CFD" : relationEvidence?.controlled ? outcomeLabel(relationEvidence) : "Comparison only"}</span></td>
-              </tr>;
-            })}</tbody>
-          </table></div>
-          <p className="case-history-note"><strong>How this works:</strong> Kythros checks the saved settings and experiment samples. A valid one-change rerun updates the plan; a run with multiple changes remains a comparison and does not update the plan.</p>
-        </section> : <>
-          <div className="case-heading"><div><span className={`source-dot ${activeCase.source === "demo" ? "demo" : ""}`} /><span>{activeCase.source === "demo" ? "Synthetic demonstration run" : "User-provided run"}</span></div><h1>{activeCase.metadata.name}</h1><p>{activeOperatingPoint.name} Â· {activeCase.relationship ? `one-change ${activeCase.relationship.changedParameter ? parameterLabel(activeCase.relationship.changedParameter).toLowerCase() : changeLabel(activeCase.relationship.changedVariable).toLowerCase()} CFD rerun starting from ${activeReferenceName ?? baselineCaseName ?? "the baseline run"}` : `experiment + baseline CFD with ${caseHistoryEvidence.length} related rerun${caseHistoryEvidence.length === 1 ? "" : "s"}`}</p></div>
-
-          <EngineeringDecisionPanel summary={decisionSummary} nextRun={planAssessment.nextRun} showLatestResult={!activeCaseEvidence} decisionQuality={decisionQuality} selectedCaseName={activeCase.metadata.name} selectedAnalysisInput={activeAnalysisInput} planningCaseName={planningCase.metadata.name} publishedSources={likelySources} researchClaims={likelyHypothesis?.researchClaims ?? []} publishedValidation={PUBLISHED_VALIDATION_SUMMARY} onEdit={openCaseEditor} onDownloadReport={downloadReport} onDownloadNextRun={planAssessment.nextRun.decisionPolicy.changedParameter ? downloadNextRunWorkOrder : null} onDownloadOpenFoam={planAssessment.nextRun.decisionPolicy.changedParameter ? downloadOpenFoamHandoff : null} onStartNextRun={planAssessment.nextRun.decisionPolicy.changedParameter ? startRecommendedRerun : null} onSaveWorkspace={downloadWorkspace} onViewHistory={operatingPointRuns.length > 1 ? () => setWorkspaceView("compare") : null} />
-
-          <details className="comparison-secondary-details">
-            <summary><span>ADDITIONAL ENGINE PHYSICS</span><strong>Thermal, feed-system, and performance evidence</strong><small>Open optional fields, wall maps, supporting validity checks, and measurement definitions.</small></summary>
-            <div className="comparison-secondary-content">
-          <RdePhysicsVisual design={activeDesign} rows={physicsComparisons} experimentWallField={activeCase.wallFields?.experiment ?? activeOperatingPoint.experiment?.wallField} cfdWallField={activeCase.wallFields?.cfd} onEdit={openCaseEditor}/>
-
-          {showDetailedEvidence && <>
-          <section className={`assessment-banner ${totalReview ? "review" : "pass"}`} aria-label="Comparison conclusion">
-            <div><span>COMPARISON CONCLUSION</span><h2>{assessment.validity.status === "Blocked" ? "Assessment blocked until experimentâ€“CFD matching is confirmed" : totalReview ? `${totalReview} evidence check${totalReview === 1 ? "" : "s"} require review` : "No selected CFD-to-experiment difference exceeds current uncertainty"}</h2><p>{assessment.validity.status === "Blocked" ? "Do not change the CFD model from this pairing yet." : totalReview ? "The highlighted findings determine the ranked explanations and one-variable next-run plan below." : "This does not prove the CFD is valid for every output or operating point. It means this run contains no resolved pressure discrepancy."}</p></div>
-            <strong>{assessment.validity.status === "Blocked" ? "BLOCKED" : totalReview ? "REVIEW" : "NO RESOLVED MISMATCH"}</strong>
-          </section>
-
-          <section className="coverage-grid" aria-label="Validation coverage">
-            {assessment.coverage.map((item) => <article key={item.module} className={item.status === "Assessed" ? "coverage-assessed" : item.status === "Inconclusive" ? "coverage-inconclusive" : "coverage-missing"}><span>{item.module}</span><strong>{item.status}</strong><small>{item.detail}</small></article>)}
-          </section>
-
-          <section className="quality-validity-grid">
-            <article className="validity-panel"><div className="section-heading"><span>01</span><div><h2>Comparison validity</h2><p>Can this pairing support a CFD conclusion?</p></div></div><ul>{assessment.validity.checks.map((check) => <li key={check.label}><span className={`check-dot ${check.status.toLowerCase()}`} /> <div><strong>{check.label}<i>{check.status}</i></strong><small>{check.detail}</small></div></li>)}</ul></article>
-            <article className="data-quality-panel"><div className="section-heading"><span>02</span><div><h2>Data quality</h2><p>Sampling, duration, continuity, and clipping</p></div></div><div className="quality-stats"><span><b>{average(assessment.dataQuality.experiment.map((result) => result.capturedCycles)).toFixed(1)}</b> experiment cycles</span><span><b>{average(assessment.dataQuality.cfd.map((result) => result.capturedCycles)).toFixed(1)}</b> CFD cycles</span><span><b>{average(assessment.dataQuality.experiment.map((result) => result.samplesPerCycle)).toFixed(0)}</b> samples/cycle</span></div><ul>{assessment.dataQuality.findings.map((finding) => <li key={finding}>{finding}</li>)}</ul></article>
-          </section>
-
-          <section className="workflow" aria-label="Kythros inputs and outputs">
-            <article className="inputs-panel"><div className="panel-heading"><div><span className="step-number">03</span><div><h2>Inputs used</h2><p>Every required field affects validity, calculation, or diagnosis</p></div></div><button className="text-button" onClick={openCaseEditor}>Edit run</button></div><ol className="input-list">{inputRows.map(([label, value]) => <li key={label}><i aria-hidden="true">âœ“</i><div><strong>{label}</strong><span>{value}</span></div></li>)}</ol></article>
-            <div className="flow-arrow" aria-hidden="true"><span>ANALYZE</span><i>â†’</i></div>
-            <article className="outputs-panel"><div className="panel-heading"><div><span className="step-number">04</span><div><h2>Experiment vs CFD</h2><p>CFD minus experiment, resolved against uncertainty where supported</p></div></div></div>
-              <div className="comparison-table-wrap"><table className="comparison-table uncertainty-table">
-                <thead><tr><th>Quantity</th><th>Experiment</th><th>CFD</th><th>CFD âˆ’ experiment</th><th>Combined uncertainty or Kythros prototype limit</th><th>Assessment</th></tr></thead>
-                <tbody>{assessment.metrics.map((metric) => <tr key={metric.id} className={metric.tone === "review" ? "comparison-row-review" : metric.tone === "neutral" ? "comparison-row-neutral" : ""}>
-                  <th scope="row"><strong>{metric.label}</strong><small>{metric.purpose}</small></th>
-                  <td>{formatMetricValue(metric, metric.experiment)}</td><td>{formatMetricValue(metric, metric.cfd)}</td><td className="difference-cell">{formatMetricDifference(metric)}</td>
-                  <td className="uncertainty-cell">{metric.uncertainty === null || metric.assessment.status === "match" || metric.assessment.status === "mismatch" ? metric.uncertaintyLabel : `Â±${metric.uncertainty.toFixed(metricDigits(metric))}${metric.unit ? ` ${metric.unit}` : ""}`}<small>{metric.assessment.explanation}</small></td>
-                  <td><span className={`comparison-status ${metric.tone}`}>{metric.assessment.label}</span></td>
-                </tr>)}</tbody>
-              </table></div>
-
-              <section className="result-block mismatch-block"><div><span className="result-index">05</span><h3>Waveform agreement</h3></div><div className="comparison-metrics">
-                <div className={waveformWithinLimit ? "metric-pass" : "metric-review"}><span>Aligned correlation</span><strong>{correlation.toFixed(3)}</strong><small>{waveformWithinLimit ? "Passes Kythros prototype limit: at least 0.700" : "Outside Kythros prototype limit: below 0.700"}</small></div>
-                <div><span>Normalized RMSE</span><strong>{(nrmse * 100).toFixed(1)}<i>%</i></strong><small>Residual relative to experimental oscillation RMS</small></div>
-                <div><span>Mean pressure bias</span><strong>{signed(pressureBias, 3)} <i>MPa</i></strong><small>Its significance is assessed in the mean-pressure row above</small></div>
-              </div><p className="metric-note">Correlation, harmonic, and variability checks use Kythros prototype product limits. The cited papers did not set these limits. Pressure, frequency, speed, impulse, and rise-time rows use the entered experiment and CFD uncertainties. {inconclusiveMetrics ? `${inconclusiveMetrics} metric${inconclusiveMetrics === 1 ? " cannot" : "s cannot"} be classified from the available run data.` : ""}</p></section>
-
-              <section className="result-block causes-block"><div><span className="result-index">06</span><h3>Ranked diagnostic hypotheses</h3></div><ol>{assessment.hypotheses.map((hypothesis, index) => <li key={hypothesis.title}><b>{index + 1}. {hypothesis.title}</b><span>{hypothesis.evidence.map((item) => `${item.state}: ${item.observation}`).join(" ")}</span><small>Model inputs: {hypothesis.modelInputs.filter(Boolean).join(" Â· ")}</small></li>)}</ol><small>These are transparent sensitivity-test priorities, not causal proof.</small></section>
-
-              <button className="report-button" onClick={downloadReport}><span><b>08</b><strong>Download traceable report</strong><small>Inputs, validity, uncertainty, metrics, hypotheses, and recommended next CFD run</small></span><i>â†“</i></button>
-            </article>
-          </section>
-
-          </>}
-
-          <section className="evidence-panel physics-comparison-panel" aria-label="Engine physics comparison"><div className="evidence-heading"><div><span className="calculated-label">OPTIONAL DOCUMENTED EVIDENCE</span><h2>Performance, feed-system, thermal, and repeatability comparison</h2><p>{physicsProvidedCount ? `${physicsProvidedCount} of ${physicsComparisons.length} quantities have at least one documented value.` : "No optional engine-physics values were provided for this run."} Kythros reports CFD minus experiment only when both values exist; it never infers a missing value.</p></div><button className="button secondary" onClick={openCaseEditor}>Add or edit values</button></div><div className="comparison-table-wrap"><table className="comparison-table physics-comparison-table"><thead><tr><th>Evidence layer</th><th>Quantity</th><th>Experiment</th><th>CFD</th><th>CFD âˆ’ experiment</th></tr></thead><tbody>{physicsComparisons.map((row) => <tr key={row.key}><td><span className="physics-layer-tag">{row.layer === "feed" ? "Feed system" : row.layer[0].toUpperCase() + row.layer.slice(1)}</span></td><th scope="row">{row.label}</th><td>{formatPhysicsValue(row.experiment, row.unit)}</td><td>{formatPhysicsValue(row.cfd, row.unit)}</td><td className="difference-cell">{row.difference === null ? "Not comparable" : `${row.difference > 0 ? "+" : ""}${formatPhysicsValue(row.difference, row.unit)}`}</td></tr>)}</tbody></table></div><p className="metric-note">These scalar differences are descriptive in this version. They do not automatically pass or fail a CFD run because the required definitions and uncertainty budgets depend on the measurement method.</p><details className="classification-method physics-sources"><summary>Measurement basis and primary experimental sources</summary><div><p>{PHYSICS_SOURCE_LIMITATION}</p><ul>{PHYSICS_EVIDENCE_SOURCES.map((source) => <li key={source.title}><a href={source.url} target="_blank" rel="noreferrer"><strong>{source.title}</strong></a><span>{source.authors} ({source.year}) Â· {source.contribution}</span></li>)}</ul></div></details></section>
-
-            </div>
-          </details>
-
-          <section className="evidence-panel primary-signal-evidence" aria-label="Calculated signal evidence"><div className="evidence-heading"><div><span className="calculated-label">CALCULATED AFTER CASE ANALYSIS</span><h2>Pressure and wave evidence</h2><p>Every trace, spectrum, propagation phase, and cycle statistic is calculated from the active case.</p></div><div className="control-group"><div className="probe-tabs" aria-label="Probe selection">{activeCase.testSignals.map((_, probe) => <button key={probe} className={activeProbe === probe ? "active" : ""} onClick={() => setActiveProbe(probe)}>P{probe + 1}</button>)}</div><div className="view-tabs" aria-label="Evidence view"><button className={activeView === "signals" ? "active" : ""} onClick={() => setActiveView("signals")}>Pressure</button><button className={activeView === "spectrum" ? "active" : ""} onClick={() => setActiveView("spectrum")}>Spectrum</button><button className={activeView === "residual" ? "active" : ""} onClick={() => setActiveView("residual")}>Residual</button><button className={activeView === "phase" ? "active" : ""} onClick={() => setActiveView("phase")}>Propagation</button><button className={activeView === "cycles" ? "active" : ""} onClick={() => setActiveView("cycles")}>Cycle stability</button></div></div></div><div className="chart-heading"><span>{activeView === "phase" ? `${activeCase.testSignals.length} probes Â· ${testMode.identifiability.toLowerCase()} experimental mode` : activeView === "cycles" ? `${testMode.cycleSeries.length} experiment cycles Â· ${cfdMode.cycleSeries.length} CFD cycles` : `Probe P${activeProbe + 1} Â· ${activeCase.metadata.probePositionsDeg[activeProbe]}Â° Â· ${activeComparison.time.length.toLocaleString()} aligned samples`}</span><Legend residual={activeView === "residual"} /></div>{activeView === "signals" && <SignalChart comparison={activeComparison} />}{activeView === "spectrum" && <SpectrumChart comparison={activeComparison} />}{activeView === "residual" && <ResidualChart comparison={activeComparison} />}{activeView === "phase" && <PhaseChart experiment={testMode} simulation={cfdMode} positionsDeg={activeCase.metadata.probePositionsDeg} />}{activeView === "cycles" && <CycleChart experiment={testMode} simulation={cfdMode} />}<div className="wave-summary"><span><b>{probeSetComparison?.sharedLagUs.toFixed(2)} Âµs</b> shared experimentâ€“CFD alignment</span><span><b>{testMode.identifiability === "Not identifiable" ? "Not identifiable" : `${testMode.waveCount}-wave ${testMode.direction.toLowerCase()}`}</b> experiment Â· {testMode.identifiability}</span><span><b>{cfdMode.identifiability === "Not identifiable" ? "Not identifiable" : `${cfdMode.waveCount}-wave ${cfdMode.direction.toLowerCase()}`}</b> CFD Â· {cfdMode.identifiability}</span><span><b>{testMode.identifiability === "Not identifiable" || cfdMode.identifiability === "Not identifiable" ? "Not identifiable" : `${testMode.phaseJitterDeg.toFixed(1)}Â° / ${cfdMode.phaseJitterDeg.toFixed(1)}Â°`}</b> phase jitter</span></div>{[...testMode.warnings, ...cfdMode.warnings].length > 0 && <ul className="wave-warnings">{[...new Set([...testMode.warnings, ...cfdMode.warnings])].map((warning) => <li key={warning}>{warning}</li>)}</ul>}</section>
-          <footer><span>Kythros v{ANALYSIS_VERSION} Â· calculated from the saved run data</span><span>{operatingPoints.length} operating point{operatingPoints.length === 1 ? "" : "s"} Â· {cases.length} run{cases.length === 1 ? "" : "s"} Â· not a certification or causal proof</span></footer>
-        </>}
-      </>}
-    </section>
-
-    {showLoader && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowLoader(false)}><section className="loader-modal" role="dialog" aria-modal="true" aria-labelledby="loader-title" onMouseDown={(event) => event.stopPropagation()}>
-      <button className="close-button" onClick={() => setShowLoader(false)} aria-label="Close inputs">Ã—</button><div className="loader-intro"><div><span className="modal-kicker">{measuredPointDraft ? "MEASURED OPERATING POINT" : "CFD COMPARISON RUN"}</span><h2 id="loader-title">{measuredPointDraft ? "Add measured operating point" : reviewingRerun ? "Review one-change rerun" : editingCaseId ? "Edit run" : draftRelationship ? "Add CFD rerun" : "Add baseline CFD comparison"}</h2></div>{!reviewingRerun && <button className="input-help-button" onClick={() => setShowHelp(true)}>What does each input mean?</button>}</div>{!reviewingRerun && <p>{measuredPointDraft ? "Enter the physical condition and experimental measurements. Pressure probes define the wave response; optional performance, feed-system, thermal, and duration values add separate evidence layers. No CFD setup or result is required here." : "The experiment and physical condition are inherited from the operating point. Add CFD inputs here only for comparison and rerun planning."}</p>}
-
-      {reviewingRerun && draftReferenceCase && draftRelationship && cfdPending ? <section className="rerun-review-step" aria-label="Controlled rerun review">
-        <span>Ready to analyze</span>
-        <h3>{draft.name}</h3>
-        <div className="rerun-review-list">
-          <p><strong>Starting run</strong><span>{draftReferenceCase.metadata.name}</span></p>
-          <p><strong>Experiment reused</strong><span>{inheritedExperimentName}</span></p>
-          <p><strong>Changed only</strong><span>{draftRelationship.changedParameter ? parameterLabel(draftRelationship.changedParameter) : changeLabel(draftRelationship.changedVariable)} Â· {changedRerunFields.map(caseFieldLabel).join(", ")}</span></p>
-          <p><strong>New CFD result</strong><span>{cfdPending.provenance.fileName}</span></p>
-        </div>
-        <div className="rerun-review-confirmation"><strong>Operating point and experiment are locked.</strong><span>Kythros will compare this CFD result with the inherited experiment and starting run settings.</span></div>
-        <div className="modal-actions"><button className="button secondary" onClick={() => setReviewingRerun(false)}>Back to inputs</button><button className="button primary" onClick={applyCase}>Analyze rerun â†’</button></div>
-      </section> : <>
-
-      <div className="form-section">
-        <h3>{measuredPointDraft ? "Engine, operating point, and experiment geometry" : "Engine, run, and geometry"}</h3>
-        <div className="form-grid four">
-          <label><span>Engine / design</span><select disabled={!measuredPointDraft} value={draftDesignId ?? ""} onChange={(event) => setDraftDesignId(event.target.value || null)}><option value="" disabled>Select engine</option>{designs.map((design) => <option key={design.id} value={design.id}>{design.name}</option>)}</select></label>
-          <label><span>{measuredPointDraft ? "Operating point name" : draftRelationship ? "Rerun name" : "Baseline CFD run name"}</span><input value={draft.name} onChange={(event) => updateText("name", event.target.value)} /></label>
-          <label><span>{measuredPointDraft ? "Mean diameter from engine (mm)" : "Mean diameter (mm)"}</span><input disabled={measuredPointDraft || rerunFieldLocked("annulusMeanDiameterMm")} type="number" value={numberValue(draft.annulusMeanDiameterMm)} onChange={(event) => updateNumber("annulusMeanDiameterMm", event.target.value)} /></label>
-          <label><span>Diameter uncertainty (mm)</span><input disabled={rerunFieldLocked("annulusDiameterUncertaintyMm")} type="number" step="0.01" value={numberValue(draft.annulusDiameterUncertaintyMm)} onChange={(event) => updateNumber("annulusDiameterUncertaintyMm", event.target.value)} /></label>
-          <label><span>Maximum expected waves</span><input disabled={rerunFieldLocked("maximumWaveCount")} type="number" min="1" max="12" value={numberValue(draft.maximumWaveCount)} onChange={(event) => updateNumber("maximumWaveCount", event.target.value)} /></label>
-        </div>
-        <label className="probe-angle-editor"><span>Probe angles (deg) Â· minimum 3, nonuniform preferred</span><div className="angle-inputs">{draft.probePositionsDeg.map((angle, index) => <input disabled={rerunFieldLocked("probePositionsDeg")} key={index} type="number" aria-label={`Probe ${index + 1} angle`} placeholder={`P${index + 1}`} value={numberValue(angle)} onChange={(event) => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.map((value, position) => position === index ? (event.target.value === "" ? Number.NaN : Number(event.target.value)) : value) }))} />)}<button disabled={controlledRerunDraft || !measuredPointDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: [...current.probePositionsDeg, Number.NaN] }))}>+ probe</button>{draft.probePositionsDeg.length > 3 && <button disabled={controlledRerunDraft || !measuredPointDraft} type="button" onClick={() => setDraft((current) => ({ ...current, probePositionsDeg: current.probePositionsDeg.slice(0, -1) }))}>Remove</button>}</div></label>
-        <label className="confirmation-check"><input disabled={rerunFieldLocked("probeSynchronizationConfirmed")} type="checkbox" checked={draft.probeSynchronizationConfirmed} onChange={(event) => setDraft((current) => ({ ...current, probeSynchronizationConfirmed: event.target.checked }))} /><span>I confirm every experimental pressure probe uses one synchronized acquisition time base.</span></label>
-        {!measuredPointDraft && <div className="automatic-pairing"><span>AUTOMATIC PAIRING</span><strong>Verified when the run is analyzed</strong><p>Kythros checks the inherited operating point, probe count against the saved angle map, synchronized time base, and overlapping experimentâ€“CFD window. The saved run records the resulting fingerprint.</p></div>}
-      </div>
-
-      {!measuredPointDraft && (draftOperatingPointRuns.length > 0 || draftRelationship) && <div className="form-section"><h3>{editingCaseId ? "Run relationship" : "Controlled CFD rerun"}</h3><p className="form-help">{editingCaseId ? "This relationship is locked because changing it would change the meaning of the saved result." : "This rerun inherits the engine, operating point, experiment, and probes. Choose exactly one CFD parameter to change."}</p><div className="form-grid four">
-        <label><span>Operating point baseline run</span><select disabled={Boolean(editingCaseId) || Boolean(draftRelationship)} value={draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseCaseFamily(event.target.value)}><option value="">Not a related rerun</option>{draftOperatingPointRuns.filter((item) => item.id !== editingCaseId && !item.relationship).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
-        <label><span>Starting run</span><select disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.referenceCaseId ?? draftRelationship?.baselineCaseId ?? ""} onChange={(event) => chooseStartingCase(event.target.value)}>{draftRelationship && draftOperatingPointRuns.filter((item) => item.id !== editingCaseId && (item.id === draftRelationship.baselineCaseId || item.relationship?.baselineCaseId === draftRelationship.baselineCaseId)).map((item) => <option key={item.id} value={item.id}>{item.metadata.name}</option>)}</select></label>
-        <label><span>Single CFD parameter</span><select disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.changedParameter ?? ""} onChange={(event) => chooseChangedParameter(event.target.value ? event.target.value as ControlledParameter : null)}><option value="">Choose one exact parameter</option>{CONTROLLED_PARAMETER_DEFINITIONS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-        <label><span>Change description</span><input disabled={!draftRelationship || Boolean(editingCaseId)} value={draftRelationship?.description ?? ""} onChange={(event) => setDraftRelationship((current) => current ? { ...current, description: event.target.value } : null)} placeholder="e.g. 50% front-cell refinement" /></label>
-      </div>{editingCaseId ? <div className="rerun-inheritance"><strong>{draftRelationship ? "Controlled-rerun definition locked" : "Baseline definition locked"}</strong><span>Create a new run to test a different CFD parameter.</span></div> : draftReferenceCase && <div className="rerun-inheritance"><strong>Starting run copied: {draftReferenceCase.metadata.name}</strong><span>{!draftRelationship?.changedParameter ? "Choose the one CFD parameter being tested." : `Only ${parameterLabel(draftRelationship.changedParameter).toLowerCase()} fields are editable. The operating point and experiment are locked.`}</span></div>}</div>}
-
-      <div className="form-section">
-        <div className="form-section-heading"><div><h3>{measuredPointDraft ? "Experimental pressure measurements" : "Synchronized pressure probes"}</h3><p className="form-help">{measuredPointDraft ? "Map the time column and one pressure column for each synchronized experimental probe." : "The operating point supplies the experimental measurements. Upload and map the CFD result for this comparison."}</p></div><button onClick={downloadExample}>Download example CSV</button></div>
-        <div className={`file-mapper-grid ${measuredPointDraft ? "single" : ""}`}>
-          {measuredPointDraft
-            ? <PressureFileMapper key={`experiment-new-${draft.probePositionsDeg.length}`} kind="Experiment" expectedProbeCount={draft.probePositionsDeg.length} onMapped={setTestPending} />
-            : draftReferenceCase && !editingCaseId
-              ? <section className="inherited-experiment"><div><span>EXPERIMENT REUSED</span><strong>{inheritedExperimentName}</strong></div><p>Exact samples inherited from <b>{draftReferenceCase.metadata.name}</b>. No experiment re-upload is needed.</p></section>
-              : draftOperatingPoint?.experiment && !editingCaseId
-                ? <section className="inherited-experiment"><div><span>MEASURED EXPERIMENT</span><strong>{draftOperatingPoint.experiment.importProvenance?.fileName ?? draftOperatingPoint.name}</strong></div><p>Experimental samples are inherited from this operating point. No re-upload is needed.</p></section>
-                : <PressureFileMapper key={`experiment-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}`} kind="Experiment" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.testSignals[0]?.name.split(" Â· ")[0] : undefined} onMapped={setTestPending} />}
-          {!measuredPointDraft && <PressureFileMapper key={`cfd-${editingCaseId ?? "new"}-${draft.probePositionsDeg.length}-${draftRelationship?.referenceCaseId ?? "standalone"}`} kind="CFD" expectedProbeCount={draft.probePositionsDeg.length} currentFileName={editingCaseId ? cases.find((item) => item.id === editingCaseId)?.cfdSignals[0]?.name.split(" Â· ")[0] : undefined} onMapped={setCfdPending} />}
-        </div>
-        <div className="form-grid two measurement-chain"><label><span>Experiment sensor bandwidth (kHz)</span><input disabled={!measuredPointDraft || rerunFieldLocked("experimentSensorBandwidthKHz")} type="number" step="0.1" value={numberValue(draft.experimentSensorBandwidthKHz)} onChange={(event) => updateNumber("experimentSensorBandwidthKHz", event.target.value)} /></label><label><span>Experiment low-pass / anti-alias cutoff (kHz)</span><input disabled={!measuredPointDraft || rerunFieldLocked("experimentFilterCutoffKHz")} type="number" step="0.1" value={numberValue(draft.experimentFilterCutoffKHz)} onChange={(event) => updateNumber("experimentFilterCutoffKHz", event.target.value)} /></label></div>
-      </div>
-
-      <div className="form-section"><h3>Operating point</h3><p className="form-help">{measuredPointDraft ? "Enter the physical test condition. These values define one marker in the measured envelope." : "This physical condition is inherited from the measured operating point and cannot be changed by a CFD run."}</p><div className="form-grid five"><label><span>Inlet / plenum pressure (bar)</span><input disabled={!measuredPointDraft || rerunFieldLocked("inletPressureBar")} type="number" value={numberValue(draft.inletPressureBar)} onChange={(event) => updateNumber("inletPressureBar", event.target.value)} /></label><label><span>Mass flow (kg/s)</span><input disabled={!measuredPointDraft || rerunFieldLocked("massFlowKgS")} type="number" step="0.001" value={numberValue(draft.massFlowKgS)} onChange={(event) => updateNumber("massFlowKgS", event.target.value)} /></label><label><span>Equivalence ratio</span><input disabled={!measuredPointDraft || rerunFieldLocked("equivalenceRatio")} type="number" step="0.01" value={numberValue(draft.equivalenceRatio)} onChange={(event) => updateNumber("equivalenceRatio", event.target.value)} /></label><label><span>Back pressure (bar)</span><input disabled={!measuredPointDraft || rerunFieldLocked("backPressureBar")} type="number" step="0.01" value={numberValue(draft.backPressureBar)} onChange={(event) => updateNumber("backPressureBar", event.target.value)} /></label><label><span>Inlet temperature (K)</span><input disabled={!measuredPointDraft || rerunFieldLocked("inletTemperatureK")} type="number" value={numberValue(draft.inletTemperatureK)} onChange={(event) => updateNumber("inletTemperatureK", event.target.value)} /></label></div></div>
-
-      <div className="form-section"><h3>{measuredPointDraft ? "Optional engine-physics measurements" : "Optional engine-physics comparison"}</h3><p className="form-help">Add only documented measurements or directly calculated solver outputs. Missing values remain unavailable and do not lower the pressure-and-wave result.</p><div className="form-grid four">{PHYSICS_MEASUREMENT_DEFINITIONS.flatMap((item) => {
-        const experimentField = <label key={`experiment-${item.key}`}><span>Experiment {item.label.toLowerCase()}{item.unit ? ` (${item.unit})` : ""} Â· optional</span><input disabled={!measuredPointDraft || rerunFieldLocked(item.experimentKey)} type="number" step="any" value={numberValue(draft[item.experimentKey] as number | undefined)} onChange={(event) => updateNumber(item.experimentKey, event.target.value)} /></label>;
-        if (measuredPointDraft) return [experimentField];
-        const cfdField = <label key={`cfd-${item.key}`}><span>CFD {item.label.toLowerCase()}{item.unit ? ` (${item.unit})` : ""} Â· optional</span><input disabled={rerunFieldLocked(item.cfdKey)} type="number" step="any" value={numberValue(draft[item.cfdKey] as number | undefined)} onChange={(event) => updateNumber(item.cfdKey, event.target.value)} /></label>;
-        return [experimentField, cfdField];
-      })}</div></div>
-
-      <div className="form-section"><h3>Optional spatial wall evidence</h3><p className="form-help">Upload axial position and circumferential angle with wall heat flux, wall temperature, or both. Kythros plots only mapped samples and does not turn a scalar peak into a field.</p><div className={`file-mapper-grid ${measuredPointDraft ? "single" : ""}`}>
-        {measuredPointDraft
-          ? <SpatialFieldMapper kind="Experiment" currentFileName={draftNewOperatingPoint?.experiment?.wallField?.fileName} onMapped={setTestWallPending}/>
-          : <section className="inherited-experiment"><div><span>EXPERIMENT WALL FIELD</span><strong>{draftOperatingPoint?.experiment?.wallField?.fileName ?? activeCase?.wallFields?.experiment?.fileName ?? "No spatial experiment field"}</strong></div><p>{draftOperatingPoint?.experiment?.wallField || activeCase?.wallFields?.experiment ? "Inherited from the measured operating point." : "No experimental wall map is available; scalar evidence remains separate."}</p></section>}
-        {!measuredPointDraft && <SpatialFieldMapper kind="CFD" currentFileName={editingCaseId ? activeCase?.wallFields?.cfd?.fileName : undefined} onMapped={setCfdWallPending}/>} 
-      </div></div>
-
-      {!measuredPointDraft && <div className="form-section"><h3>Solver + numerical schemes</h3>{!controlledRerunDraft && !editingCaseId && <SolverManifestImporter metadata={draft} onApply={(values) => setDraft((current) => ({ ...current, ...values }))} />}<div className="form-grid four"><label><span>Solver</span><input disabled={rerunFieldLocked("solver")} value={draft.solver} onChange={(event) => updateText("solver", event.target.value)} /></label><label><span>Version</span><input disabled={rerunFieldLocked("solverVersion")} value={draft.solverVersion} onChange={(event) => updateText("solverVersion", event.target.value)} /></label><label><span>Dimensionality</span><select disabled={rerunFieldLocked("dimensionality")} value={draft.dimensionality} onChange={(event) => setDraft((current) => ({ ...current, dimensionality: event.target.value as Dimensionality }))}><option value="">Select</option><option value="2D">2D</option><option value="3D">3D</option></select></label><label><span>Runtime (hours) Â· optional</span><input disabled={rerunFieldLocked("solverRuntimeHours")} type="number" min="0" step="0.1" value={numberValue(draft.solverRuntimeHours)} onChange={(event) => updateNumber("solverRuntimeHours", event.target.value)} /></label><label><span>Spatial scheme</span><input disabled={rerunFieldLocked("spatialScheme")} value={draft.spatialScheme} onChange={(event) => updateText("spatialScheme", event.target.value)} /></label><label><span>Spatial order</span><input disabled={rerunFieldLocked("spatialOrder")} type="number" value={numberValue(draft.spatialOrder)} onChange={(event) => updateNumber("spatialOrder", event.target.value)} /></label><label><span>Numerical flux</span><input disabled={rerunFieldLocked("numericalFlux")} value={draft.numericalFlux} onChange={(event) => updateText("numericalFlux", event.target.value)} /></label><label><span>Limiter / filter / dissipation</span><input disabled={rerunFieldLocked("limiterFilter")} placeholder="Enter None if unused" value={draft.limiterFilter} onChange={(event) => updateText("limiterFilter", event.target.value)} /></label><label><span>Temporal scheme</span><input disabled={rerunFieldLocked("temporalScheme")} value={draft.temporalScheme} onChange={(event) => updateText("temporalScheme", event.target.value)} /></label><label><span>Temporal order</span><input disabled={rerunFieldLocked("temporalOrder")} type="number" value={numberValue(draft.temporalOrder)} onChange={(event) => updateNumber("temporalOrder", event.target.value)} /></label><label><span>Time step (Âµs)</span><input disabled={rerunFieldLocked("timeStepUs")} type="number" step="0.001" value={numberValue(draft.timeStepUs)} onChange={(event) => updateNumber("timeStepUs", event.target.value)} /></label><label><span>CFL</span><input disabled={rerunFieldLocked("cfl")} type="number" step="0.01" value={numberValue(draft.cfl)} onChange={(event) => updateNumber("cfl", event.target.value)} /></label></div></div>}
-
-      {!measuredPointDraft && <div className="form-section"><h3>Resolution + convergence</h3><div className="form-grid four"><label><span>Total mesh cells</span><input disabled={rerunFieldLocked("meshCells")} type="number" value={numberValue(draft.meshCells)} onChange={(event) => updateNumber("meshCells", event.target.value)} /></label><label><span>Minimum front cell (mm)</span><input disabled={rerunFieldLocked("minimumCellSizeMm")} type="number" step="0.001" value={numberValue(draft.minimumCellSizeMm)} onChange={(event) => updateNumber("minimumCellSizeMm", event.target.value)} /></label><label><span>Cells / induction length</span><input disabled={rerunFieldLocked("cellsPerInductionLength")} type="number" step="0.1" value={numberValue(draft.cellsPerInductionLength)} onChange={(event) => updateNumber("cellsPerInductionLength", event.target.value)} /></label><label><span>Near-wall cell (mm)</span><input disabled={rerunFieldLocked("nearWallCellSizeMm")} type="number" step="0.001" value={numberValue(draft.nearWallCellSizeMm)} onChange={(event) => updateNumber("nearWallCellSizeMm", event.target.value)} /></label><label><span>Documented mesh-study change (%) Â· optional</span><input disabled={rerunFieldLocked("meshConvergencePct")} type="number" step="0.1" value={numberValue(draft.meshConvergencePct)} onChange={(event) => updateNumber("meshConvergencePct", event.target.value)} /></label><label><span>Documented time-step-study change (%) Â· optional</span><input disabled={rerunFieldLocked("timeStepConvergencePct")} type="number" step="0.1" value={numberValue(draft.timeStepConvergencePct)} onChange={(event) => updateNumber("timeStepConvergencePct", event.target.value)} /></label></div></div>}
-
-      {!measuredPointDraft && <div className="form-section"><h3>Physics + boundaries</h3><div className="form-grid four"><label><span>Chemical mechanism</span><input disabled={rerunFieldLocked("chemistryModel")} value={draft.chemistryModel} onChange={(event) => updateText("chemistryModel", event.target.value)} /></label><label><span>Species</span><input disabled={rerunFieldLocked("chemistrySpecies")} type="number" value={numberValue(draft.chemistrySpecies)} onChange={(event) => updateNumber("chemistrySpecies", event.target.value)} /></label><label><span>Reactions</span><input disabled={rerunFieldLocked("chemistryReactions")} type="number" value={numberValue(draft.chemistryReactions)} onChange={(event) => updateNumber("chemistryReactions", event.target.value)} /></label><label><span>Chemistry integration</span><input disabled={rerunFieldLocked("chemistryIntegrator")} value={draft.chemistryIntegrator} onChange={(event) => updateText("chemistryIntegrator", event.target.value)} /></label><label><span>Turbulence model</span><input disabled={rerunFieldLocked("turbulenceModel")} placeholder="Enter None if unused" value={draft.turbulenceModel} onChange={(event) => updateText("turbulenceModel", event.target.value)} /></label><label><span>Combustion model</span><input disabled={rerunFieldLocked("combustionModel")} placeholder="Enter None if unused" value={draft.combustionModel} onChange={(event) => updateText("combustionModel", event.target.value)} /></label><label><span>Wall thermal condition</span><input disabled={rerunFieldLocked("wallBoundaryCondition")} value={draft.wallBoundaryCondition} onChange={(event) => updateText("wallBoundaryCondition", event.target.value)} /></label><label><span>Inlet treatment</span><input disabled={rerunFieldLocked("inletBoundaryCondition")} value={draft.inletBoundaryCondition} onChange={(event) => updateText("inletBoundaryCondition", event.target.value)} /></label><label><span>Inlet forcing method</span><input disabled={rerunFieldLocked("inletForcingMethod")} value={draft.inletForcingMethod} onChange={(event) => updateText("inletForcingMethod", event.target.value)} placeholder="None, synthetic, or measured history" /></label><label><span>Outlet treatment</span><input disabled={rerunFieldLocked("outletBoundaryCondition")} value={draft.outletBoundaryCondition} onChange={(event) => updateText("outletBoundaryCondition", event.target.value)} /></label><label><span>Ignition / initialization</span><input disabled={rerunFieldLocked("initializationMethod")} value={draft.initializationMethod} onChange={(event) => updateText("initializationMethod", event.target.value)} /></label></div></div>}
-
-      <div className="form-section"><h3>{measuredPointDraft ? "Experiment uncertainty" : "Experiment + CFD uncertainty"}</h3><div className="form-grid four"><label><span>Experiment pressure uncertainty (%)</span><input disabled={!measuredPointDraft || rerunFieldLocked("pressureUncertaintyPct")} type="number" step="0.1" value={numberValue(draft.pressureUncertaintyPct)} onChange={(event) => updateNumber("pressureUncertaintyPct", event.target.value)} /></label><label><span>Experiment timing uncertainty (Âµs)</span><input disabled={!measuredPointDraft || rerunFieldLocked("timingUncertaintyUs")} type="number" step="0.01" value={numberValue(draft.timingUncertaintyUs)} onChange={(event) => updateNumber("timingUncertaintyUs", event.target.value)} /></label>{!measuredPointDraft && <><label><span>CFD pressure uncertainty (%)</span><input disabled={rerunFieldLocked("cfdPressureUncertaintyPct")} type="number" step="0.1" value={numberValue(draft.cfdPressureUncertaintyPct)} onChange={(event) => updateNumber("cfdPressureUncertaintyPct", event.target.value)} /></label><label><span>CFD timing uncertainty (Âµs)</span><input disabled={rerunFieldLocked("cfdTimingUncertaintyUs")} type="number" step="0.01" value={numberValue(draft.cfdTimingUncertaintyUs)} onChange={(event) => updateNumber("cfdTimingUncertaintyUs", event.target.value)} /></label></>}</div></div>
-
-      {error && <p className="error-message">{error}</p>}<div className="modal-actions"><button className="button secondary" onClick={() => setShowLoader(false)}>Cancel</button><button className="button primary" onClick={measuredPointDraft ? applyMeasuredOperatingPoint : controlledRerunDraft ? reviewRerun : applyCase}>{measuredPointDraft ? "Add measured operating point â†’" : controlledRerunDraft ? "Review rerun â†’" : draftRelationship ? "Analyze rerun â†’" : "Analyze baseline CFD â†’"}</button></div>
-      </>}
-    </section></div>}
-
-    {showHelp && <div className="modal-backdrop help-backdrop" role="presentation" onMouseDown={() => setShowHelp(false)}><section className="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}>
-      <button className="close-button" onClick={() => setShowHelp(false)} aria-label="Close Kythros guide">Ã—</button><span className="modal-kicker">KYTHROS WORKFLOW GUIDE</span><h2 id="help-title">What Kythros does</h2><p>Kythros connects an RDE definition to a reviewable 2D CFD package, analyzes returned solver outputs, and preserves each controlled iteration. Experimental data are optional until physical validation.</p>
-      <div className="help-workflow" aria-label="Kythros workflow"><article><b>1</b><strong>Design</strong><span>Define the engine and operating range.</span></article><article><b>2</b><strong>Set up 2D</strong><span>Choose a speed preset and export the case.</span></article><article><b>3</b><strong>Run externally</strong><span>Complete and execute the CFD setup.</span></article><article><b>4</b><strong>Import result</strong><span>Return convergence, wave, feed, and thermal outputs.</span></article><article><b>5</b><strong>Improve</strong><span>Review the engine change and next simulation.</span></article></div>
-      <div className="help-boundary"><article><span>KYTHROS DOES</span><strong>Prepare and trace the workflow</strong><p>It generates geometry and case templates, records assumptions, analyzes returned results, and freezes the next controlled change.</p></article><article><span>THE CFD SOLVER DOES</span><strong>Calculate the reacting flow</strong><p>Kythros does not contain a validated RDE solver. An engineer must approve chemistry, boundaries, ignition, numerics, and convergence.</p></article></div>
-      <section className="help-workspaces"><h3>Choose the workspace</h3><div><article><strong>Design</strong><p>Create or revise the physical engine.</p></article><article><strong>2D Simulation</strong><p>Choose a preset, export the case, import the result, and receive engine and CFD actions.</p></article><article><strong>Envelope</strong><p>Track planned, CFD-only, and measured conditions.</p></article><article><strong>Experiment Validation</strong><p>Optionally compare CFD with hot-fire data when both exist.</p></article></div></section>
-      <details className="help-input-reference" open={showLoader}><summary>Detailed operating-point and CFD input reference</summary><p>Use documented values. Kythros leaves missing settings and uncertainty unavailable rather than inferring them.</p><div className="help-groups">{CASE_INPUT_HELP.map((group) => <section key={group.title} className="help-group"><div><h3>{group.title}</h3><p>{group.description}</p></div><dl>{group.items.map((item) => <div key={item.key} className="help-item"><dt>{item.label}<span className={`requirement-tag ${item.requirement.toLowerCase()}`}>{item.requirement}</span></dt><dd><p>{item.definition}</p><div className="help-details"><span><b>Format / units</b>{item.format}</span><span><b>Where to find it</b>{item.obtainFrom}</span><span><b>Used for</b>{item.usedFor}</span><span><b>If missing</b>{item.missingEffect}</span></div></dd></div>)}</dl></section>)}</div></details>
-      <div className="help-actions"><button className="button primary" onClick={() => setShowHelp(false)}>{showLoader ? "Back to inputs" : "Close guide"}</button></div>
-    </section></div>}
-  </main>;
-}
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíçn:é:-jZ.¶›­–)Ş³R'W6R6Æ–VçB#° ¦–×÷'B²6†ævTWfVçBÂW6TÖVÖòÂW6U7FFRÒg&öÒ'&V7B#°¦–×÷'B²v–ç7FÆÄ'WGFöâÒg&öÒ$ö6ö×öæVçG2÷vÖ–ç7FÆÂÖ'WGFöâ#°¦–×÷'B²&W77W&Tf–ÆTÖW"Òg&öÒ$ö6ö×öæVçG2÷&W77W&RÖf–ÆRÖÖW"#°¦–×÷'B²6öÇfW$Öæ–fW7D–×÷'FW"Òg&öÒ$ö6ö×öæVçG2÷6öÇfW"ÖÖæ–fW7BÖ–×÷'FW"#°¦–×÷'B²7F–Äf–VÆDÖW"Òg&öÒ$ö6ö×öæVçG2÷7F–ÂÖf–VÆBÖÖW"#°¦–×÷'B²&FU‡—6–75f—7VÂÒg&öÒ$ö6ö×öæVçG2÷&FR×‡—6–72×f—7VÂ#°¦–×÷'B²FW6–våÆææW"Òg&öÒ$ö6ö×öæVçG2öFW6–vâ×ÆææW"#°¦–×÷'B²÷W&F–ætVçfVÆ÷RÒg&öÒ$ö6ö×öæVçG2ö÷W&F–ærÖVçfVÆ÷R#°¦–×÷'B²6ö×&—6öä†–W&&6‡’Òg&öÒ$ö6ö×öæVçG2ö6ö×&—6öâÖ†–W&&6‡’#°¦–×÷'B²&÷7V7F—fUfÆ–FF–öäÆVFvW"Òg&öÒ$ö6ö×öæVçG2÷&÷7V7F—fR×fÆ–FF–öâÖÆVFvW"#°¦–×÷'B²V&Æ–4W‡W&–ÖVçD&Væ6†Ö&·2Òg&öÒ$ö6ö×öæVçG2÷V&Æ–2ÖW‡W&–ÖVçBÖ&Væ6†Ö&·2#°¦–×÷'B²&FS&Ev÷&·76RÒg&öÒ$ö6ö×öæVçG2÷&FRÓ&B×v÷&·76R#°¦–×÷'B²'V–ÆD66TFVÇFÂ'V–ÆD66T†—7F÷'”Wf–FVæ6RÂ66Tf–VÆDÆ&VÂÂ6VÆV7D–æFWVæFVçE&V6VFVçG2Â6VÆV7EÆææ–ætWf–FVæ6RÂ7VÖÖ&—¦T66RÂG—R66T†—7F÷'”Wf–FVæ6RÒg&öÒ$öÆ–"ö66RÖ†—7F÷'’#°¦–×÷'B°¢TÕE•ôÔUDDDÀ¢6ÆöæTÖWFFFÀ¢G—RæÇ—6—466RÀ¢G—R66U&VÆF–öç6†—À¢G—R66TÖWFFFÀ¢G—RF–ÖVç6–öæÆ—G’À¢G—R6Vç6—F—f—G•f&–&ÆRÀ§Òg&öÒ$öÆ–"ö6WfW&×G—W2#°¦–×÷'B²4ôåE$ôÄÄTEõ$ÔUDU%ôDTd”ä•D”ôå2Â4ôåE$ôÄÄTEõ$ÔUDU%2Â&ÖWFW$Æ&VÂÂG—R6öçG&öÆÆVE&ÖWFW"Òg&öÒ$öÆ–"ö6öçG&öÆÆVB×&ÖWFW'2#°¦–×÷'B²6ö×ÆWFU'VåÆâÂ7&VFTæW‡E'Våv÷&´÷&FW"Âg&VW¦U'VåÆâÂæW‡E'Våv÷&´÷&FW$f–ÆTæÖRÂ&V6öÖÖVæFF–öå6æ6†÷BÂ6ÖUv÷&´÷&FW$FVf–æ—F–öâÂG—Rg&÷¦Vå'VåÆâÒg&öÒ$öÆ–"öæW‡B×'Vâ×v÷&²Ö÷&FW"#°¦–×÷'B²VF—D6ö×&—6öå—&–ærÒg&öÒ$öÆ–"ö6ö×&—6öâ×—&–ær#°¦–×÷'B²'V–ÆD66T76W76ÖVçBÂG—R6öçG&öÆÆVDæW‡E'VâÂG—RF–væ÷7F–4Wf–FVæ6RÂG—RÖWG&–476W76ÖVçBÒg&öÒ$öÆ–"öF–væ÷7F–72#°¦–×÷'B²'V–ÆDFV6—6–öåVÆ—G’ÂG—RFV6—6–öåVÆ—G’Òg&öÒ$öÆ–"öFV6—6–öâ×VÆ—G’#°¦–×÷'B²´äõtÄTDtUô$4UõdU%4”ôâÂ6÷W&6W4f÷"ÂG—RF–væ÷7F–5&W6V&6„6Æ–ÒÂG—RF–væ÷7F–56÷W&6RÒg&öÒ$öÆ–"öF–væ÷7F–2Ö¶æ÷vÆVFvR#°¦–×÷'B²44Uô”åUEô„TÅÒg&öÒ$öÆ–"ö66RÖ–çWBÖ†VÇ#°¦–×÷'B²tdUôÔUD„ôEõ4õU$4U2Òg&öÒ$öÆ–"÷vfRÖÖWF†öB×6÷W&6W2#°¦–×÷'B²6Æ7VÆFTFW6–vâÂ÷W&F–æuö–çDÆ&VÂÂG—RVæv–æTFW6–vâÂG—R÷W&F–æuö–çBÂG—RÆææVD÷W&F–æuö–çBÒg&öÒ$öÆ–"öFW6–vâ×v÷&·76R#°¦–×÷'B²7&VFTVæv–æU&Wf—6–öâÂæ÷&ÖÆ—¦TVæv–æTFW6–vâÒg&öÒ$öÆ–"öVæv–æRÖÖæ–fW7B#°¦–×÷'B²'V–ÆD÷VäföÔæW‡E'Vä†æFöfbÒg&öÒ$öÆ–"ö6fB×'VâÖÖæ–fW7B#°¦–×÷'B²tUó##%ôDU4”tâÂtUó##%ôDU4”tåô”BÂ'V–ÆDvS##$÷W&F–æuö–çG2Òg&öÒ$öÆ–"÷V&Æ—6†VBÖVçfVÆ÷RÖFF#°¦–×÷'BG—R²ÖVE&ö&T–×÷'BÒg&öÒ$öÆ–"öFFÖ–×÷'B#°¦–×÷'B²T$Ä•4„TEõdÄ”DD”ôåõ4õU$4U2ÂT$Ä•4„TEõdÄ”DD”ôåõ5TÔÔ%’Â$uôDD4UEõdÄ”DD”ôåô44U2Òg&öÒ$öÆ–"÷V&Æ—6†VBÖ&Væ6†Ö&·2#°¦–×÷'B²FW6W&–Æ—¦Uv÷&·76RÂ6W&–Æ—¦Uv÷&·76RÂv÷&·76Tf–ÆTæÖRÒg&öÒ$öÆ–"÷v÷&·76R#°¦–×÷'B°¢äÅ•4•5õdU%4”ôâÀ¢$Ud”UuõD…$U4„ôÄE2À¢Ö¶TFVÖõ&ö&U6–væÇ2À¢G—R6ö×&—6öâÀ¢G—R6–væÂÀ§Òg&öÒ$öÆ–"÷&FRÖæÇ—6—2#°¦–×÷'B²æÇ—¦U&FU&ö&U6WBÂ6ö×&U&ö&U6WG2ÂG—R&FTÖöFU&W7VÇBÒg&öÒ$öÆ–"÷vfRÖG–æÖ–72#°¦–×÷'B²'V–ÆE‡—6–746ö×&—6öâÂ6fE‡—6–74g&öÔÖWFFFÂW‡W&–ÖVçE‡—6–74g&öÔÖWFFFÂ…•4”55ôUd”DTä4Uõ4õU$4U2Â…•4”55ôÔT5U$TÔTåEôDTd”ä•D”ôå2Â…•4”55õ4õU$4UôÄ”Ô•DD”ôâÂ‡—6–74ÖWFFFfÇVW2Òg&öÒ$öÆ–"÷‡—6–72ÖWf–FVæ6R#°¦–×÷'BG—R²vÆÄf–VÆD–×÷'BÒg&öÒ$öÆ–"÷7F–ÂÖf–VÆB#° ¦6öç7BDU5Eô4ôÄõ"Ò"3#Sƒ†"#°¦6öç7B4dEô4ôÄõ"Ò"3ccs–&B#°¦6öç7B$U4”ETÅô4ôÄõ"Ò"63ƒƒs6B#°¦6öç7B$U%TåôÅt•5ôTD•D$ÄUôd”TÄE3¢†¶W–öb66TÖWFFF•µÒÒ°¢&æÖR"Â'6öÇfW%'VçF–ÖT†÷W'2"Â&6fE&W77W&UVæ6W'F–çG•7B"Â&6fEF–Ö–æuVæ6W'F–çG•W2"À¢&6fDæWEF‡'W7Dâ"Â&6fE7V6–f–4–×VÇ6U2"Â&6fE&W77W&Tv–å7B"Â&6fD–æ¦V7F÷%&W77W&U&F–ò"À¢&6fD&6¶fÆ÷tg&7F–öå7B"Â&6fEvÆÄ†VDfÇW„ÕvÓ""Â&6fEVµvÆÅFV×W&GW&T²"Â&6fE7W7F–æVDGW&F–öå2"À¥Ó°¦6öç7BU…U$”ÔTåEôõtäTEôd”TÄE3¢†¶W–öb66TÖWFFF•µÒÒ°¢&æçVÇW4ÖVäF–ÖWFW$ÖÒ"Â&æçVÇW4F–ÖWFW%Væ6W'F–çG”ÖÒ"Â'&ö&U÷6—F–öç4FVr"Â&Ö†–×VÕvfT6÷VçB"Â'&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVB"À¢&W‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡¢"Â&W‡W&–ÖVçDf–ÇFW$7WFöfd´‡¢"Â&–æÆWE&W77W&T&""Â&–æÆWEFV×W&GW&T²"Â&WV—fÆVæ6U&F–ò"Â&Ö74fÆ÷t¶u2"À¢&&6µ&W77W&T&""Â'&W77W&UVæ6W'F–çG•7B"Â'F–Ö–æuVæ6W'F–çG•W2"À¢&W‡W&–ÖVçDæWEF‡'W7Dâ"Â&W‡W&–ÖVçE7V6–f–4–×VÇ6U2"Â&W‡W&–ÖVçE&W77W&Tv–å7B"Â&W‡W&–ÖVçD–æ¦V7F÷%&W77W&U&F–ò"À¢&W‡W&–ÖVçD&6¶fÆ÷tg&7F–öå7B"Â&W‡W&–ÖVçEvÆÄ†VDfÇW„ÕvÓ""Â&W‡W&–ÖVçEVµvÆÅFV×W&GW&T²"Â&W‡W&–ÖVçE7W7F–æVDGW&F–öå2"À¥Ó° ¦gVæ7F–öâf÷&ÖE‡—6–75fÇVR‡fÇVS¢çVÖ&W"ÂçVÆÂÂVæ—C¢7G&–ær’°¢–b‡fÇVRÓÓÒçVÆÂ’&WGW&â$æ÷B&÷f–FVB#°¢6öç7BF–v—G2ÒÖF‚æ'2‡fÇVR’ãÒò¢ÖF‚æ'2‡fÇVR’ãÒò"¢3°¢&WGW&âG·fÇVRçFôf—†VB†F–v—G2—ÒG·Væ—BòG·Væ—GÖ¢"'Ö°§Ğ ¦gVæ7F–öâ6ÆV$6fE‡—6–72†ÖWFFF¢66TÖWFFF’°¢f÷"†6öç7B—FVÒöb…•4”55ôÔT5U$TÔTåEôDTd”ä•D”ôå2’ÖWFFF¶—FVÒæ6fD¶W•ÒÒçVÖ&W"äæâ2æWfW#°§Ğ ¦gVæ7F–öâfW&vR‡fÇVW3¢çVÖ&W%µÒ’°¢6öç7Bf–æ—FRÒfÇVW2æf–ÇFW"„çVÖ&W"æ—4f–æ—FR“°¢&WGW&âf–æ—FRæÆVæwF‚òf–æ—FRç&VGV6R‚‡7VÒÂfÇVR’Óâ7VÒ²fÇVRÂ’òf–æ—FRæÆVæwF‚¢çVÖ&W"äæã°§Ğ ¦gVæ7F–öâÖWFFFfÇVTWVÂ†ÆVgC¢Væ¶æ÷vâÂ&–v‡C¢Væ¶æ÷vâ’°¢&WGW&â'&’æ—4'&’†ÆVgB’bb'&’æ—4'&’‡&–v‡B¢ò¥4ôâç7G&–æv–g’†ÆVgB’ÓÓÒ¥4ôâç7G&–æv–g’‡&–v‡B¢¢ö&¦V7Bæ—2†ÆVgBÂ&–v‡B“°§Ğ ¦gVæ7F–öâ6–væVB‡fÇVS¢çVÖ&W"ÂF–v—G3¢çVÖ&W"’°¢–b‚çVÖ&W"æ—4f–æ—FR‡fÇVR’’&WGW&â$æ÷Bf–Æ&ÆR#°¢–b„ÖF‚æ'2‡fÇVR’ÂãR¢¢¢ÖF–v—G2’&WGW&âƒ’çFôf—†VB†F–v—G2“°¢&WGW&âG·fÇVRâò"²"¢.(‰"'ÒG´ÖF‚æ'2‡fÇVR’çFôf—†VB†F–v—G2—Ö°§Ğ ¦gVæ7F–öâ÷WF6öÖTÆ&VÂ†Wf–FVæ6S¢66T†—7F÷'”Wf–FVæ6R’°¢–b†Wf–FVæ6Rç6WVVæ6U7FGW2ÓÓÒ&6öçfW&vVB"’&WGW&â$çVÖW&–6ÆÇ’6öçfW&vVB#°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'7W÷'G2"bb²&ÖW6‚"Â'F–ÖR×7FW%Òæ–æ6ÇVFW2†Wf–FVæ6Ræ6†ævVEf&–&ÆR’’&WGW&â$çVÖW&–6Â6Vç6—F—f—G’f÷VæB#°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'7W÷'G2"’&WGW&â%7W÷'G2W‡ÆæF–öâ#°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'vV¶Vç2"’&WGW&â$FöW2æ÷B7W÷'BW‡ÆæF–öâ#°¢&WGW&â$–æ6öæ6ÇW6—fR#°§Ğ ¦gVæ7F–öâ÷WF6öÖUFöæR†Wf–FVæ6S¢66T†—7F÷'”Wf–FVæ6R“¢FV6—6–öå7VÖÖ'•²'FöæR%Ò°¢–b†Wf–FVæ6Rç6WVVæ6U7FGW2ÓÓÒ&6öçfW&vVB"’&WGW&â&6öçfW&vVB#°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'7W÷'G2"’&WGW&â&6öæf—&ÖVB#°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'vV¶Vç2"’&WGW&â'&V¦V7FVB#°¢&WGW&â&–æ6öæ6ÇW6—fR#°§Ğ ¦gVæ7F–öâÆFW7E&W7VÇDÆ&VÂ‡7FGW3¢6öçG&öÆÆVDæW‡E'Vå²&ÆFW7D6öçG&öÆÆVE&W7VÇB%Õ²'7FGW2%ÒÂöÆ–7“¢6öçG&öÆÆVDæW‡E'Vå²&FV6—6–öåöÆ–7’%Ò’°¢–b‡7FGW2ÓÓÒ$6öæf—&ÖVB"’&WGW&âöÆ–7’æWfÇVF–öäÖöFRÓÓÒ&çVÖW&–6ÂÖ6öçfW&vVæ6R"ò$çVÖW&–6Â6Vç6—F—f—G’f÷VæB"¢%7W÷'G2W‡ÆæF–öâ#°¢–b‡7FGW2ÓÓÒ$6öçfW&vVB"’&WGW&â$çVÖW&–6ÆÇ’6öçfW&vVB#°¢–b‡7FGW2ÓÓÒ%&V¦V7FVB"’&WGW&â$FöW2æ÷B7W÷'BW‡ÆæF–öâ#°¢&WGW&â7FGW3°§Ğ ¦gVæ7F–öâ6†ævTÆ&VÂ‡f&–&ÆS¢6Vç6—F—f—G•f&–&ÆR’°¢&WGW&âf&–&ÆRÓÓÒ'F–ÖR×7FW"ò%F–ÖR×7FW"¢f&–&ÆRæ6†$Bƒ’çFõWW$66R‚’²f&–&ÆRç6Æ–6Rƒ“°§Ğ ¦gVæ7F–öâ÷WF6öÖTÖVæ–ær†Wf–FVæ6S¢66T†—7F÷'”Wf–FVæ6R’°¢–b†Wf–FVæ6Rç6WVVæ6U7FGW2ÓÓÒ&6öçfW&vVB"’&WGW&â¶VWG¶Wf–FVæ6Ræ66TæÖWÒâF†RçVÖW&–6Â6WGF–ær76VBF†R6öçfW&vVæ6R'VÆRÂ6òF†RæW‡BVç&W6öÇfVBW‡ÆæF–öâ6âæ÷r&RFW7FVBæ°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'7W÷'G2"bbWf–FVæ6RçÆäF—7÷6—F–öâÓÓÒ&6öçF–çVR"’&WGW&â¶VWG¶Wf–FVæ6Ræ66TæÖWÒâF†R6†ævVBçVÖW&–6Â6WGF–ær7F–ÆÂffV7G2F†R4dB&W7VÇBÂ6ò'VâF†RæW‡BF¦6VçBÆWfVÂ&Vf÷&R6†æv–ærF†R‡—6–72æ°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'7W÷'G2"’&WGW&â¶VWG¶Wf–FVæ6Ræ66TæÖWÒâF†—2öæRÖ6†ævR&W7VÇB7W÷'G2F†RFW7FVBW‡ÆæF–öâÂ6òF†RæW‡BVç&W6öÇfVBW‡ÆæF–öâ6âæ÷r&RFW7FVBæ°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'vV¶Vç2"’&WGW&âFòæ÷B¶VWF†RFW7FVB6†ævRâ&WGW&âFòG¶Wf–FVæ6Rç&VfW&Væ6T66TæÖWÒæBFW7BF†RæW‡BVç&W6öÇfVBW‡ÆæF–öâæ°¢&WGW&âFòæ÷B¶VWF†RFW7FVB6†ævR–WBâ&WVBg&öÒG¶Wf–FVæ6Rç&VfW&Væ6T66TæÖWÒv—F‚6ÆV&W"öæR×f&–&ÆRF–ffW&Væ6Ræ°§Ğ ¦gVæ7F–öâ6öæ6—6T÷WF6öÖTFWF–Â†Wf–FVæ6S¢66T†—7F÷'”Wf–FVæ6R’°¢–b†Wf–FVæ6Rç6WVVæ6U7FGW2ÓÓÒ&6öçfW&vVB"bbçVÖ&W"æ—4f–æ—FR†Wf–FVæ6Ræ–æ7&VÖVçFÅ&W7öç6U7B’’&WGW&âF&vWFVB4dBfÇVW26†ævVBG¶Wf–FVæ6Ræ–æ7&VÖVçFÅ&W7öç6U7BçFôf—†VBƒ—ÒR&WGvVVâF¦6VçBÆWfVÇ2+r6öçfW&vVæ6R'VÆR76VF°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'7W÷'G2"bbçVÖ&W"æ—4f–æ—FR†Wf–FVæ6RæW'&÷%&VGV7F–öå7B’’&WGW&âÖVâF&vWFVB4dB×FòÖW‡W&–ÖVçBW'&÷"fVÆÂG´ÖF‚æ'2†Wf–FVæ6RæW'&÷%&VGV7F–öå7B’çFôf—†VBƒ—ÒRG¶Wf–FVæ6RææWtÖ—6ÖF6„ÖWG&–4–G3òæÆVæwF‚ò"+ræWrÖ—6ÖF6‚V&VB"¢"+ræòæWrÖ—6ÖF6‚V&VB'Ö°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'vV¶Vç2"bbçVÖ&W"æ—4f–æ—FR†Wf–FVæ6Rç&W7öç6TÖvæ—GVFU7B’’&WGW&âF&vWFVB4dBfÇVW26†ævVBG¶Wf–FVæ6Rç&W7öç6TÖvæ—GVFU7BçFôf—†VBƒ—ÒR+r&V¦V7F–öâ'VÆRv2ÖWF°¢–b†Wf–FVæ6Rç7FFRÓÓÒ'Væ¶æ÷vâ"bbçVÖ&W"æ—4f–æ—FR†Wf–FVæ6Rç&W7öç6TÖvæ—GVFU7B’’&WGW&âF&vWFVB4dBfÇVW26†ævVBG¶Wf–FVæ6Rç&W7öç6TÖvæ—GVFU7BçFôf—†VBƒ—ÒR+ræò6Æ76–f–6F–öâ'VÆRv2ÖWF°¢&WGW&âWf–FVæ6Ræ6öçG&öÆÆVBòWf–FVæ6RæFWF–Âç7Æ—B‚"â"•³Ò¢Wf–FVæ6Rç&VÆF–öç6†——77VW5³Òóò%F†RöæRÖ6†ævR&VÆF–öç6†—6÷VÆBæ÷B&RfW&–f–VB#°§Ğ ¦gVæ7F–öâ6ö×&—6öäöæÇ”ÖVæ–ær†Wf–FVæ6S¢66T†—7F÷'”Wf–FVæ6R’°¢6öç7B—77VW2ÒWf–FVæ6Rç&VÆF–öç6†——77VW2æÆVæwF‚òWf–FVæ6Rç&VÆF–öç6†——77VW2æ¦ö–â‚""’¢%F†RFV6Æ&VB&VÆF–öç6†—6÷VÆBæ÷B&RfW&–f–VBâ#°¢&WGW&â·—F‡&÷2F–Bæ÷BW6RF†—2&W'VâFòWFFRF†RÆââG¶—77VW7Ö°§Ğ ¦gVæ7F–öâWf–FVæ6T&6—4Æ&VÂ†&6—3¢F–væ÷7F–4Wf–FVæ6U²&&6—2%Ò’°¢–b†&6—2ÓÓÒ&66RÖ†—7F÷'’"’&WGW&â$6Æ7VÆFVBg&öÒ&VÆFVBöæRÖ6†ævR&W'Vâ#°¢–b†&6—2ÓÓÒ&Æ—FW&GW&R"’&WGW&â%7W÷'FVB'’V&Æ—6†VB&W6V&6‚#°¢–b†&6—2ÓÓÒ'öÆ–7’"’&WGW&â%&W7VÇB7F–ÆÂ&WV—&VB#°¢&WGW&â$6Æ7VÆFVBg&öÒF†—2'Vâ#°§Ğ ¦gVæ7F–öâWf–FVæ6TÆVFvW$6öÇVÖâ‡°¢F—FÆRÀ¢V×G”ÖW76vRÀ¢—FV×2À¢FöæRÀ§Ó¢°¢F—FÆS¢7G&–æs°¢V×G”ÖW76vS¢7G&–æs°¢—FV×3¢F–væ÷7F–4Wf–FVæ6UµÓ°¢FöæS¢'7W÷'G2"Â'vV¶Vç2"Â'Væ¶æ÷vç2#°§Ò’°¢&WGW&âÆ'F–6ÆR6Æ74æÖS×¶&V6öæ–ærÖ6öÇVÖâ&V6öæ–ærÒG·FöæWÖÓà¢Æ†VFW#ãÇ7ãç·F—FÆWÓÂ÷7ããÆ#ç¶—FV×2æÆVæwF‡ÓÂö#ãÂö†VFW#à¢¶—FV×2æÆVæwF‚òÇVÃç¶—FV×2ç6Æ–6RƒÂ"’æÖ‚†—FVÒÂ–æFW‚’ÓâÆÆ’¶W“×¶G¶—FVÒæ&6—7ÒÒG¶—FVÒæö'6W'fF–öçÒÒG¶–æFW‡ÖÓà¢Ç6ÖÆÃç¶Wf–FVæ6T&6—4Æ&VÂ†—FVÒæ&6—2—ÓÂ÷6ÖÆÃà¢Ç7G&öæsç¶—FVÒæö'6W'fF–öçÓÂ÷7G&öæsà¢ÂöÆ“â—ÓÂ÷VÃâ¢ÆF—b6Æ74æÖSÒ'&V6öæ–ærÖV×G’#ç¶V×G”ÖW76vWÓÂöF—cçĞ¢¶—FV×2æÆVæwF‚â"bbÇ6ÖÆÂ6Æ74æÖSÒ'&V6öæ–ærÖÖ÷&R#â·¶—FV×2æÆVæwF‚Ò'ÒÖ÷&Rf–æF–æw2–âF†R&W÷'CÂ÷6ÖÆÃçĞ¢Âö'F–6ÆSã°§Ğ ¦gVæ7F–öâ&W6V&6„&6—2‡²6Æ–×2Â6÷W&6W2Ó¢²6Æ–×3¢F–væ÷7F–5&W6V&6„6Æ–ÕµÓ²6÷W&6W3¢F–væ÷7F–56÷W&6UµÒÒ’°¢&WGW&âÆFWF–Ç26Æ74æÖSÒ'&W6V&6‚Ö&6—2#à¢Ç7VÖÖ'“å&W6V&6‚7W÷'F–ærF†—2FW7B+r·6÷W&6W2æÆVæwF‚òG·6÷W&6W2æÆVæwF‡ÒV&Æ—6†VB6÷W&6RG·6÷W&6W2æÆVæwF‚ÓÓÒò""¢'2'Ö¢&æòF—&V7FÇ’Æ–6&ÆRW"'ÓÂ÷7VÖÖ'“à¢¶6Æ–×2æÆVæwF‚òÆF—b6Æ74æÖSÒ'&W6V&6‚Ö6Æ–×2#ç¶6Æ–×2æÖ‚†6Æ–Ò’Óâ°¢6öç7B6Æ–Õ6÷W&6W2Ò6÷W&6W4f÷"†6Æ–Òç6÷W&6T–G2“°¢&WGW&âÆ'F–6ÆR¶W“×¶6Æ–Òç7FFVÖVçGÓà¢Çç¶6Æ–Òç7FFVÖVçGÓÂ÷à¢ÆF—cç¶6Æ–Õ6÷W&6W2æÖ‚‡6÷W&6R’ÓâÆ¶W“×·6÷W&6Ræ–GÒ‡&Vc×·6÷W&6RçW&ÇÒF&vWCÒ%ö&Ææ²"&VÃÒ&æ÷&VfW'&W"#ç·6÷W&6RæWF†÷'2ç7Æ—B‚#²"•³×Ò‡·6÷W&6Rç–V'Ò“Âöâ—ÓÂöF—cà¢Ç6ÖÆÃåv†BF†R&W6V&6‚FöW2æ÷BW7F&Æ—6ƒ¢¶6Æ–Òæ&÷VæF'—ÓÂ÷6ÖÆÃà¢Âö'F–6ÆSã°¢Ò—ÓÂöF—câ¢Ç6Æ74æÖSÒ'&W6V&6‚×VæÖVB#äæòV&Æ—6†VBW"—2ÖVBFòF†—27V6–f–2&V6öÖÖVæFF–öââ·—F‡&÷2G&VG2—B2&÷F÷G—R&öGV7B'VÆRÂæ÷B&W6V&6‚6öæ6ÇW6–öâãÂ÷çĞ¢ÂöFWF–Ç3ã°§Ğ §G—RæÇ—6—4–çWE7VÖÖ'’Ò°¢6÷W&6S¢æÇ—6—466U²'6÷W&6R%Ó°¢W‡W&–ÖVçE6×ÆW3¢çVÖ&W#°¢6fE6×ÆW3¢çVÖ&W#°¢&ö&T6÷VçC¢çVÖ&W#°¢W‡W&–ÖVçDæÖS¢7G&–æs°¢6fDæÖS¢7G&–æs°§Ó° ¦gVæ7F–öâ7VÖÖ&—¦TæÇ—6—4–çWB†—FVÓ¢æÇ—6—466RÂçVÆÂ“¢æÇ—6—4–çWE7VÖÖ'’°¢&WGW&â°¢6÷W&6S¢—FVÓòç6÷W&6Róò'WÆöFVB"À¢W‡W&–ÖVçE6×ÆW3¢—FVÓòçFW7E6–væÇ2ç&VGV6R‚‡7VÒÂ6–væÂ’Óâ7VÒ²6–væÂç&W77W&RæÆVæwF‚Â’óòÀ¢6fE6×ÆW3¢—FVÓòæ6fE6–væÇ2ç&VGV6R‚‡7VÒÂ6–væÂ’Óâ7VÒ²6–væÂç&W77W&RæÆVæwF‚Â’óòÀ¢&ö&T6÷VçC¢—FVÓòçFW7E6–væÇ2æÆVæwF‚óòÀ¢W‡W&–ÖVçDæÖS¢—FVÓòæ–×÷'G3òæW‡W&–ÖVçBæf–ÆTæÖRóò—FVÓòçFW7E6–væÇ5³ÓòææÖRç7Æ—B‚"+r"•³Òóò$W‡W&–ÖVçBFF"À¢6fDæÖS¢—FVÓòæ–×÷'G3òæ6fBæf–ÆTæÖRóò—FVÓòæ6fE6–væÇ5³ÓòææÖRç7Æ—B‚"+r"•³Òóò$4dBFF"À¢Ó°§Ğ §G—RFV6—6–öå7VÖÖ'’Ò°¢Æ&VÃ¢7G&–æs°¢ÆVC¢7G&–æs°¢F—FÆS¢7G&–æs°¢ÖVæ–æs¢7G&–æs°¢FWF–Ã¢7G&–ærÂçVÆÃ°¢FöæS¢&æWWG&Â"Â&6öæf—&ÖVB"Â&6öçfW&vVB"Â'&V¦V7FVB"Â&–æ6öæ6ÇW6—fR#°§Ó° ¦gVæ7F–öâÖWG&–4F–v—G2†ÖWG&–3¢ÖWG&–476W76ÖVçB’°¢–b…²&g&WVVæ7’"Â&×Æ—GVFR"Â'V²×&W77W&R"Â&ÖVâ×&W77W&R"Â&–×VÇ6R%Òæ–æ6ÇVFW2†ÖWG&–2æ–B’’&WGW&âÖWG&–2æ–BÓÓÒ&g&WVVæ7’"ò"¢3°¢–b†ÖWG&–2æ–BÓÓÒ'7VVB"’&WGW&â°¢–b†ÖWG&–2æ–BÓÓÒ'&—6R×F–ÖR"’&WGW&â°¢–b†ÖWG&–2æ–BÓÓÒ&†&Ööæ–72"’&WGW&â3°¢–b…²&7–6ÆR×f&–&–Æ—G’"Â'†6R×GFW&â"Â&g&WVVæ7’ÖG&–gB"Â'†6RÖ¦—GFW"%Òæ–æ6ÇVFW2†ÖWG&–2æ–B’’&WGW&â°¢&WGW&â°§Ğ ¦gVæ7F–öâf÷&ÖDÖWG&–5fÇVR†ÖWG&–3¢ÖWG&–476W76ÖVçBÂfÇVS¢çVÖ&W"Â7G&–ær’°¢–b‡G—VöbfÇVRÓÓÒ'7G&–ær"’&WGW&âfÇVS°¢–b‚çVÖ&W"æ—4f–æ—FR‡fÇVR’’&WGW&â$æ÷B76W76VB#°¢6öç7BF–v—G2ÒÖWG&–4F–v—G2†ÖWG&–2“°¢–b†ÖWG&–2æ–BÓÓÒ&7–6ÆR×f&–&–Æ—G’"’&WGW&âG·fÇVRçFôf—†VB†F–v—G2—ÒV°¢&WGW&âG·fÇVRçFôf—†VB†F–v—G2—ÒG¶ÖWG&–2çVæ—BòG¶ÖWG&–2çVæ—GÖ¢"'Ö°§Ğ ¦gVæ7F–öâf÷&ÖDÖWG&–4F–ffW&Væ6R†ÖWG&–3¢ÖWG&–476W76ÖVçB’°¢–b‡G—VöbÖWG&–2æF–ffW&Væ6RÓÓÒ'7G&–ær"’&WGW&âÖWG&–2æF–ffW&Væ6S°¢6öç7B'6öÇWFRÒÖWG&–2æ–BÓÓÒ&7–6ÆR×f&–&–Æ—G’ ¢òG·6–væVB†ÖWG&–2æF–ffW&Væ6RÂÖWG&–4F–v—G2†ÖWG&–2’—ÒF ¢¢G·6–væVB†ÖWG&–2æF–ffW&Væ6RÂÖWG&–4F–v—G2†ÖWG&–2’—ÒG¶ÖWG&–2çVæ—BòG¶ÖWG&–2çVæ—GÖ¢"'Ö°¢&WGW&âÖWG&–2çW&6VçDF–ffW&Væ6RÓÓÒçVÆÂÇÂçVÖ&W"æ—4f–æ—FR†ÖWG&–2çW&6VçDF–ffW&Væ6R¢ò'6öÇWFP¢¢G¶'6öÇWFWÒ‚G·6–væVB†ÖWG&–2çW&6VçDF–ffW&Væ6RÂ—ÒR–°§Ğ ¦gVæ7F–öâöÇ–Æ–æUö–çG2‡fÇVW3¢çVÖ&W%µÒÂv–GFƒ¢çVÖ&W"Â†V–v‡C¢çVÖ&W"ÂÖ–ã¢çVÖ&W"ÂÖƒ¢çVÖ&W"ÂÆVgBÒÂF÷Ò’°¢6öç7B&ævRÒÖF‚æÖ‚†Ö‚ÒÖ–âÂRÓ’“°¢&WGW&âfÇVW2æÖ‚‡fÇVRÂ–æFW‚’Óâ°¢6öç7B‚ÒÆVgB²†–æFW‚òÖF‚æÖ‚‡fÇVW2æÆVæwF‚ÒÂ’’¢v–GFƒ°¢6öç7B’ÒF÷²†V–v‡BÒ‚‡fÇVRÒÖ–â’ò&ævR’¢†V–v‡C°¢&WGW&âG·‚çFôf—†VBƒ"—ÒÂG·’çFôf—†VBƒ"—Ö°¢Ò’æ¦ö–â‚""“°§Ğ ¦gVæ7F–öâÆ÷Dw&–B‡²ÆVgBÂF÷Âv–GF‚Â†V–v‡BÓ¢²ÆVgC¢çVÖ&W#²F÷¢çVÖ&W#²v–GFƒ¢çVÖ&W#²†V–v‡C¢çVÖ&W"Ò’°¢&WGW&âÃà¢´'&’æg&öÒ‡²ÆVæwFƒ¢rÒÂ…òÂ–æFW‚’ÓâÆÆ–æR¶W“×¶bÒG¶–æFW‡ÖÒƒ×¶ÆVgB²–æFW‚¢v–GF‚ògÒ“×·F÷Òƒ#×¶ÆVgB²–æFW‚¢v–GF‚ògÒ“#×·F÷²†V–v‡GÒ6Æ74æÖSÒ&w&–BÖÆ–æR"óâ—Ğ¢´'&’æg&öÒ‡²ÆVæwFƒ¢RÒÂ…òÂ–æFW‚’ÓâÆÆ–æR¶W“×¶‚ÒG¶–æFW‡ÖÒƒ×¶ÆVgGÒ“×·F÷²–æFW‚¢†V–v‡BòGÒƒ#×¶ÆVgB²v–GF‡Ò“#×·F÷²–æFW‚¢†V–v‡BòGÒ6Æ74æÖSÒ&w&–BÖÆ–æR"óâ—Ğ¢Âóã°§Ğ ¦gVæ7F–öâ6–væÄ6†'B‡²6ö×&—6öâÓ¢²6ö×&—6öã¢6ö×&—6öâÒ’°¢6öç7BÆÂÒ²ââæ6ö×&—6öâçFW7BÂââæ6ö×&—6öâæ6fEÓ°¢6öç7BÖ–æ–×VÒÒÖF‚æÖ–â‚ââæÆÂ“°¢6öç7BÖ†–×VÒÒÖF‚æÖ‚‚ââæÆÂ“°¢6öç7BÖ–FFÆRÒ†Ö–æ–×VÒ²Ö†–×VÒ’ò#°¢6öç7B7F'BÒ6ö×&—6öâçF–ÖU³Òóò°¢6öç7BVæBÒ6ö×&—6öâçF–ÖRæB‚Ó’óò°¢6öç7BÆVgBÒ“c²6öç7BF÷Òc²6öç7Bv–GF‚Òs3C²6öç7B†V–v‡BÒ#3c°¢&WGW&âÆF—b6Æ74æÖSÒ&6†'B"&öÆSÒ&–Ör"&–ÖÆ&VÃÒ$Æ–væVBW‡W&–ÖVçFÂæB4dB&W77W&R†—7F÷&–W2#à¢Ç7frf–Wt&÷ƒÒ#ƒc3#B#à¢ÅÆ÷Dw&–BÆVgC×¶ÆVgGÒF÷×·F÷Òv–GFƒ×·v–GF‡Ò†V–v‡C×¶†V–v‡GÒóà¢ÇöÇ–Æ–æR6Æ74æÖSÒ'6W&–W2Ö6fB"ö–çG3×·öÇ–Æ–æUö–çG2†6ö×&—6öâæ6fBÂv–GF‚Â†V–v‡BÂÖ–æ–×VÒÂÖ†–×VÒÂÆVgBÂF÷—Òf–ÆÃÒ&æöæR"7G&ö¶S×´4dEô4ôÄõ'ÒfV7F÷$VffV7CÒ&æöâ×66Æ–ær×7G&ö¶R"óà¢ÇöÇ–Æ–æR6Æ74æÖSÒ'6W&–W2ÖW‡W&–ÖVçB"ö–çG3×·öÇ–Æ–æUö–çG2†6ö×&—6öâçFW7BÂv–GF‚Â†V–v‡BÂÖ–æ–×VÒÂÖ†–×VÒÂÆVgBÂF÷—Òf–ÆÃÒ&æöæR"7G&ö¶S×µDU5Eô4ôÄõ'ÒfV7F÷$VffV7CÒ&æöâ×66Æ–ær×7G&ö¶R"óà¢ÇFW‡BƒÒ#ƒ""“×·F÷²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶Ö†–×VÒçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡BƒÒ#ƒ""“×·F÷²†V–v‡Bò"²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶Ö–FFÆRçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡BƒÒ#ƒ""“×·F÷²†V–v‡B²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶Ö–æ–×VÒçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgGÒ“Ò##s‚"6Æ74æÖSÒ&†—2×fÇVR#ç·7F'BçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgB²v–GF‡Ò“Ò##s‚"FW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶VæBçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgB²v–GF‚ò'Ò“Ò#32"FW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#åD”ÔR†×2“Â÷FW‡Cà¢ÇFW‡BƒÒ##""“×·F÷²†V–v‡Bò'ÒG&ç6f÷&Ó×¶&÷FFR‚Ó“#"G·F÷²†V–v‡Bò'Ò–ÒFW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#å$U55U$R„Õ“Â÷FW‡Cà¢Â÷7fsà¢ÂöF—cã°§Ğ ¦gVæ7F–öâ7V7G'VÔ6†'B‡²6ö×&—6öâÓ¢²6ö×&—6öã¢6ö×&—6öâÒ’°¢6öç7BÖ†–×VÔg&WVVæ7’ÒÖF‚æÖ–â„ÖF‚æÖ‚†6ö×&—6öâçFW7Dg&WVVæ7’Â6ö×&—6öâæ6fDg&WVVæ7’’¢"ã"Â6ö×&—6öâçFW7E7V7G'VÒæg&WVVæ7’æB‚Ó’óò#“°¢6öç7BG&–ÒÒ†FF¢²g&WVVæ7“¢çVÖ&W%µÓ²×Æ—GVFS¢çVÖ&W%µÒÒ’ÓâFFæ×Æ—GVFP¢æÖ‚‡fÇVRÂ–æFW‚’Óâ‡²g&WVVæ7“¢FFæg&WVVæ7•¶–æFW…ÒÂfÇVS¢ÖF‚æÆös„ÖF‚æÖ‚‡fÇVRÂRÓR’’Ò’¢æf–ÇFW"‚‡ö–çB’Óâö–çBæg&WVVæ7’ÃÒÖ†–×VÔg&WVVæ7’“°¢6öç7BFW7BÒG&–Ò†6ö×&—6öâçFW7E7V7G'VÒ’æÖ‚‡ö–çB’Óâö–çBçfÇVR“°¢6öç7B6fBÒG&–Ò†6ö×&—6öâæ6fE7V7G'VÒ’æÖ‚‡ö–çB’Óâö–çBçfÇVR“°¢6öç7BÆÂÒ²ââçFW7BÂââæ6fEÓ°¢6öç7BÖ–æ–×VÒÒÖF‚æÖ–â‚ââæÆÂ“²6öç7BÖ†–×VÒÒÖF‚æÖ‚‚ââæÆÂ“°¢6öç7BÖ–FFÆRÒ†Ö–æ–×VÒ²Ö†–×VÒ’ò#°¢6öç7BÆVgBÒ“c²6öç7BF÷Òc²6öç7Bv–GF‚Òs3C²6öç7B†V–v‡BÒ#3c°¢&WGW&âÆF—b6Æ74æÖSÒ&6†'B"&öÆSÒ&–Ör"&–ÖÆ&VÃÒ$W‡W&–ÖVçFÂæB4dB&W77W&R7V7G&#à¢Ç7frf–Wt&÷ƒÒ#ƒc3#B#à¢ÅÆ÷Dw&–BÆVgC×¶ÆVgGÒF÷×·F÷Òv–GFƒ×·v–GF‡Ò†V–v‡C×¶†V–v‡GÒóà¢ÇöÇ–Æ–æR6Æ74æÖSÒ'6W&–W2Ö6fB"ö–çG3×·öÇ–Æ–æUö–çG2†6fBÂv–GF‚Â†V–v‡BÂÖ–æ–×VÒÂÖ†–×VÒÂÆVgBÂF÷—Òf–ÆÃÒ&æöæR"7G&ö¶S×´4dEô4ôÄõ'ÒfV7F÷$VffV7CÒ&æöâ×66Æ–ær×7G&ö¶R"óà¢ÇöÇ–Æ–æR6Æ74æÖSÒ'6W&–W2ÖW‡W&–ÖVçB"ö–çG3×·öÇ–Æ–æUö–çG2‡FW7BÂv–GF‚Â†V–v‡BÂÖ–æ–×VÒÂÖ†–×VÒÂÆVgBÂF÷—Òf–ÆÃÒ&æöæR"7G&ö¶S×µDU5Eô4ôÄõ'ÒfV7F÷$VffV7CÒ&æöâ×66Æ–ær×7G&ö¶R"óà¢ÇFW‡BƒÒ#ƒ""“×·F÷²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶Ö†–×VÒçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡BƒÒ#ƒ""“×·F÷²†V–v‡Bò"²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶Ö–FFÆRçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡BƒÒ#ƒ""“×·F÷²†V–v‡B²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶Ö–æ–×VÒçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgGÒ“Ò##s‚"6Æ74æÖSÒ&†—2×fÇVR#ãÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgB²v–GF‚ò'Ò“Ò##s‚"FW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×fÇVR#ç²†Ö†–×VÔg&WVVæ7’ò"’çFôf—†VBƒ—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgB²v–GF‡Ò“Ò##s‚"FW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶Ö†–×VÔg&WVVæ7’çFôf—†VBƒ—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgB²v–GF‚ò'Ò“Ò#32"FW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#äe$UTTä5’†´‡¢“Â÷FW‡Cà¢ÇFW‡BƒÒ##""“×·F÷²†V–v‡Bò'ÒG&ç6f÷&Ó×¶&÷FFR‚Ó“#"G·F÷²†V–v‡Bò'Ò–ÒFW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#äÄôrÕÄ•ETDSÂ÷FW‡Cà¢Â÷7fsà¢ÂöF—cã°§Ğ ¦gVæ7F–öâ&W6–GVÄ6†'B‡²6ö×&—6öâÓ¢²6ö×&—6öã¢6ö×&—6öâÒ’°¢6öç7B&W6–GVÂÒ6ö×&—6öâçFW7BæÖ‚‡fÇVRÂ–æFW‚’ÓâfÇVRÒ6ö×&—6öâæ6fE¶–æFW…Ò“°¢6öç7B&÷VæBÒÖF‚æÖ‚‚ââç&W6–GVÂæÖ„ÖF‚æ'2’ÂRÓB“°¢6öç7B7F'BÒ6ö×&—6öâçF–ÖU³Òóò²6öç7BVæBÒ6ö×&—6öâçF–ÖRæB‚Ó’óò°¢6öç7BÆVgBÒ“c²6öç7BF÷Òc²6öç7Bv–GF‚Òs3C²6öç7B†V–v‡BÒ#3c°¢&WGW&âÆF—b6Æ74æÖSÒ&6†'B"&öÆSÒ&–Ör"&–ÖÆ&VÃÒ$W‡W&–ÖVçFÂ&W77W&RÖ–çW24dB&W77W&R&W6–GVÂ#à¢Ç7frf–Wt&÷ƒÒ#ƒc3#B#à¢ÅÆ÷Dw&–BÆVgC×¶ÆVgGÒF÷×·F÷Òv–GFƒ×·v–GF‡Ò†V–v‡C×¶†V–v‡GÒóà¢ÆÆ–æRƒ×¶ÆVgGÒ“×·F÷²†V–v‡Bò'Òƒ#×¶ÆVgB²v–GF‡Ò“#×·F÷²†V–v‡Bò'Ò6Æ74æÖSÒ'¦W&òÖÆ–æR"óà¢ÇöÇ–Æ–æR6Æ74æÖSÒ'6W&–W2×&W6–GVÂ"ö–çG3×·öÇ–Æ–æUö–çG2‡&W6–GVÂÂv–GF‚Â†V–v‡BÂÖ&÷VæBÂ&÷VæBÂÆVgBÂF÷—Òf–ÆÃÒ&æöæR"7G&ö¶S×µ$U4”ETÅô4ôÄõ'ÒfV7F÷$VffV7CÒ&æöâ×66Æ–ær×7G&ö¶R"óà¢ÇFW‡BƒÒ#ƒ""“×·F÷²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#â·¶&÷VæBçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡BƒÒ#ƒ""“×·F÷²†V–v‡Bò"²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ãÂ÷FW‡Cà¢ÇFW‡BƒÒ#ƒ""“×·F÷²†V–v‡B²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#î(‰'¶&÷VæBçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgGÒ“Ò##s‚"6Æ74æÖSÒ&†—2×fÇVR#ç·7F'BçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgB²v–GF‡Ò“Ò##s‚"FW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶VæBçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgB²v–GF‚ò'Ò“Ò#32"FW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#åD”ÔR†×2“Â÷FW‡Cà¢ÇFW‡BƒÒ##""“×·F÷²†V–v‡Bò'ÒG&ç6f÷&Ó×¶&÷FFR‚Ó“#"G·F÷²†V–v‡Bò'Ò–ÒFW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#å$U55U$RD”ddU$Tä4R„Õ“Â÷FW‡Cà¢Â÷7fsà¢ÂöF—cã°§Ğ ¦gVæ7F–öâ†6T6†'B‡²W‡W&–ÖVçBÂ6–×VÆF–öâÂ÷6—F–öç4FVrÓ¢²W‡W&–ÖVçC¢&FTÖöFU&W7VÇC²6–×VÆF–öã¢&FTÖöFU&W7VÇC²÷6—F–öç4FVs¢çVÖ&W%µÒÒ’°¢6öç7BÆVgBÒ“c²6öç7BF÷Òc²6öç7Bv–GF‚Òs3C²6öç7B†V–v‡BÒ#3c°¢6öç7B÷&FW"Ò÷6—F–öç4FVræÖ‚‡÷6—F–öâÂ–æFW‚’Óâ‡²÷6—F–öã¢‚‡÷6—F–öâR3c’²3c’R3cÂ–æFW‚Ò’’ç6÷'B‚†Â"’Óâç÷6—F–öâÒ"ç÷6—F–öâ“°¢6öç7Bö–çG2Ò‡fÇVW3¢çVÖ&W%µÒ’Óâ÷6—F–öç4FVræÖ‚‡÷6—F–öâÂ–æFW‚’Óâ°¢6öç7B÷&FW&VBÒ÷&FW%¶–æFW…Ó°¢6öç7B‚ÒÆVgB²÷&FW&VBç÷6—F–öâò3c¢v–GFƒ°¢6öç7B’ÒF÷²†V–v‡BÒ‡fÇVW5¶÷&FW&VBæ–æFW…Ò²ƒ’ò3c¢†V–v‡C°¢&WGW&âG·‚çFôf—†VBƒ"—ÒÂG·’çFôf—†VBƒ"—Ö°¢Ò’æ¦ö–â‚""“°¢&WGW&âÆF—b6Æ74æÖSÒ&6†'B"&öÆSÒ&–Ör"&–ÖÆ&VÃÒ$6—&7VÖfW&VçF–Â†6RGFW&âBF†RFöÖ–æçB76vRg&WVVæ7’#à¢Ç7frf–Wt&÷ƒÒ#ƒc3#B#à¢ÅÆ÷Dw&–BÆVgC×¶ÆVgGÒF÷×·F÷Òv–GFƒ×·v–GF‡Ò†V–v‡C×¶†V–v‡GÒóà¢ÆÆ–æRƒ×¶ÆVgGÒ“×·F÷²†V–v‡Bò'Òƒ#×¶ÆVgB²v–GF‡Ò“#×·F÷²†V–v‡Bò'Ò6Æ74æÖSÒ'¦W&òÖÆ–æR"óà¢ÇöÇ–Æ–æR6Æ74æÖSÒ'6W&–W2Ö6fB"ö–çG3×·ö–çG2‡6–×VÆF–öâç&ö&U†6W4FVr—Òf–ÆÃÒ&æöæR"7G&ö¶S×´4dEô4ôÄõ'ÒfV7F÷$VffV7CÒ&æöâ×66Æ–ær×7G&ö¶R"óà¢ÇöÇ–Æ–æR6Æ74æÖSÒ'6W&–W2ÖW‡W&–ÖVçB"ö–çG3×·ö–çG2†W‡W&–ÖVçBç&ö&U†6W4FVr—Òf–ÆÃÒ&æöæR"7G&ö¶S×µDU5Eô4ôÄõ'ÒfV7F÷$VffV7CÒ&æöâ×66Æ–ær×7G&ö¶R"óà¢·÷6—F–öç4FVræÖ‚‡÷6—F–öâÂ–æFW‚’ÓâÆr¶W“×¶–æFW‡ÓãÆ6—&6ÆR7ƒ×¶ÆVgB²‚‚‡÷6—F–öâR3c’²3c’R3c’ò3c¢v–GF‡Ò7“×·F÷²†V–v‡BÒ†W‡W&–ÖVçBç&ö&U†6W4FVu¶–æFW…Ò²ƒ’ò3c¢†V–v‡GÒ#Ò#B"f–ÆÃ×µDU5Eô4ôÄõ'ÒóãÆ6—&6ÆR7ƒ×¶ÆVgB²‚‚‡÷6—F–öâR3c’²3c’R3c’ò3c¢v–GF‡Ò7“×·F÷²†V–v‡BÒ‡6–×VÆF–öâç&ö&U†6W4FVu¶–æFW…Ò²ƒ’ò3c¢†V–v‡GÒ#Ò#B"f–ÆÃ×´4dEô4ôÄõ'ÒóãÂösâ—Ğ¢ÇFW‡BƒÒ#ƒ""“×·F÷²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#â³ƒÂ÷FW‡CãÇFW‡BƒÒ#ƒ""“×·F÷²†V–v‡Bò"²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ãÂ÷FW‡CãÇFW‡BƒÒ#ƒ""“×·F÷²†V–v‡B²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#î(‰#ƒÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgGÒ“Ò##s‚"6Æ74æÖSÒ&†—2×fÇVR#ãÂ÷FW‡CãÇFW‡Bƒ×¶ÆVgB²v–GF‚ò'Ò“Ò##s‚"FW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×fÇVR#ãƒÂ÷FW‡CãÇFW‡Bƒ×¶ÆVgB²v–GF‡Ò“Ò##s‚"FW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ã3cÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgB²v–GF‚ò'Ò“Ò#32"FW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#å$ô$Rõ4•D”ôâ†FVr“Â÷FW‡Cà¢ÇFW‡BƒÒ##""“×·F÷²†V–v‡Bò'ÒG&ç6f÷&Ó×¶&÷FFR‚Ó“#"G·F÷²†V–v‡Bò'Ò–ÒFW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#å$TÄD•dR„4R†FVr“Â÷FW‡Cà¢Â÷7fsà¢ÂöF—cã°§Ğ ¦gVæ7F–öâ7–6ÆT6†'B‡²W‡W&–ÖVçBÂ6–×VÆF–öâÓ¢²W‡W&–ÖVçC¢&FTÖöFU&W7VÇC²6–×VÆF–öã¢&FTÖöFU&W7VÇBÒ’°¢6öç7BÆÂÒ²ââæW‡W&–ÖVçBæ7–6ÆU6W&–W2Âââç6–×VÆF–öâæ7–6ÆU6W&–W5Ó°¢6öç7B7F'BÒÖF‚æÖ–â‚ââæÆÂæÖ‚‡ö–çB’Óâö–çBçF–ÖT×2’“°¢6öç7BVæBÒÖF‚æÖ‚‚ââæÆÂæÖ‚‡ö–çB’Óâö–çBçF–ÖT×2’“°¢6öç7B&VæFW"Ò†¶W“¢&g&WVVæ7”´‡¢"Â'Vµ&W77W&T×"ÂÆ&VÃ¢7G&–ærÂF–v—G3¢çVÖ&W"’Óâ°¢6öç7BÆVgBÒ“c²6öç7BF÷Ò#²6öç7Bv–GF‚Òs3C²6öç7B†V–v‡BÒ#C°¢6öç7BÖ–æ–×VÒÒÖF‚æÖ–â‚ââæÆÂæÖ‚‡ö–çB’Óâö–çE¶¶W•Ò’“°¢6öç7BÖ†–×VÒÒÖF‚æÖ‚‚ââæÆÂæÖ‚‡ö–çB’Óâö–çE¶¶W•Ò’“°¢6öç7Bö–çG2Ò†ÖöFS¢&FTÖöFU&W7VÇB’ÓâÖöFRæ7–6ÆU6W&–W2æÖ‚‡ö–çB’Óâ°¢6öç7B‚ÒÆVgB²‡ö–çBçF–ÖT×2Ò7F'B’òÖF‚æÖ‚†VæBÒ7F'BÂRÓ"’¢v–GFƒ°¢6öç7B’ÒF÷²†V–v‡BÒ‡ö–çE¶¶W•ÒÒÖ–æ–×VÒ’òÖF‚æÖ‚†Ö†–×VÒÒÖ–æ–×VÒÂRÓ"’¢†V–v‡C°¢&WGW&âG·‚çFôf—†VBƒ"—ÒÂG·’çFôf—†VBƒ"—Ö°¢Ò’æ¦ö–â‚""“°¢&WGW&âÇ7fr¶W“×¶¶W—Òf–Wt&÷ƒÒ#ƒc#"&–ÖÆ&VÃ×¶Æ&VÇÓà¢ÅÆ÷Dw&–BÆVgC×¶ÆVgGÒF÷×·F÷Òv–GFƒ×·v–GF‡Ò†V–v‡C×¶†V–v‡GÒóà¢ÇöÇ–Æ–æR6Æ74æÖSÒ'6W&–W2Ö6fB"ö–çG3×·ö–çG2‡6–×VÆF–öâ—Òf–ÆÃÒ&æöæR"7G&ö¶S×´4dEô4ôÄõ'ÒfV7F÷$VffV7CÒ&æöâ×66Æ–ær×7G&ö¶R"óà¢ÇöÇ–Æ–æR6Æ74æÖSÒ'6W&–W2ÖW‡W&–ÖVçB"ö–çG3×·ö–çG2†W‡W&–ÖVçB—Òf–ÆÃÒ&æöæR"7G&ö¶S×µDU5Eô4ôÄõ'ÒfV7F÷$VffV7CÒ&æöâ×66Æ–ær×7G&ö¶R"óà¢ÇFW‡BƒÒ#ƒ""“×·F÷²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶Ö†–×VÒçFôf—†VB†F–v—G2—ÓÂ÷FW‡CãÇFW‡BƒÒ#ƒ""“×·F÷²†V–v‡B²GÒFW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶Ö–æ–×VÒçFôf—†VB†F–v—G2—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgGÒ“Ò#c""6Æ74æÖSÒ&†—2×fÇVR#ç·7F'BçFôf—†VBƒ"—ÓÂ÷FW‡CãÇFW‡Bƒ×¶ÆVgB²v–GF‡Ò“Ò#c""FW‡Dæ6†÷#Ò&VæB"6Æ74æÖSÒ&†—2×fÇVR#ç¶VæBçFôf—†VBƒ"—ÓÂ÷FW‡Cà¢ÇFW‡Bƒ×¶ÆVgB²v–GF‚ò'Ò“Ò#“r"FW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#åD”ÔR†×2“Â÷FW‡Cà¢ÇFW‡BƒÒ##""“×·F÷²†V–v‡Bò'ÒG&ç6f÷&Ó×¶&÷FFR‚Ó“#"G·F÷²†V–v‡Bò'Ò–ÒFW‡Dæ6†÷#Ò&Ö–FFÆR"6Æ74æÖSÒ&†—2×F—FÆR#ç¶Æ&VÇÓÂ÷FW‡Cà¢Â÷7fsã°¢Ó°¢&WGW&âÆF—b6Æ74æÖSÒ&6†'B7–6ÆRÖ6†'B×7F6²"&öÆSÒ&–Ör"&–ÖÆ&VÃÒ$7–6ÆRÖ'’Ö7–6ÆR76vRg&WVVæ7’æBV²&W77W&R#à¢·&VæFW"‚&g&WVVæ7”´‡¢"Â$e$UTTä5’†´‡¢’"Â"—Ğ¢·&VæFW"‚'Vµ&W77W&T×"Â%T²$U55U$R„Õ’"Â"—Ğ¢ÂöF—cã°§Ğ ¦gVæ7F–öâÆVvVæB‡²&W6–GVÂÒfÇ6RÓ¢²&W6–GVÃó¢&ööÆVâÒ’°¢&WGW&âÆF—b6Æ74æÖSÒ&ÆVvVæB"&–ÖÆ&VÃÒ$6†'BÆVvVæB#ç·&W6–GVÀ¢òÆF—b6Æ74æÖSÒ&ÆVvVæBÖ—FVÒ#ãÆ’6Æ74æÖSÒ&ÆVvVæB×&W6–GVÂ"óãÇ7ããÇ7G&öæså&W77W&RF–ffW&Væ6SÂ÷7G&öæsãÇ6ÖÆÃäÖV7W&VBW‡W&–ÖVçBÖ–çW24dB6–×VÆF–öãÂ÷6ÖÆÃãÂ÷7ããÂöF—cà¢¢ÃãÆF—b6Æ74æÖSÒ&ÆVvVæBÖ—FVÒ#ãÆ’6Æ74æÖSÒ&ÆVvVæB×FW7B"óãÇ7ããÇ7G&öæsäÖV7W&VBW‡W&–ÖVçCÂ÷7G&öæsãÇ6ÖÆÃå6öÆ–BFVÂÆ–æSÂ÷6ÖÆÃãÂ÷7ããÂöF—cãÆF—b6Æ74æÖSÒ&ÆVvVæBÖ—FVÒ#ãÆ’6Æ74æÖSÒ&ÆVvVæBÖ6fB"óãÇ7ããÇ7G&öæsä4dB6–×VÆF–öãÂ÷7G&öæsãÇ6ÖÆÃäF6†VB&ÇVRÆ–æSÂ÷6ÖÆÃãÂ÷7ããÂöF—cãÂóà¢ÓÂöF—cã°§Ğ ¦gVæ7F–öâVæv–æVW&–ætFV6—6–öåæVÂ‡°¢7VÖÖ'’À¢æW‡E'VâÀ¢6†÷tÆFW7E&W7VÇBÀ¢FV6—6–öåVÆ—G’À¢6VÆV7FVD66TæÖRÀ¢6VÆV7FVDæÇ—6—4–çWBÀ¢Æææ–æt66TæÖRÀ¢V&Æ—6†VE6÷W&6W2À¢&W6V&6„6Æ–×2À¢V&Æ—6†VEfÆ–FF–öâÀ¢öäVF—BÀ¢öäF÷væÆöE&W÷'BÀ¢öäF÷væÆöDæW‡E'VâÀ¢öäF÷væÆöD÷VäföÒÀ¢öå7F'DæW‡E'VâÀ¢öå6fUv÷&·76RÀ¢öåf–Wt†—7F÷'’À§Ó¢°¢7VÖÖ'“¢FV6—6–öå7VÖÖ'“°¢æW‡E'Vã¢6öçG&öÆÆVDæW‡E'Vã°¢6†÷tÆFW7E&W7VÇC¢&ööÆVã°¢FV6—6–öåVÆ—G“¢FV6—6–öåVÆ—G“°¢6VÆV7FVD66TæÖS¢7G&–æs°¢6VÆV7FVDæÇ—6—4–çWC¢æÇ—6—4–çWE7VÖÖ'“°¢Æææ–æt66TæÖS¢7G&–æs°¢V&Æ—6†VE6÷W&6W3¢F–væ÷7F–56÷W&6UµÓ°¢&W6V&6„6Æ–×3¢F–væ÷7F–5&W6V&6„6Æ–ÕµÓ°¢V&Æ—6†VEfÆ–FF–öã¢G—VöbT$Ä•4„TEõdÄ”DD”ôåõ5TÔÔ%“°¢öäVF—C¢‚’Óâfö–C°¢öäF÷væÆöE&W÷'C¢‚’Óâfö–C°¢öäF÷væÆöDæW‡E'Vã¢‚‚’Óâfö–B’ÂçVÆÃ°¢öäF÷væÆöD÷VäföÓ¢‚‚’Óâfö–B’ÂçVÆÃ°¢öå7F'DæW‡E'Vã¢‚‚’Óâfö–B’ÂçVÆÃ°¢öå6fUv÷&·76S¢‚’Óâfö–C°¢öåf–Wt†—7F÷'“¢‚‚’Óâfö–B’ÂçVÆÃ°§Ò’°¢6öç7B&V6VFVçBÒæW‡E'Vâç&V6VFVçC°¢6öç7B—4FVÖòÒ6VÆV7FVDæÇ—6—4–çWBç6÷W&6RÓÓÒ&FVÖò#°¢6öç7BÆåW6W4F–ffW&VçD66RÒ6VÆV7FVD66TæÖRÓÒÆææ–æt66TæÖS°¢6öç7BÆVFvW"ÒæW‡E'Vâç&V6öæ–ætÆVFvW#°¢6öç7BöÆ–7’ÒæW‡E'VâæFV6—6–öåöÆ–7“°¢6öç7B—4çVÖW&–6ÅöÆ–7’ÒöÆ–7’æWfÇVF–öäÖöFRÓÓÒ&çVÖW&–6ÂÖ6öçfW&vVæ6R"bböÆ–7’æ6†ævVEf&–&ÆRÒçVÆÂbböÆ–7’æ6öçfW&vVæ6U&W7öç6U7BÒçVÆÃ°¢6öç7B—4ÖöFVÅ6Vç6—F—f—G•öÆ–7’ÒöÆ–7’æWfÇVF–öäÖöFRÓÓÒ&ÖöFVÂ×6Vç6—F—f—G’"bböÆ–7’æ6†ævVEf&–&ÆRÒçVÆÃ°¢6öç7BFW7FVEf&–&ÆRÒöÆ–7’æ6†ævVE&ÖWFW"ò&ÖWFW$Æ&VÂ‡öÆ–7’æ6†ævVE&ÖWFW"’çFôÆ÷vW$66R‚’¢öÆ–7’æ6†ævVEf&–&ÆRò6†ævTÆ&VÂ‡öÆ–7’æ6†ævVEf&–&ÆR’çFôÆ÷vW$66R‚’¢'6VÆV7FVB#°¢6öç7B6öæ6ÇW6–öä†VF–ærÒ7VÖÖ'’æÆ&VÂÓÓÒ%&W7VÇBöbF†—2&W'Vâ"ò%v†BF†—2&W'Vâ6öæ6ÇVFVB"¢%v†BF†—2÷W&F–ærö–çB6†÷w2#°¢6öç7B7F'F–æuö–çE&V6öâÒ7VÖÖ'’çFöæRÓÓÒ'&V¦V7FVB ¢ò%F†R6VÆV7FVB6†ævRv2&V¦V7FVBæB—2æ÷B6'&–VBf÷'v&Bâ ¢¢7VÖÖ'’çFöæRÓÓÒ&–æ6öæ6ÇW6—fR ¢ò%F†R6VÆV7FVB6†ævRv2–æ6öæ6ÇW6—fRæB—2æ÷B6'&–VBf÷'v&Bâ ¢¢7VÖÖ'’æÆ&VÂÓÓÒ$7W'&VçBF–væ÷6—2 ¢ò%F†—2—2F†RÆFW7B66WFVB6WGF–ærBF†—2÷W&F–ærö–çBâ ¢¢%F†—266WFVB6WGF–ær—26'&–VBf÷'v&Bâ#°¢&WGW&âÇ6V7F–öâ6Æ74æÖS×¶Væv–æVW&–ærÖFV6—6–öâÖ6&BFV6—6–öâÒG·7VÖÖ'’çFöæWÒG¶—4FVÖòò"FV6—6–öâÖFVÖò"¢"'ÖÒ&–ÖÆ&VÃÒ$Væv–æVW&–ærFV6—6–öâ#à¢ÆF—b6Æ74æÖSÒ&FV6—6–öâ×VÆ—G’"&–ÖÆ&VÃ×¶&V6öÖÖVæFF–öâWf–FVæ6S¢G¶FV6—6–öåVÆ—G’æÆ&VÇÖÓà¢ÆF—b6Æ74æÖSÒ&FV6—6–öâ×VÆ—G’×fW&F–7B#ãÇ7ãå&V6öÖÖVæFF–öâWf–FVæ6SÂ÷7ããÇ7G&öæsç¶FV6—6–öåVÆ—G’æÆ&VÇÓÂ÷7G&öæsãÂöF—cà¢ÆF—b6Æ74æÖSÒ&FV6—6–öâ×VÆ—G’Ö6÷’#ãÇ6ÖÆÃç¶FV6—6–öåVÆ—G’ç6÷W&6TÆ&VÇÓÂ÷6ÖÆÃãÇç¶FV6—6–öåVÆ—G’æW‡ÆæF–öçÓÂ÷ãÂöF—cà¢ÆF—b6Æ74æÖSÒ&FV6—6–öâ×VÆ—G’Öf7F÷'2"&–ÖÆ&VÃÒ$Wf–FVæ6R6öæF—F–öç2#à¢¶FV6—6–öåVÆ—G’ævFW2æÖ‚†vFR’ÓâÇ7â¶W“×¶vFRæ–GÒ6Æ74æÖS×¶f7F÷"ÒG¶vFRç7FGW7ÖÓãÆ’&–Ö†–FFVãÒ'G'VR#ç¶vFRç7FGW2ÓÓÒ'76VB"ò.)É2"¢vFRç7FGW2ÓÓÒ&&Æö6¶VB"ò,9r"¢vFRç7FGW2ÓÓÒ'&Wf–Wr"ò""¢.)x²'ÓÂö“ãÇ6ÖÆÃç¶vFRæÆ&VÇÓÂ÷6ÖÆÃãÇ7G&öæsç¶vFRç7FGW4Æ&VÇÓÂ÷7G&öæsãÂ÷7ãâ—Ğ¢ÂöF—cà¢ÂöF—cà¢Ç6V7F–öâ6Æ74æÖSÒ&FV6—6–öâÖ&Æö6²FV6—6–öâÖ6öæ6ÇW6–öâÖ&Æö6²"&–ÖÆ&VÆÆVF'“Ò&FV6—6–öâÖ6öæ6ÇW6–öâÖ†VF–ær#à¢ÆF—b6Æ74æÖSÒ&FV6—6–öâÖ&Æö6²Ö†VF–ær#ãÆ#ãÂö#ãÆƒ"–CÒ&FV6—6–öâÖ6öæ6ÇW6–öâÖ†VF–ær#ç¶6öæ6ÇW6–öä†VF–æwÓÂöƒ#ãÂöF—cà¢Æ†VFW"6Æ74æÖSÒ&Væv–æVW&–ærÖFV6—6–öâÖ†VF–ær#à¢ÆF—cãÇ7ãç·7VÖÖ'’æÆ&VÇÓÂ÷7ããÂöF—cà¢Æƒ3ãÇ7ãç·7VÖÖ'’æÆVGÓÂ÷7ãâ·7VÖÖ'’çF—FÆWÓÂöƒ3à¢·7VÖÖ'’æFWF–ÂbbÇ6Æ74æÖSÒ&FV6—6–öâÖFWF–Â#ç·7VÖÖ'’æFWF–ÇÓÂ÷çĞ¢Ç6Æ74æÖSÒ&FV6—6–öâÖÖVæ–ær#ç·7VÖÖ'’æÖVæ–æwÓÂ÷à¢Âö†VFW#à¢·6†÷tÆFW7E&W7VÇBbbæW‡E'VâæÆFW7D6öçG&öÆÆVE&W7VÇBç7FGW2ÓÒ$v—F–ær&W7VÇB"bbÆF—b6Æ74æÖS×¶FV6—6–öâÖÆFW7B×&W7VÇB÷WF6öÖRÒG¶æW‡E'VâæÆFW7D6öçG&öÆÆVE&W7VÇBç7FGW2çFôÆ÷vW$66R‚—ÖÓãÇ7G&öæsäÆFW7B&W7VÇBBF†—2÷W&F–ærö–çC¢¶ÆFW7E&W7VÇDÆ&VÂ†æW‡E'VâæÆFW7D6öçG&öÆÆVE&W7VÇBç7FGW2ÂöÆ–7’—ÓÂ÷7G&öæsãÇ7ãç¶æW‡E'VâæÆFW7D6öçG&öÆÆVE&W7VÇBæ66TæÖWÓÂ÷7ããÂöF—cçĞ¢Â÷6V7F–öãà¢Ç6V7F–öâ6Æ74æÖSÒ&FV6—6–öâÖ&Æö6²FV6—6–öâ×&V6öÖÖVæFF–öâÖ&Æö6²"&–ÖÆ&VÆÆVF'“Ò&FV6—6–öâ×&V6öÖÖVæFF–öâÖ†VF–ær#à¢ÆF—b6Æ74æÖSÒ&FV6—6–öâÖ&Æö6²Ö†VF–ær#ãÆ#ã#Âö#ãÆƒ"–CÒ&FV6—6–öâ×&V6öÖÖVæFF–öâÖ†VF–ær#äæW‡B4dB'VâBF†—2÷W&F–ærö–çCÂöƒ#ãÂöF—cà¢·ÆåW6W4F–ffW&VçD66RbbÆF—b6Æ74æÖSÒ&FV6—6–öâ×66÷R#à¢Ç7G&öæså7F'F–ærö–çCÂ÷7G&öæsà¢Ç7ãåW6RÆ#ç·Æææ–æt66TæÖWÓÂö#ââ·7F'F–æuö–çE&V6öçÓÂ÷7ãà¢ÂöF—cçĞ¢ÆF—b6Æ74æÖSÒ&FV6—6–öâÖæW‡B×'Vâ#à¢Ç7ãäFòF†—2æW‡CÂ÷7ããÆƒ3ç¶æW‡E'VâçF—FÆWÓÂöƒ3à¢ÂöF—cà¢ÆF—b6Æ74æÖSÒ&æW‡B×'VâÖ7F–öâ#à¢ÇãÇ7G&öæsä6†ævSÂ÷7G&öæsãÇ7ãç¶æW‡E'Vâæ6†ævWÓÂ÷7ããÂ÷à¢ÇãÇ7G&öæsä¶VWVæ6†ævVCÂ÷7G&öæsãÇ7ãç¶æW‡E'Vâæ†öÆDf—†VBæ¦ö–â‚"+r"—ÓÂ÷7ããÂ÷à¢ÇãÇ7G&öæsä6ö×&SÂ÷7G&öæsãÇ7ãç¶æW‡E'VâæW‡V7FVD÷WF6öÖWÓÂ÷7ããÂ÷à¢ÂöF—cà¢²†öå7F'DæW‡E'VâÇÂöäF÷væÆöDæW‡E'VâÇÂöäF÷væÆöD÷VäföÒ’bbÆF—b6Æ74æÖSÒ&æW‡B×'VâÖ'WGFöç2#ç¶öå7F'DæW‡E'VâbbÆ'WGFöâ6Æ74æÖSÒ&'WGFöâ&–Ö'’"öä6Æ–6³×¶öå7F'DæW‡E'VçÓå7F'B&V6öÖÖVæFVB&W'VãÂö'WGFöãç×¶öäF÷væÆöDæW‡E'VâbbÆ'WGFöâ6Æ74æÖSÒ&'WGFöâ6V6öæF'’"öä6Æ–6³×¶öäF÷væÆöDæW‡E'VçÓäF÷væÆöBg&÷¦Vâ'Vâ7V3Âö'WGFöãç×¶öäF÷væÆöD÷VäföÒbbÆ'WGFöâ6Æ74æÖSÒ&'WGFöâ6V6öæF'’"öä6Æ–6³×¶öäF÷væÆöD÷Väfö×ÓäF÷væÆöB÷VädôÒ†æFöfcÂö'WGFöãçÓÂöF—cçĞ¢ÆFWF–Ç26Æ74æÖSÒ&FV6—6–öâ×&V6öæ–ær"&–ÖÆ&VÃÒ%v‡’·—F‡&÷2&V6öÖÖVæG2F†—2'Vâ#à¢Ç7VÖÖ'“åv‡’·—F‡&÷2&V6öÖÖVæG2F†—2'VãÂ÷7VÖÖ'“à¢ÆF—b6Æ74æÖSÒ&FV6—6–öâ×&V6öæ–ærÖ†VF–ær#à¢Ç7ãåVW7F–öâ&V–ærFW7FVCÂ÷7ãà¢Æƒ3ç¶æW‡E'VâçVW7F–öçÓÂöƒ3à¢ÇåF†W6Rf–æF–æw2&R6Æ7VÆFVBg&öÒF†RæÇ—¦VB66W2âF†W’&Ræ÷B6öÇVÖç2÷"Æ&VÇ2–âF†R55bf–ÆW2ãÂ÷à¢ÂöF—cà¢ÆF—b6Æ74æÖSÒ'&V6öæ–ærÖÆVFvW"#à¢ÄWf–FVæ6TÆVFvW$6öÇVÖâF—FÆSÒ$f–æF–æw2F†B7W÷'BF†—2W‡ÆæF–öâ"V×G”ÖW76vSÒ$æòæÇ—¦VBf–æF–ærF—&V7FÇ’7W÷'G2F†—2W‡ÆæF–öââ"—FV×3×¶ÆVFvW"ç7W÷'G7ÒFöæSÒ'7W÷'G2"óà¢ÄWf–FVæ6TÆVFvW$6öÇVÖâF—FÆSÒ$f–æF–æw2F†B6öçG&F–7BF†—2W‡ÆæF–öâ"V×G”ÖW76vSÒ$æòf–æF–ær–âF†RæÇ—¦VB66W26öçG&F–7G2F†—2W‡ÆæF–öââF†BFöW2æ÷B6öæf—&Ò—Bâ"—FV×3×¶ÆVFvW"çvV¶Vç7ÒFöæSÒ'vV¶Vç2"óà¢ÄWf–FVæ6TÆVFvW$6öÇVÖâF—FÆSÒ$Wf–FVæ6R7F–ÆÂæVVFVB"V×G”ÖW76vSÒ$·—F‡&÷2†2æ÷B–FVçF–f–VBæ÷F†W"Ö—76–ær&W7VÇBf÷"F†—2FV6—6–öââ"—FV×3×¶ÆVFvW"çVæ¶æ÷vç7ÒFöæSÒ'Væ¶æ÷vç2"óà¢ÂöF—cà¢ÆF—b6Æ74æÖSÒ&FV6—6–öâ×&–÷&—G’#à¢Ç7G&öæsåv‡’F†—2—2F†RæW‡BFW7CÂ÷7G&öæsà¢Çç¶æW‡E'Vâçv‡•F†—5'Väf—'7GÓÂ÷à¢ÂöF—cà¢ÂöFWF–Ç3à¢ÆFWF–Ç26Æ74æÖSÒ&FV6—6–öâÖ÷WF6öÖW2"&–ÖÆ&VÃÒ$†÷rF†R&W7VÇB6†ævW2F†RÆâ#à¢Ç7VÖÖ'“ãÇ7ãäFV6—6–öâ'VÆSÂ÷7ããÇ7G&öæsä†÷r·—F‡&÷2v–ÆÂ6Æ76–g’F†R&W'Vâ&W7VÇCÂ÷7G&öæsãÂ÷7VÖÖ'“à¢ÆF—b6Æ74æÖSÒ&FV6—6–öâÖ÷WF6öÖW2Ö6öçFVçB#à¢ÆF—cãÇ7ãä†÷r·—F‡&÷2v–ÆÂ6Æ76–g’F†R&W7VÇCÂ÷7ãç·öÆ–7’æ&6—2ÓÓÒ'&÷F÷G—R×öÆ–7’"bbÇ6ÖÆÃå&÷F÷G—R&öGV7BöÆ–7’·öÆ–7’çfW'6–öçÒâ·—F‡&÷26†÷6RF†W6RFV6—6–öâÆ–Ö—G3²F†R6—FVBW'2F–Bæ÷BãÂ÷6ÖÆÃçÓÂöF—cà¢¶—4çVÖW&–6ÅöÆ–7’òÃà¢ÆF—b6Æ74æÖSÒ&÷WF6öÖR×'VÆW2#à¢Æ'F–6ÆR6Æ74æÖSÒ&'&æ6‚Ö6öçfW&vVB#ãÇ7G&öæsäçVÖW&–6ÆÇ’6öçfW&vVCÂ÷7G&öæsãÇ7ãåF†RF&vWFVB4dBfÇVW26†ævR'’æòÖ÷&RF†â·öÆ–7’æ6öçfW&vVæ6U&W7öç6U7BçFôf—†VBƒ—ÒR&WGvVVâF†RGvòF¦6VçBÆWfVÇ2ãÂ÷7ããÇ6ÖÆÃä¶VWF†RæWvW"6WGF–æræBÖ÷fRFòF†RæW‡BVç&W6öÇfVBW‡ÆæF–öâãÂ÷6ÖÆÃãÂö'F–6ÆSà¢Æ'F–6ÆR6Æ74æÖSÒ&'&æ6‚Ö6öæf—&ÖVB#ãÇ7G&öæsç·öÆ–7’æ6†ævVE&ÖWFW"ò&ÖWFW$Æ&VÂ‡öÆ–7’æ6†ævVE&ÖWFW"’¢6†ævTÆ&VÂ‡öÆ–7’æ6†ævVEf&–&ÆR—Ò7F–ÆÂ6†ævW2F†R&W7VÇCÂ÷7G&öæsãÇ7ãåF†RF&vWFVB4dBfÇVW26†ævR'’Ö÷&RF†â·öÆ–7’æ6öçfW&vVæ6U&W7öç6U7BçFôf—†VBƒ—ÒR&WGvVVâF†RGvòF¦6VçBÆWfVÇ2ãÂ÷7ããÇ6ÖÆÃä¶VWF†RæWvW"6WGF–æræBFW7BF†RæW‡B·FW7FVEf&–&ÆWÒÆWfVÂ&Vf÷&R6†æv–ærF†R‡—6–72ãÂ÷6ÖÆÃãÂö'F–6ÆSà¢Æ'F–6ÆR6Æ74æÖSÒ&'&æ6‚Ö–æ6öæ6ÇW6—fR#ãÇ7G&öæsä6ææ÷B6Æ76–g“Â÷7G&öæsãÇ7ãåF†RGvò'Vç2&Ræ÷BfÆ–BöæRÖ6†ævR—"Â÷"&WV—&VBF&vWFVBfÇVR6ææ÷B&R6Æ7VÆFVBãÂ÷7ããÇ6ÖÆÃä6÷'&V7BF†R'Vâ&VÆF–öç6†—÷"FF&ö&ÆVÒÂF†Vâ&WVBF†R6ÖR6ö×&—6öâãÂ÷6ÖÆÃãÂö'F–6ÆSà¢ÂöF—cà¢Ç6Æ74æÖSÒ&FV6—6–öâÖw&VVÖVçBÖæ÷FR#ãÇ7G&öæså6W&FRVW7F–öã£Â÷7G&öæsâ·—F‡&÷2Ç6ò&W÷'G2v†WF†W"F†RæWvW"4dB&W7VÇBÖ÷fVB6Æ÷6W"FòF†RW‡W&–ÖVçBÂÖ÷fVBf'F†W"v’Â÷"7&VFVBæWrÖ—6ÖF6‚ãÂ÷à¢Âóâ¢—4ÖöFVÅ6Vç6—F—f—G•öÆ–7’òÆF—b6Æ74æÖSÒ&÷WF6öÖR×'VÆW2#à¢Æ'F–6ÆR6Æ74æÖSÒ&'&æ6‚Ö6öæf—&ÖVB#ãÇ7G&öæså7W÷'G2F†—2W‡ÆæF–öãÂ÷7G&öæsãÇ7ãåF†RÖVâ4dB×FòÖW‡W&–ÖVçBW'&÷"–âF†RF&vWFVBfÇVW2fÆÇ2'’BÆV7B·öÆ–7’æ6öæf—&ÖF–öäW'&÷%&VGV7F–öå7BçFôf—†VBƒ—ÒRÂv—F‚æòæWr&W6öÇfVBÖ—6ÖF6‚ãÂ÷7ããÇ6ÖÆÃä¶VWF†RFW7FVB6WGF–æræBÖ÷fRFòF†RæW‡BVç&W6öÇfVBW‡ÆæF–öâãÂ÷6ÖÆÃãÂö'F–6ÆSà¢Æ'F–6ÆR6Æ74æÖSÒ&'&æ6‚×&V¦V7FVB#ãÇ7G&öæsäFöW2æ÷B7W÷'BF†—2W‡ÆæF–öãÂ÷7G&öæsãÇ7ãåF†RF&vWFVB4dB&W7öç6R—2&VÆ÷r·öÆ–7’æÖ–æ–×VÕ&W7öç6U7BçFôf—†VBƒ—ÒRÂF†RF&vWFVBW'&÷"–æ7&V6W2'’BÆV7B·öÆ–7’ç&V¦V7F–öäW'&÷%v÷'6Væ–æu7BçFôf—†VBƒ—ÒRÂ÷"æWr&W6öÇfVBÖ—6ÖF6‚V'2ãÂ÷7ããÇ6ÖÆÃå&WGW&âFòF†R7F'F–ær6WGF–æræBFW7BF†RæW‡BW‡ÆæF–öâãÂ÷6ÖÆÃãÂö'F–6ÆSà¢Æ'F–6ÆR6Æ74æÖSÒ&'&æ6‚Ö–æ6öæ6ÇW6—fR#ãÇ7G&öæsä–æ6öæ6ÇW6—fSÂ÷7G&öæsãÇ7ãåF†R&W7VÇBÖVWG2æV—F†W"'VÆR&÷fRãÂ÷7ããÇ6ÖÆÃå&WVBF†R6ÖRöæR×f&–&ÆRFW7Bv—F‚Æ&vW"6†ævR÷"Æ÷vW"Væ6W'F–çG’ãÂ÷6ÖÆÃãÂö'F–6ÆSà¢ÂöF—câ¢ÆF—b6Æ74æÖSÒ&÷WF6öÖR×'VÆW2#à¢Æ'F–6ÆR6Æ74æÖSÒ&'&æ6‚Ö6öæf—&ÖVB#ãÇ7G&öæså76W3Â÷7G&öæsãÇ7ãç¶æW‡E'Vâæ6öæf—&ÖF–öä7&—FW&–öçÓÂ÷7ããÇ6ÖÆÃç¶æW‡E'Vâæ–d6öæf—&ÖVGÓÂ÷6ÖÆÃãÂö'F–6ÆSà¢Æ'F–6ÆR6Æ74æÖSÒ&'&æ6‚×&V¦V7FVB#ãÇ7G&öæsäFöW2æ÷B73Â÷7G&öæsãÇ7ãç¶æW‡E'Vâç&V¦V7F–öä7&—FW&–öçÓÂ÷7ããÇ6ÖÆÃç¶æW‡E'Vâæ–e&V¦V7FVGÓÂ÷6ÖÆÃãÂö'F–6ÆSà¢Æ'F–6ÆR6Æ74æÖSÒ&'&æ6‚Ö–æ6öæ6ÇW6—fR#ãÇ7G&öæsä6ææ÷B6Æ76–g“Â÷7G&öæsãÇ7ãç¶æW‡E'Vâæ–æ6öæ6ÇW6—fT7&—FW&–öçÓÂ÷7ããÇ6ÖÆÃç¶æW‡E'Vâæ–d–æ6öæ6ÇW6—fWÓÂ÷6ÖÆÃãÂö'F–6ÆSà¢ÂöF—cçĞ¢ÂöF—cà¢ÂöFWF–Ç3à¢ÆF—b6Æ74æÖSÒ&FV6—6–öâ×&V6VFVçB"&–ÖÆ&VÃÒ$6ö×&&ÆR6öçG&öÆÆVB&W'Vç2#à¢Ç7ãä–æFWVæFVçBWf–FVæ6Rg&öÒ÷F†W"÷W&F–ærö–çG3Â÷7ãà¢·&V6VFVçBæÖF6†VD6÷VçBòÃà¢ÇãÇ7G&öæsç·&V6VFVçBæ6öæf—&ÖVD6÷VçGÒöb·&V6VFVçBæÖF6†VD6÷VçGÒ6ö×&&ÆRöæRÖ6†ævR&W'Vç2ÖWBF†R6ÖRFV6—6–öâ'VÆRãÂ÷7G&öæsãÂ÷à¢¶—4FVÖòbbÇ6ÖÆÃåF†W6R&RvVæW&FVBFVÖöç7G&F–öç2Âæ÷BWf–FVæ6Rg&öÒ‡—6–6ÂVæv–æRãÂ÷6ÖÆÃçĞ¢Âóâ¢Ãà¢ÇãÇ7G&öæsäæò6ö×&&ÆR&W'Vâg&öÒæ÷F†W"÷W&F–ærö–çB†2&VVâæÇ—¦VBãÂ÷7G&öæsâF†Rf–æF–æw2&÷fR6öÖRöæÇ’g&öÒF†—2÷W&F–ærö–çBãÂ÷à¢ÂóçĞ¢ÂöF—cà¢Å&W6V&6„&6—26Æ–×3×·&W6V&6„6Æ–×7Ò6÷W&6W3×·V&Æ—6†VE6÷W&6W7Òóà¢ÆFWF–Ç26Æ74æÖSÒ&FV6—6–öâÖWf–FVæ6R#à¢Ç7VÖÖ'“åv†B—2F†—2&V6öÖÖVæFF–öâ7FGW2&6VBöãóÂ÷7VÖÖ'“à¢Ç6Æ74æÖSÒ&Wf–FVæ6RÖ6Æ7VÆF–öâÖæ÷FR#ä·—F‡&÷26Æ7VÆFW2F†—27FGW2g&öÒF†R6VÆV7FVB'VâæBfW&–f–VB&W'Vâ†—7F÷'’BF†—2÷W&F–ærö–çBâV&Æ—6†VBW'2æBV&Æ–2&Væ6†Ö&·2Fòæ÷B&—6R—BãÂ÷à¢Ç6Æ74æÖSÒ'6VÆV7FVBÖFF×6÷W&6R#ãÇ7G&öæsç·6VÆV7FVD66TæÖWÓÂ÷7G&öæsâ+r·6VÆV7FVDæÇ—6—4–çWBæW‡W&–ÖVçE6×ÆW2çFôÆö6ÆU7G&–ær‚—ÒW‡W&–ÖVçB²·6VÆV7FVDæÇ—6—4–çWBæ6fE6×ÆW2çFôÆö6ÆU7G&–ær‚—Ò4dBfÇVW2+r·6VÆV7FVDæÇ—6—4–çWBç&ö&T6÷VçGÒ&ö&W3Â÷à¢·ÆåW6W4F–ffW&VçD66RbbÇ6Æ74æÖSÒ'Æææ–ærÖFF×6÷W&6R#ãÇ7G&öæsåÆâ&VfW&Væ6S£Â÷7G&öæsâ·Æææ–æt66TæÖWÓÂ÷çĞ¢ÇVÃç¶FV6—6–öåVÆ—G’ævFW2æÖ‚†vFR’ÓâÆÆ’¶W“×¶vFRæ–GÒ6Æ74æÖS×¶Wf–FVæ6RÒG¶vFRç7FGW7ÖÓãÆ“ç¶vFRç7FGW2ÓÓÒ'76VB"ò.)É2"¢vFRç7FGW2ÓÓÒ&&Æö6¶VB"ò,9r"¢vFRç7FGW2ÓÓÒ'&Wf–Wr"ò""¢.)x²'ÓÂö“ãÇ7G&öæsç¶vFRæÆ&VÇÓÂ÷7G&öæsãÆ#ç¶vFRç7FGW4Æ&VÇÓÂö#ãÇ6ÖÆÃç¶vFRç&W7VÇGÓÂ÷6ÖÆÃãÂöÆ“â—ÓÂ÷VÃà¢ÇãÇ7G&öæsäÖWF†öB7W÷'BöæÇ“£Â÷7G&öæsâ·V&Æ—6†VE6÷W&6W2æÆVæwF‡ÒV&Æ—6†VB&VfW&Væ6W·V&Æ—6†VE6÷W&6W2æÆVæwF‚ÓÓÒò""¢'2'Ò7W÷'BF†RÖWF†öBÂæB·V&Æ—6†VEfÆ–FF–öâçvfU7VVD66W2²V&Æ—6†VEfÆ–FF–öâç&W77W&Tf—‡GW&T66W7ÒV&Æ–2fÆ–FF–öâ66W2FW7BF†RæÇ—¦W"âæV—F†W"6öæf—&×2F†RW‡ÆæF–öâf÷"F†—2÷W&F–ærö–çBãÂ÷à¢ÂöFWF–Ç3à¢·&V6VFVçBæÖF6†VD6÷VçBâbbÆF—b6Æ74æÖSÒ&FV6—6–öâÖFWF–Ç2#ãÆFWF–Ç3ãÇ7VÖÖ'“å6†÷ræÇ—¦VB&–÷"Ö66R6÷VçG3Â÷7VÖÖ'“ãÆF—b6Æ74æÖSÒ'&V6VFVçBÖ÷WF6öÖW2#ãÇ7ããÆ#ç·&V6VFVçBæ6öæf—&ÖVD6÷VçGÓÂö#â6öæf—&ÖVCÂ÷7ããÇ7ããÆ#ç·&V6VFVçBæ6öçfW&vVD6÷VçGÓÂö#â6öçfW&vVCÂ÷7ããÇ7ããÆ#ç·&V6VFVçBç&V¦V7FVD6÷VçGÓÂö#â&V¦V7FVCÂ÷7ããÇ7ããÆ#ç·&V6VFVçBæ–æ6öæ6ÇW6—fT6÷VçGÓÂö#â–æ6öæ6ÇW6—fSÂ÷7ããÂöF—cãÇç·&V6VFVçBæÖF6†VD6÷VçGÒ6ö×&&ÆR6öçG&öÆÆVB&W'Vç·&V6VFVçBæÖF6†VD6÷VçBÓÓÒò""¢'2'ÒæÇ—¦VBâÖWG&–2ÖVç2W6R6öæf—&ÖVB66W2öæÇ—·&V6VFVçBç'VçF–ÖT66T6÷VçBò²'VçF–ÖRW6W2G·&V6VFVçBç'VçF–ÖT66T6÷VçGÒ6öæf—&ÖVB66RG·&V6VFVçBç'VçF–ÖT66T6÷VçBÓÓÒò""¢'2'Òv—F‚VçFW&VB6öÇfW"†÷W'6¢"'ÒãÂ÷ãÂöFWF–Ç3ãÂöF—cçĞ¢Â÷6V7F–öãà¢ÆF—b6Æ74æÖSÒ&FV6—6–öâÖ7F–öç2#ãÆ'WGFöâ6Æ74æÖSÒ&'WGFöâ6V6öæF'’"öä6Æ–6³×¶öäVF—GÓäVF—B'VãÂö'WGFöããÆ'WGFöâ6Æ74æÖSÒ&'WGFöâ6V6öæF'’"öä6Æ–6³×¶öäF÷væÆöE&W÷'GÓäF÷væÆöBWf–FVæ6R&W÷'CÂö'WGFöããÆ'WGFöâ6Æ74æÖSÒ&'WGFöâ6V6öæF'’"öä6Æ–6³×¶öå6fUv÷&·76WÓå6fR6ö×ÆWFRv÷&·76SÂö'WGFöãç¶öåf–Wt†—7F÷'’bbÆ'WGFöâ6Æ74æÖSÒ&'WGFöâ6V6öæF'’"öä6Æ–6³×¶öåf–Wt†—7F÷'—Óåf–Wr'Vâ†—7F÷'“Âö'WGFöãçÓÂöF—cà¢Â÷6V7F–öãã°§Ğ¦W‡÷'BFVfVÇBgVæ7F–öâ†öÖR‚’°¢6öç7B¶66W2Â6WD66W5ÒÒW6U7FFSÄæÇ—6—466UµÓâ…µÒ“°¢6öç7B¶FW6–vç2Â6WDFW6–vç5ÒÒW6U7FFSÄVæv–æTFW6–våµÓâ…µÒ“°¢6öç7B¶÷W&F–æuö–çG2Â6WD÷W&F–æuö–çG5ÒÒW6U7FFSÄ÷W&F–æuö–çEµÓâ…µÒ“°¢6öç7B¶g&÷¦Vå'VåÆç2Â6WDg&÷¦Vå'VåÆç5ÒÒW6U7FFSÄg&÷¦Vå'VåÆåµÓâ…µÒ“°¢6öç7B¶7F—fTFW6–vä–BÂ6WD7F—fTFW6–vä–EÒÒW6U7FFSÇ7G&–ærÂçVÆÃâ†çVÆÂ“°¢6öç7B¶7F—fT÷W&F–æuö–çD–BÂ6WD7F—fT÷W&F–æuö–çD–EÒÒW6U7FFSÇ7G&–ærÂçVÆÃâ†çVÆÂ“°¢6öç7B¶G&gDFW6–vä–BÂ6WDG&gDFW6–vä–EÒÒW6U7FFSÇ7G&–ærÂçVÆÃâ†çVÆÂ“°¢6öç7B¶G&gD÷W&F–æuö–çD–BÂ6WDG&gD÷W&F–æuö–çD–EÒÒW6U7FFSÇ7G&–ærÂçVÆÃâ†çVÆÂ“°¢6öç7B¶G&gDæWt÷W&F–æuö–çBÂ6WDG&gDæWt÷W&F–æuö–çEÒÒW6U7FFSÄ÷W&F–æuö–çBÂçVÆÃâ†çVÆÂ“°¢6öç7B¶ÆöFW$ÖöFRÂ6WDÆöFW$ÖöFUÒÒW6U7FFSÂ&ÖV7W&VB×ö–çB"Â&6ö×&—6öâ×'Vâ#â‚&6ö×&—6öâ×'Vâ"“°¢6öç7B¶7F—fT66T–BÂ6WD7F—fT66T–EÒÒW6U7FFSÇ7G&–ærÂçVÆÃâ†çVÆÂ“°¢6öç7B¶66T&6VÆ–æT–BÂ6WD66T&6VÆ–æT–EÒÒW6U7FFSÇ7G&–ærÂçVÆÃâ†çVÆÂ“°¢6öç7B¶VF—F–æt66T–BÂ6WDVF—F–æt66T–EÒÒW6U7FFSÇ7G&–ærÂçVÆÃâ†çVÆÂ“°¢6öç7B¶G&gBÂ6WDG&gEÒÒW6U7FFSÄ66TÖWFFFâ‚‚’Óâ6ÆöæTÖWFFF„TÕE•ôÔUDDD’“°¢6öç7B¶G&gE&VÆF–öç6†—Â6WDG&gE&VÆF–öç6†—ÒÒW6U7FFSÄ66U&VÆF–öç6†—ÂçVÆÃâ†çVÆÂ“°¢6öç7B¶G&gDg&÷¦VåÆä–BÂ6WDG&gDg&÷¦VåÆä–EÒÒW6U7FFSÇ7G&–ærÂçVÆÃâ†çVÆÂ“°¢6öç7B·FW7EVæF–ærÂ6WEFW7EVæF–æuÒÒW6U7FFSÄÖVE&ö&T–×÷'BÂçVÆÃâ†çVÆÂ“°¢6öç7B¶6fEVæF–ærÂ6WD6fEVæF–æuÒÒW6U7FFSÄÖVE&ö&T–×÷'BÂçVÆÃâ†çVÆÂ“°¢6öç7B·FW7EvÆÅVæF–ærÂ6WEFW7EvÆÅVæF–æuÒÒW6U7FFSÅvÆÄf–VÆD–×÷'BÂçVÆÃâ†çVÆÂ“°¢6öç7B¶6fEvÆÅVæF–ærÂ6WD6fEvÆÅVæF–æuÒÒW6U7FFSÅvÆÄf–VÆD–×÷'BÂçVÆÃâ†çVÆÂ“°¢6öç7B·6†÷tÆöFW"Â6WE6†÷tÆöFW%ÒÒW6U7FFR†fÇ6R“°¢6öç7B·&Wf–Wv–æu&W'VâÂ6WE&Wf–Wv–æu&W'VåÒÒW6U7FFR†fÇ6R“°¢6öç7B·6†÷t†VÇÂ6WE6†÷t†VÇÒÒW6U7FFR†fÇ6R“°¢6öç7B¶W'&÷"Â6WDW'&÷%ÒÒW6U7FFR‚""“°¢6öç7B·v÷&·76TW'&÷"Â6WEv÷&·76TW'&÷%ÒÒW6U7FFR‚""“°¢6öç7B¶7F—fUf–WrÂ6WD7F—fUf–WuÒÒW6U7FFSÂ'6–væÇ2"Â'7V7G'VÒ"Â'&W6–GVÂ"Â'†6R"Â&7–6ÆW2#â‚'6–væÇ2"“°¢6öç7B¶7F—fU&ö&RÂ6WD7F—fU&ö&UÒÒW6U7FFRƒ“°¢6öç7B·v÷&·76Uf–WrÂ6WEv÷&·76Uf–WuÒÒW6U7FFSÂ&66R"Â&6ö×&R#â‚&66R"“°¢6öç7B·&öGV7Ef–WrÂ6WE&öGV7Ef–WuÒÒW6U7FFSÂ&†öÖR"Â&FW6–vâ"Â'6–×VÆF–öâ"Â&VçfVÆ÷R"Â&6ö×&—6öâ#â‚&†öÖR"“° ¢6öç7B7F—fT66RÒ66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ7F—fT66T–B’óòçVÆÃ°¢6öç7B7F—fT÷W&F–æuö–çBÒ÷W&F–æuö–çG2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ7F—fT÷W&F–æuö–çD–B’óòçVÆÃ°¢6öç7B7F—fTFW6–vâÒFW6–vç2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ7F—fT66SòæFW6–vä–B’óòçVÆÃ°¢6öç7B÷W&F–æuö–çE'Vç2ÒW6TÖVÖò‚‚’Óâ66W2æf–ÇFW"‚†—FVÒ’Óâ—FVÒæ÷W&F–æuö–çD–BÓÓÒ7F—fT÷W&F–æuö–çD–B’Â¶66W2Â7F—fT÷W&F–æuö–çD–EÒ“°¢6öç7BG&gD÷W&F–æuö–çE'Vç2ÒW6TÖVÖò‚‚’Óâ66W2æf–ÇFW"‚†—FVÒ’Óâ—FVÒæ÷W&F–æuö–çD–BÓÓÒG&gD÷W&F–æuö–çD–B’Â¶66W2ÂG&gD÷W&F–æuö–çD–EÒ“°¢6öç7B&ö&U6WD6ö×&—6öâÒW6TÖVÖò‚‚’Óâ7F—fT66Rò6ö×&U&ö&U6WG2†7F—fT66RçFW7E6–væÇ2Â7F—fT66Ræ6fE6–væÇ2’¢çVÆÂÂ¶7F—fT66UÒ“°¢6öç7B6ö×&—6öç2ÒW6TÖVÖò‚‚’Óâ&ö&U6WD6ö×&—6öãòæ6ö×&—6öç2óòµÒÂ·&ö&U6WD6ö×&—6öåÒ“°¢6öç7BFW7DÖöFRÒW6TÖVÖò‚‚’Óâ7F—fT66RòæÇ—¦U&FU&ö&U6WB†7F—fT66RçFW7E6–væÇ2Â7F—fT66RæÖWFFFç&ö&U÷6—F–öç4FVrÂ7F—fT66RæÖWFFFææçVÇW4ÖVäF–ÖWFW$ÖÒÂ²Ö†–×VÕvfT6÷VçC¢7F—fT66RæÖWFFFæÖ†–×VÕvfT6÷VçBÂ7–æ6‡&öæ—¦F–öä6öæf—&ÖVC¢7F—fT66RæÖWFFFç&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVBÂ6Vç6÷$&æGv–GF„´‡£¢7F—fT66RæÖWFFFæW‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡¢Âf–ÇFW$7WFöfd´‡£¢7F—fT66RæÖWFFFæW‡W&–ÖVçDf–ÇFW$7WFöfd´‡¢Ò’¢çVÆÂÂ¶7F—fT66UÒ“°¢6öç7B6fDÖöFRÒW6TÖVÖò‚‚’Óâ7F—fT66RòæÇ—¦U&FU&ö&U6WB†7F—fT66Ræ6fE6–væÇ2Â7F—fT66RæÖWFFFç&ö&U÷6—F–öç4FVrÂ7F—fT66RæÖWFFFææçVÇW4ÖVäF–ÖWFW$ÖÒÂ²Ö†–×VÕvfT6÷VçC¢7F—fT66RæÖWFFFæÖ†–×VÕvfT6÷VçBÂ7–æ6‡&öæ—¦F–öä6öæf—&ÖVC¢7F—fT66RæÖWFFFç&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVBÒ’¢çVÆÂÂ¶7F—fT66UÒ“°¢6öç7B&V6öÖÖVæFF–öä&6VÆ–æT–BÒ7F—fT66Sòç&VÆF–öç6†—òæ&6VÆ–æT66T–Bóò7F—fT66Sòæ–BóòçVÆÃ°¢6öç7B66T†—7F÷'”Wf–FVæ6RÒW6TÖVÖò‚‚’Óâ&V6öÖÖVæFF–öä&6VÆ–æT–Bò'V–ÆD66T†—7F÷'”Wf–FVæ6R†66W2Â&V6öÖÖVæFF–öä&6VÆ–æT–B’¢µÒÂ¶66W2Â&V6öÖÖVæFF–öä&6VÆ–æT–EÒ“°¢6öç7B&V6VFVçDWf–FVæ6RÒW6TÖVÖò‚‚’Óâ66W0¢æf–ÇFW"‚†—FVÒ’Óâ—FVÒç&VÆF–öç6†—¢æfÆDÖ‚†—FVÒ’Óâ'V–ÆD66T†—7F÷'”Wf–FVæ6R†66W2Â—FVÒæ–B’’Â¶66W5Ò“°¢6öç7B76W76ÖVçBÒW6TÖVÖò‚‚’Óâ7F—fT66RbbFW7DÖöFRbb6fDÖöFRò'V–ÆD66T76W76ÖVçB†7F—fT66RæÖWFFFÂ6ö×&—6öç2ÂFW7DÖöFRÂ6fDÖöFR’¢çVÆÂÂ¶7F—fT66RÂ6ö×&—6öç2ÂFW7DÖöFRÂ6fDÖöFUÒ“°¢6öç7BÆFW7D66WFVDWf–FVæ6RÒ&V6öÖÖVæFF–öä&6VÆ–æT–Bò6VÆV7EÆææ–ætWf–FVæ6R†66T†—7F÷'”Wf–FVæ6RÂ&V6öÖÖVæFF–öä&6VÆ–æT–B’¢çVÆÃ°¢6öç7BÆææ–æt66RÒ66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒÆFW7D66WFVDWf–FVæ6Sòæ66T–B¢óò66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ&V6öÖÖVæFF–öä&6VÆ–æT–B¢óò7F—fT66S°¢6öç7BÆä76W76ÖVçBÒW6TÖVÖò‚‚’Óâ°¢–b‚Æææ–æt66R’&WGW&âçVÆÃ°¢6öç7B&VÆWfçE&V6VFVçG2Ò6VÆV7D–æFWVæFVçE&V6VFVçG2‡&V6VFVçDWf–FVæ6RÂ&V6öÖÖVæFF–öä&6VÆ–æT–BÂÆææ–æt66Rç6÷W&6R“°¢6öç7BÆææ–æt6ö×&—6öâÒ6ö×&U&ö&U6WG2‡Æææ–æt66RçFW7E6–væÇ2ÂÆææ–æt66Ræ6fE6–væÇ2“°¢6öç7BÆææ–æuFW7DÖöFRÒæÇ—¦U&FU&ö&U6WB‡Æææ–æt66RçFW7E6–væÇ2ÂÆææ–æt66RæÖWFFFç&ö&U÷6—F–öç4FVrÂÆææ–æt66RæÖWFFFææçVÇW4ÖVäF–ÖWFW$ÖÒÂ²Ö†–×VÕvfT6÷VçC¢Æææ–æt66RæÖWFFFæÖ†–×VÕvfT6÷VçBÂ7–æ6‡&öæ—¦F–öä6öæf—&ÖVC¢Æææ–æt66RæÖWFFFç&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVBÂ6Vç6÷$&æGv–GF„´‡£¢Æææ–æt66RæÖWFFFæW‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡¢Âf–ÇFW$7WFöfd´‡£¢Æææ–æt66RæÖWFFFæW‡W&–ÖVçDf–ÇFW$7WFöfd´‡¢Ò“°¢6öç7BÆææ–æt6fDÖöFRÒæÇ—¦U&FU&ö&U6WB‡Æææ–æt66Ræ6fE6–væÇ2ÂÆææ–æt66RæÖWFFFç&ö&U÷6—F–öç4FVrÂÆææ–æt66RæÖWFFFææçVÇW4ÖVäF–ÖWFW$ÖÒÂ²Ö†–×VÕvfT6÷VçC¢Æææ–æt66RæÖWFFFæÖ†–×VÕvfT6÷VçBÂ7–æ6‡&öæ—¦F–öä6öæf—&ÖVC¢Æææ–æt66RæÖWFFFç&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVBÒ“°¢&WGW&â'V–ÆD66T76W76ÖVçB‡Æææ–æt66RæÖWFFFÂÆææ–æt6ö×&—6öâæ6ö×&—6öç2ÂÆææ–æuFW7DÖöFRÂÆææ–æt6fDÖöFRÂ66T†—7F÷'”Wf–FVæ6RÂ&VÆWfçE&V6VFVçG2“°¢ÒÂ·Æææ–æt66RÂ&V6öÖÖVæFF–öä&6VÆ–æT–BÂ66T†—7F÷'”Wf–FVæ6RÂ&V6VFVçDWf–FVæ6UÒ“°¢6öç7B7F—fTæÇ—6—4–çWBÒ7VÖÖ&—¦TæÇ—6—4–çWB†7F—fT66R“°¢6öç7B7F—fT66TWf–FVæ6RÒ7F—fT66Sòç&VÆF–öç6†—ò66T†—7F÷'”Wf–FVæ6Ræf–æB‚†—FVÒ’Óâ—FVÒæ66T–BÓÓÒ7F—fT66Ræ–B’óòçVÆÂ¢çVÆÃ°¢6öç7B&V6öÖÖVæFF–öå&W7VÇDWf–FVæ6RÒ7F—fT66TWf–FVæ6RóòÆFW7D66WFVDWf–FVæ6S°¢6öç7BFV6—6–öåVÆ—G’Ò7F—fT66Rbb76W76ÖVçBbbÆä76W76ÖVçBò'V–ÆDFV6—6–öåVÆ—G’‡°¢6÷W&6S¢7F—fT66Rç6÷W&6RÀ¢fÆ–F—G•7FGW3¢76W76ÖVçBçfÆ–F—G’ç7FGW2À¢FFVÆ—G•7FGW3¢76W76ÖVçBæFFVÆ—G’ç7FGW2À¢6öçG&öÆÆVE&W7VÇE7FGW3¢&V6öÖÖVæFF–öå&W7VÇDWf–FVæ6Sòç6WVVæ6U7FGW2óòçVÆÂÀ¢WÆöFVE&V6VFVçD6÷VçC¢Æä76W76ÖVçBææW‡E'Vâç&V6VFVçBçWÆöFVD6÷VçBÀ¢Ò’¢çVÆÃ°¢6öç7B&6VÆ–æT66TæÖRÒ7F—fT66Sòç&VÆF–öç6†—ò66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ7F—fT66Rç&VÆF–öç6†—òæ&6VÆ–æT66T–B“òæÖWFFFææÖR¢çVÆÃ°¢6öç7B7F—fU&VfW&Væ6TæÖRÒ7F—fT66Sòç&VÆF–öç6†—ò66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ†7F—fT66Rç&VÆF–öç6†—òç&VfW&Væ6T66T–Bóò7F—fT66Rç&VÆF–öç6†—òæ&6VÆ–æT66T–B’“òæÖWFFFææÖR¢çVÆÃ°¢6öç7B7F—fT6ö×&—6öâÒ6ö×&—6öç5¶7F—fU&ö&UÓ°¢6öç7B6÷'&VÆF–öâÒ6ö×&—6öç2æÆVæwF‚òfW&vR†6ö×&—6öç2æÖ‚†—FVÒ’Óâ—FVÒæ6÷'&VÆF–öâ’’¢çVÖ&W"äæã°¢6öç7Bç&×6RÒ6ö×&—6öç2æÆVæwF‚òfW&vR†6ö×&—6öç2æÖ‚†—FVÒ’Óâ—FVÒæç&×6R’’¢çVÖ&W"äæã°¢6öç7B&W77W&T&–2Ò6ö×&—6öç2æÆVæwF‚òfW&vR†6ö×&—6öç2æÖ‚†—FVÒ’Óâ—FVÒç&W77W&T&–2’’¢çVÖ&W"äæã°¢6öç7B‡—6–746ö×&—6öç2Ò7F—fT66Rò'V–ÆE‡—6–746ö×&—6öâ†7F—fT66RæÖWFFF’¢µÓ°¢6öç7B‡—6–75&÷f–FVD6÷VçBÒ‡—6–746ö×&—6öç2æf–ÇFW"‚‡&÷r’Óâ&÷ræW‡W&–ÖVçBÓÒçVÆÂÇÂ&÷ræ6fBÓÒçVÆÂ’æÆVæwFƒ°¢6öç7BvfVf÷&Õv—F†–äÆ–Ö—BÒ6÷'&VÆF–öâãÒ$Ud”UuõD…$U4„ôÄE2æÖ–æ–×VÔ6÷'&VÆF–öã°¢6öç7B66U7VÖÖ&–W2ÒW6TÖVÖò‚‚’Óâ÷W&F–æuö–çE'Vç2æÖ‡7VÖÖ&—¦T66R’Â¶÷W&F–æuö–çE'Vç5Ò“°¢6öç7B&6VÆ–æU7VÖÖ'’Ò66U7VÖÖ&–W2æf–æB‚‡7VÖÖ'’’Óâ7VÖÖ'’æ—FVÒæ–BÓÓÒ66T&6VÆ–æT–B’óò66U7VÖÖ&–W5³ÒóòçVÆÃ°¢6öç7BG&gE&VfW&Væ6T66RÒG&gE&VÆF–öç6†— ¢òG&gD÷W&F–æuö–çE'Vç2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ†G&gE&VÆF–öç6†—ç&VfW&Væ6T66T–BóòG&gE&VÆF–öç6†—æ&6VÆ–æT66T–B’’óò66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ†G&gE&VÆF–öç6†—ç&VfW&Væ6T66T–BóòG&gE&VÆF–öç6†—æ&6VÆ–æT66T–B’’óòçVÆÀ¢¢çVÆÃ°¢6öç7B6öçG&öÆÆVE&W'VäG&gBÒ&ööÆVâ†G&gE&VfW&Væ6T66RbbG&gE&VÆF–öç6†—bbVF—F–æt66T–B“°¢6öç7BÖV7W&VEö–çDG&gBÒÆöFW$ÖöFRÓÓÒ&ÖV7W&VB×ö–çB#°¢6öç7BG&gD÷W&F–æuö–çBÒ÷W&F–æuö–çG2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒG&gD÷W&F–æuö–çD–B’óòçVÆÃ°¢6öç7B6VÆV7FVE&W'Väf–VÆG2ÒG&gE&VÆF–öç6†—òæ6†ævVE&ÖWFW"ò4ôåE$ôÄÄTEõ$ÔUDU%5¶G&gE&VÆF–öç6†—æ6†ævVE&ÖWFW%Òæf–VÆG2¢µÓ°¢6öç7B6†ævVE&W'Väf–VÆG2ÒG&gE&VfW&Væ6T66P¢ò6VÆV7FVE&W'Väf–VÆG2æf–ÇFW"‚†f–VÆB’ÓâÖWFFFfÇVTWVÂ†G&gE&VfW&Væ6T66RæÖWFFF¶f–VÆEÒÂG&gE¶f–VÆEÒ’¢¢µÓ°¢6öç7B–æ†W&—FVDW‡W&–ÖVçDæÖRÒG&gE&VfW&Væ6T66Sòæ–×÷'G3òæW‡W&–ÖVçBæf–ÆTæÖP¢óòG&gE&VfW&Væ6T66SòçFW7E6–væÇ5³ÓòææÖRç7Æ—B‚"+r"•³Ğ¢óò$W‡W&–ÖVçBFF#° ¢gVæ7F–öâ&W'Väf–VÆDÆö6¶VB†f–VÆC¢¶W–öb66TÖWFFF’°¢–b‚ÖV7W&VEö–çDG&gBbbU…U$”ÔTåEôõtäTEôd”TÄE2æ–æ6ÇVFW2†f–VÆB’’&WGW&âG'VS°¢–b‚6öçG&öÆÆVE&W'VäG&gB’&WGW&âfÇ6S°¢–b…$U%TåôÅt•5ôTD•D$ÄUôd”TÄE2æ–æ6ÇVFW2†f–VÆB’’&WGW&âfÇ6S°¢–b†f–VÆBÓÓÒ&ÖW6„6öçfW&vVæ6U7B"’&WGW&âG&gE&VÆF–öç6†—òæ6†ævVE&ÖWFW"ÓÒ&ÖW6‚×&W6öÇWF–öâ#°¢–b†f–VÆBÓÓÒ'F–ÖU7FW6öçfW&vVæ6U7B"’&WGW&âG&gE&VÆF–öç6†—òæ6†ævVE&ÖWFW"ÓÒ&fÆ÷r×F–ÖR×7FW#°¢&WGW&â6VÆV7FVE&W'Väf–VÆG2æ–æ6ÇVFW2†f–VÆB“°¢Ğ ¢6öç7B–çWE&÷w2Ò7F—fT66Rò°¢²$vVöÖWG'’²&ö&W2"ÂG¶7F—fT66RæÖWFFFææçVÇW4ÖVäF–ÖWFW$ÖÒçFôf—†VBƒ—ÒÖÒÖVâF–ÖWFW"+rG¶7F—fT66RæÖWFFFç&ö&U÷6—F–öç4FVræÆVæwF‡Ò&ö&W2+rÖöFW2(	2G¶7F—fT66RæÖWFFFæÖ†–×VÕvfT6÷VçGÖÒÀ¢²%&W77W&RWf–FVæ6R"ÂG¶7F—fT66RçFW7E6–væÇ2æÆVæwF‡ÒW‡W&–ÖVçB²G¶7F—fT66Ræ6fE6–væÇ2æÆVæwF‡Ò4dBG&6W2+rG¶7F—fT66RçFW7E6–væÇ5³ÒçF–ÖRæÆVæwF‚çFôÆö6ÆU7G&–ær‚—Ò6×ÆW2V6†ÒÀ¢²$ÖV7W&VÖVçB6†–â"ÂG¶7F—fT66RæÖWFFFæW‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡¢çFôf—†VBƒ—Ò´‡¢6Vç6÷"&æGv–GF‚+rG¶7F—fT66RæÖWFFFæW‡W&–ÖVçDf–ÇFW$7WFöfd´‡¢çFôf—†VBƒ—Ò´‡¢f–ÇFW"7WFöfb+r7–æ6‡&öæ—¦VB&ö&W6ÒÀ¢²$÷W&F–ærö–çB"ÂG¶7F—fT66RæÖWFFFæ–æÆWE&W77W&T&"çFôf—†VBƒ—Ò&"–æÆWB+rG¶7F—fT66RæÖWFFFæÖ74fÆ÷t¶u2çFôf—†VBƒ2—Ò¶r÷2+røbG¶7F—fT66RæÖWFFFæWV—fÆVæ6U&F–òçFôf—†VBƒ"—Ò+rG¶7F—fT66RæÖWFFFæ&6µ&W77W&T&"çFôf—†VBƒ"—Ò&"&6²&W77W&R+rG¶7F—fT66RæÖWFFFæ–æÆWEFV×W&GW&T²çFôf—†VBƒ—Ò¶ÒÀ¢²%6öÇfW"²F—67&WF—¦F–öâ"ÂG¶7F—fT66RæÖWFFFç6öÇfW'ÒG¶7F—fT66RæÖWFFFç6öÇfW%fW'6–öçÒ+rG¶7F—fT66RæÖWFFFæF–ÖVç6–öæÆ—G—Ò+rG¶7F—fT66RæÖWFFFç7F–Å66†VÖWÒòG¶7F—fT66RæÖWFFFç7F–Ä÷&FW'Ò+rG¶7F—fT66RæÖWFFFæçVÖW&–6ÄfÇW‡ÖÒÀ¢²$6ö×WFF–öæÂ6÷7B"ÂçVÖ&W"æ—4f–æ—FR†7F—fT66RæÖWFFFç6öÇfW%'VçF–ÖT†÷W'2’òG¶7F—fT66RæÖWFFFç6öÇfW%'VçF–ÖT†÷W'2çFôf—†VBƒ—Ò6öÇfW"†÷W'6¢%'VçF–ÖRæ÷B7WÆ–VB%ÒÀ¢²%F–ÖR–çFVw&F–öâ"ÂG¶7F—fT66RæÖWFFFçFV×÷&Å66†VÖWÒòG¶7F—fT66RæÖWFFFçFV×÷&Ä÷&FW'Ò+rG¶7F—fT66RæÖWFFFçF–ÖU7FWW2çFôf—†VBƒ2—Ò+W2+r4dÂG¶7F—fT66RæÖWFFFæ6fÂçFôf—†VBƒ"—ÖÒÀ¢²%&W6öÇWF–öâ"ÂG¶7F—fT66RæÖWFFFæÖW6„6VÆÇ2çFôÆö6ÆU7G&–ær‚—Ò6VÆÇ2+rG¶7F—fT66RæÖWFFFæÖ–æ–×VÔ6VÆÅ6—¦TÖÒçFôf—†VBƒ2—ÒÖÒÖ–æ–×VÒ+rG¶7F—fT66RæÖWFFFæ6VÆÇ5W$–æGV7F–öäÆVæwF‚çFôf—†VBƒ—Ò6VÆÇ2ö–æGV7F–öâÆVæwF†ÒÀ¢²%‡—6–72²&÷VæF&–W2"ÂG¶7F—fT66RæÖWFFFæ6†VÖ—7G'”ÖöFVÇÒ+rG¶7F—fT66RæÖWFFFçGW&'VÆVæ6TÖöFVÇÒ+rG¶7F—fT66RæÖWFFFçvÆÄ&÷VæF'”6öæF—F–öçÖÒÀ¢²%Væ6W'F–çG’"ÂW‡W&–ÖVçB+G¶7F—fT66RæÖWFFFç&W77W&UVæ6W'F–çG•7BçFôf—†VBƒ—ÒRÂ+G¶7F—fT66RæÖWFFFçF–Ö–æuVæ6W'F–çG•W2çFôf—†VBƒ"—Ò+W2+r4dB+G¶7F—fT66RæÖWFFFæ6fE&W77W&UVæ6W'F–çG•7BçFôf—†VBƒ—ÒRÂ+G¶7F—fT66RæÖWFFFæ6fEF–Ö–æuVæ6W'F–çG•W2çFôf—†VBƒ"—Ò+W6ÒÀ¢Ò¢µÓ° ¢6öç7B&Wf–WtÖWG&–72Ò76W76ÖVçCòæÖWG&–72æf–ÇFW"‚†ÖWG&–2’ÓâÖWG&–2çFöæRÓÓÒ'&Wf–Wr"’æÆVæwF‚óò°¢6öç7B–æ6öæ6ÇW6—fTÖWG&–72Ò76W76ÖVçCòæÖWG&–72æf–ÇFW"‚†ÖWG&–2’ÓâÖWG&–2çFöæRÓÓÒ&æWWG&Â"’æÆVæwF‚óò°¢6öç7BF÷FÅ&Wf–WrÒ&Wf–WtÖWG&–72²‡vfVf÷&Õv—F†–äÆ–Ö—Bò¢’²†76W76ÖVçCòçfÆ–F—G’ç7FGW2ÓÓÒ%fÆ–B"ò¢“° ¢6öç7BÆ–¶VÇ”‡—÷F†W6—2ÒÆä76W76ÖVçCòæ‡—÷F†W6W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒÆä76W76ÖVçBææW‡E'Vâç&V6öæ–ætÆVFvW"æ‡—÷F†W6—4–B’óòçVÆÃ°¢6öç7BÆ–¶VÇ•6÷W&6W2ÒÆ–¶VÇ”‡—÷F†W6—2ò6÷W&6W4f÷"†Æ–¶VÇ”‡—÷F†W6—2ç6÷W&6T–G2’¢µÓ°¢6öç7BFV6—6–öå7VÖÖ'“¢FV6—6–öå7VÖÖ'’Ò7F—fT66TWf–FVæ6Rò°¢Æ&VÃ¢%&W7VÇBöbF†—2&W'Vâ"À¢ÆVC¢G¶7F—fT66TWf–FVæ6Ræ6öçG&öÆÆVBò÷WF6öÖTÆ&VÂ†7F—fT66TWf–FVæ6R’¢$6ö×&—6öâöæÇ’'Ó¦À¢F—FÆS¢G¶7F—fT66Sòç&VÆF–öç6†—òæ6†ævVE&ÖWFW"ò&ÖWFW$Æ&VÂ†7F—fT66Rç&VÆF–öç6†—æ6†ævVE&ÖWFW"’¢6†ævTÆ&VÂ†7F—fT66Sòç&VÆF–öç6†—òæ6†ævVEf&–&ÆRóò&÷F†W""—Ò&W7öç6VÀ¢FWF–Ã¢6öæ6—6T÷WF6öÖTFWF–Â†7F—fT66TWf–FVæ6R’À¢ÖVæ–æs¢7F—fT66TWf–FVæ6Ræ6öçG&öÆÆVBò÷WF6öÖTÖVæ–ær†7F—fT66TWf–FVæ6R’¢6ö×&—6öäöæÇ”ÖVæ–ær†7F—fT66TWf–FVæ6R’À¢FöæS¢7F—fT66TWf–FVæ6Ræ6öçG&öÆÆVBò÷WF6öÖUFöæR†7F—fT66TWf–FVæ6R’¢&æWWG&Â"À¢Ò¢°¢Æ&VÃ¢$7W'&VçBF–væ÷6—2"À¢ÆVC¢$Æ–¶VÇ’—77VS¢"À¢F—FÆS¢Æ–¶VÇ”‡—÷F†W6—3òçF—FÆRóò$6ææ÷B76W72"À¢FWF–Ã¢çVÆÂÀ¢ÖVæ–æs¢Æä76W76ÖVçCòææW‡E'Vâç&V6öâóò$·—F‡&÷26ææ÷B6†ö÷6RæW‡B'Vâg&öÒF†RæÇ—¦VBWf–FVæ6Râ"À¢FöæS¢&æWWG&Â"À¢Ó°¢6öç7B6†÷tFWF–ÆVDWf–FVæ6RÒfÇ6S° ¢gVæ7F–öâ÷VäæWt66R‚’°¢–b†7F—fTFW6–vä–B’&WGW&â÷Vä÷W&F–æuö–çB†7F—fTFW6–vä–B“°¢6WE&öGV7Ef–Wr‚&FW6–vâ"“°¢Ğ ¢gVæ7F–öâ÷Vä÷W&F–æuö–çB†FW6–vä–C¢7G&–ærÂö–çCó¢ÆææVD÷W&F–æuö–çB’°¢6öç7BFW6–vâÒFW6–vç2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒFW6–vä–B“°¢6öç7BæW‡DG&gBÒ6ÆöæTÖWFFF„TÕE•ôÔUDDD“°¢6öç7B÷W&F–æuö–çD–BÒ÷ÒG´FFRææ÷r‚’çFõ7G&–ærƒ3b—ÒÒG´ÖF‚ç&æFöÒ‚’çFõ7G&–ærƒ3b’ç6Æ–6Rƒ"Â‚—Ö°¢–b†FW6–vâ’°¢6öç7B6Æ7VÆFVBÒ6Æ7VÆFTFW6–vâ†FW6–vâ“°¢æW‡DG&gBææçVÇW4ÖVäF–ÖWFW$ÖÒÒ6Æ7VÆFVBæÖVäF–ÖWFW$ÖÓ°¢æW‡DG&gBæ–æÆWEFV×W&GW&T²ÒFW6–vâæ–æÆWEFV×W&GW&T³°¢æW‡DG&gBæ&6µ&W77W&T&"ÒFW6–vâæ&6µ&W77W&T&#°¢–b‡ö–çB’°¢æW‡DG&gBææÖRÒG¶FW6–vâææÖWÒ+røbG·ö–çBæWV—fÆVæ6U&F–òçFôf—†VBƒ"—Ò+rG·ö–çBæÖ74fÆ÷t¶u2çFôf—†VBƒ2—Ò¶r÷6°¢æW‡DG&gBæWV—fÆVæ6U&F–òÒö–çBæWV—fÆVæ6U&F–ó°¢æW‡DG&gBæÖ74fÆ÷t¶u2Òö–çBæÖ74fÆ÷t¶u3°¢æW‡DG&gBæ–æÆWE&W77W&T&"Òö–çBæ–æÆWE&W77W&T&#°¢æW‡DG&gBæ–æÆWEFV×W&GW&T²Òö–çBæ–æÆWEFV×W&GW&T³°¢Ğ¢Ğ¢6öç7BæW‡Eö–çC¢÷W&F–æuö–çBÒ°¢–C¢÷W&F–æuö–çD–BÀ¢FW6–vä–BÀ¢æÖS¢æW‡DG&gBææÖRÇÂG¶FW6–vãòææÖRóò$Væv–æR'Ò÷W&F–ærö–çFÀ¢6÷W&6S¢'WÆöFVB"À¢–æÆWE&W77W&T&#¢æW‡DG&gBæ–æÆWE&W77W&T&"À¢–æÆWEFV×W&GW&T³¢æW‡DG&gBæ–æÆWEFV×W&GW&T²À¢WV—fÆVæ6U&F–ó¢æW‡DG&gBæWV—fÆVæ6U&F–òÀ¢Ö74fÆ÷t¶u3¢æW‡DG&gBæÖ74fÆ÷t¶u2À¢&6µ&W77W&T&#¢æW‡DG&gBæ&6µ&W77W&T&"À¢&V6öÖÖVæFF–öã¢ö–çCòç&V6öÖÖVæFF–öâóòçVÆÂÀ¢Ó°¢6WD7F—fTFW6–vä–B†FW6–vä–B“°¢6WDG&gDFW6–vä–B†FW6–vä–B“°¢6WDG&gD÷W&F–æuö–çD–B†÷W&F–æuö–çD–B“°¢6WDG&gDæWt÷W&F–æuö–çB†æW‡Eö–çB“°¢6WDÆöFW$ÖöFR‚&ÖV7W&VB×ö–çB"“°¢6WDVF—F–æt66T–B†çVÆÂ“°¢6WDG&gB†æW‡DG&gB“°¢6WDG&gE&VÆF–öç6†—†çVÆÂ“°¢6WDG&gDg&÷¦VåÆä–B†çVÆÂ“°¢6WEFW7EVæF–ær†çVÆÂ“²6WD6fEVæF–ær†çVÆÂ“²6WEFW7EvÆÅVæF–ær†çVÆÂ“²6WD6fEvÆÅVæF–ær†çVÆÂ“²6WDW'&÷"‚""“²6WE&Wf–Wv–æu&W'Vâ†fÇ6R“²6WE6†÷tÆöFW"‡G'VR“°¢Ğ ¢gVæ7F–öâ÷Vä66TVF—F÷"‚’°¢–b‚7F—fT66R’&WGW&ã°¢6WDVF—F–æt66T–B†7F—fT66Ræ–B“°¢6WDG&gB†6ÆöæTÖWFFF†7F—fT66RæÖWFFF’“°¢6WDG&gDFW6–vä–B†7F—fT66RæFW6–vä–BóòçVÆÂ“°¢6WDG&gD÷W&F–æuö–çD–B†7F—fT66Ræ÷W&F–æuö–çD–BóòçVÆÂ“°¢6WDG&gDæWt÷W&F–æuö–çB†çVÆÂ“°¢6WDÆöFW$ÖöFR‚&6ö×&—6öâ×'Vâ"“°¢6WDG&gE&VÆF–öç6†—†7F—fT66Rç&VÆF–öç6†—óòçVÆÂ“°¢6WDG&gDg&÷¦VåÆä–B†çVÆÂ“°¢6WEFW7EVæF–ær†çVÆÂ“²6WD6fEVæF–ær†çVÆÂ“²6WEFW7EvÆÅVæF–ær†çVÆÂ“²6WD6fEvÆÅVæF–ær†çVÆÂ“²6WDW'&÷"‚""“²6WE&Wf–Wv–æu&W'Vâ†fÇ6R“²6WE6†÷tÆöFW"‡G'VR“°¢Ğ ¢gVæ7F–öâ÷VäæWu'Väf÷$÷W&F–æuö–çB‚’°¢–b‚7F—fT÷W&F–æuö–çD–B’&WGW&ã°¢6öç7B&6VÆ–æRÒ÷W&F–æuö–çE'Vç2æf–æB‚†—FVÒ’Óâ—FVÒç&VÆF–öç6†—’óò÷W&F–æuö–çE'Vç5³Ó°¢–b‚&6VÆ–æR’&WGW&â÷Vä&6VÆ–æT6fDf÷$÷W&F–æuö–çB†7F—fT÷W&F–æuö–çD–B“°¢6WDVF—F–æt66T–B†çVÆÂ“°¢6WDG&gD÷W&F–æuö–çD–B†7F—fT÷W&F–æuö–çD–B“°¢6WDG&gDæWt÷W&F–æuö–çB†çVÆÂ“°¢6WDÆöFW$ÖöFR‚&6ö×&—6öâ×'Vâ"“°¢6WDG&gDFW6–vä–B†&6VÆ–æRæFW6–vä–Bóò7F—fTFW6–vä–B“°¢6WDG&gE&VÆF–öç6†—‡²&6VÆ–æT66T–C¢&6VÆ–æRæ–BÂ&VfW&Væ6T66T–C¢&6VÆ–æRæ–BÂ6†ævVEf&–&ÆS¢&÷F†W""Â6†ævVE&ÖWFW#¢çVÆÂÂFW67&—F–öã¢""Ò“°¢6WDG&gDg&÷¦VåÆä–B†çVÆÂ“°¢6öç7B–æ†W&—FVBÒ6ÆöæTÖWFFF†&6VÆ–æRæÖWFFF“°¢–æ†W&—FVBææÖRÒG¶&6VÆ–æRæÖWFFFææÖWÒ&W'Væ°¢6ÆV$6fE‡—6–72†–æ†W&—FVB“°¢6WDG&gB†–æ†W&—FVB“°¢6WEFW7EVæF–ær†çVÆÂ“²6WD6fEVæF–ær†çVÆÂ“²6WEFW7EvÆÅVæF–ær†çVÆÂ“²6WD6fEvÆÅVæF–ær†çVÆÂ“²6WDW'&÷"‚""“²6WE&Wf–Wv–æu&W'Vâ†fÇ6R“²6WE6†÷tÆöFW"‡G'VR“°¢Ğ ¢gVæ7F–öâ÷Vä&6VÆ–æT6fDf÷$÷W&F–æuö–çB†÷W&F–æuö–çD–C¢7G&–ær’°¢6öç7Bö–çBÒ÷W&F–æuö–çG2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ÷W&F–æuö–çD–B“°¢–b‚ö–çCòæW‡W&–ÖVçB’&WGW&ã°¢6öç7BæW‡DG&gBÒ6ÆöæTÖWFFF„TÕE•ôÔUDDD“°¢æW‡DG&gBææÖRÒG·ö–çBææÖWÒ&6VÆ–æR4dF°¢æW‡DG&gBææçVÇW4ÖVäF–ÖWFW$ÖÒÒö–çBæW‡W&–ÖVçBææçVÇW4ÖVäF–ÖWFW$ÖÓ°¢æW‡DG&gBææçVÇW4F–ÖWFW%Væ6W'F–çG”ÖÒÒö–çBæW‡W&–ÖVçBææçVÇW4F–ÖWFW%Væ6W'F–çG”ÖÓ°¢æW‡DG&gBç&ö&U÷6—F–öç4FVrÒ²ââçö–çBæW‡W&–ÖVçBç&ö&U÷6—F–öç4FVuÓ°¢æW‡DG&gBæÖ†–×VÕvfT6÷VçBÒö–çBæW‡W&–ÖVçBæÖ†–×VÕvfT6÷VçC°¢æW‡DG&gBç&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVBÒö–çBæW‡W&–ÖVçBç&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVC°¢æW‡DG&gBæW‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡¢Òö–çBæW‡W&–ÖVçBæW‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡£°¢æW‡DG&gBæW‡W&–ÖVçDf–ÇFW$7WFöfd´‡¢Òö–çBæW‡W&–ÖVçBæW‡W&–ÖVçDf–ÇFW$7WFöfd´‡£°¢æW‡DG&gBæ–æÆWE&W77W&T&"Òö–çBæ–æÆWE&W77W&T&#°¢æW‡DG&gBæ–æÆWEFV×W&GW&T²Òö–çBæ–æÆWEFV×W&GW&T³°¢æW‡DG&gBæWV—fÆVæ6U&F–òÒö–çBæWV—fÆVæ6U&F–ó°¢æW‡DG&gBæÖ74fÆ÷t¶u2Òö–çBæÖ74fÆ÷t¶u3°¢æW‡DG&gBæ&6µ&W77W&T&"Òö–çBæ&6µ&W77W&T&#°¢æW‡DG&gBç&W77W&UVæ6W'F–çG•7BÒö–çBæW‡W&–ÖVçBç&W77W&UVæ6W'F–çG•7C°¢æW‡DG&gBçF–Ö–æuVæ6W'F–çG•W2Òö–çBæW‡W&–ÖVçBçF–Ö–æuVæ6W'F–çG•W3°¢ö&¦V7Bæ76–vâ†æW‡DG&gBÂ‡—6–74ÖWFFFfÇVW2‡ö–çBæW‡W&–ÖVçBç‡—6–72’“°¢6WD7F—fTFW6–vä–B‡ö–çBæFW6–vä–B“°¢6WD7F—fT÷W&F–æuö–çD–B‡ö–çBæ–B“°¢6WDG&gDFW6–vä–B‡ö–çBæFW6–vä–B“°¢6WDG&gD÷W&F–æuö–çD–B‡ö–çBæ–B“°¢6WDG&gDæWt÷W&F–æuö–çB†çVÆÂ“°¢6WDÆöFW$ÖöFR‚&6ö×&—6öâ×'Vâ"“°¢6WDVF—F–æt66T–B†çVÆÂ“°¢6WDG&gB†æW‡DG&gB“°¢6WDG&gE&VÆF–öç6†—†çVÆÂ“°¢6WDG&gDg&÷¦VåÆä–B†çVÆÂ“°¢6WEFW7EVæF–ær†çVÆÂ“²6WD6fEVæF–ær†çVÆÂ“²6WEFW7EvÆÅVæF–ær†çVÆÂ“²6WD6fEvÆÅVæF–ær†çVÆÂ“²6WDW'&÷"‚""“²6WE&Wf–Wv–æu&W'Vâ†fÇ6R“²6WE6†÷tÆöFW"‡G'VR“°¢Ğ ¢gVæ7F–öâ6VÆV7DFW6–vâ†FW6–vä–C¢7G&–ær’°¢6WD7F—fTFW6–vä–B†FW6–vä–B“°¢6öç7Bö–çBÒ÷W&F–æuö–çG2æf–æB‚†—FVÒ’Óâ—FVÒæFW6–vä–BÓÓÒFW6–vä–B’óòçVÆÃ°¢6WD7F—fT÷W&F–æuö–çD–B‡ö–çCòæ–BóòçVÆÂ“°¢6öç7B'VâÒö–çBò66W2æf–æB‚†—FVÒ’Óâ—FVÒæ÷W&F–æuö–çD–BÓÓÒö–çBæ–B’óòçVÆÂ¢çVÆÃ°¢6WD7F—fT66T–B‡'Vãòæ–BóòçVÆÂ“°¢6WEv÷&·76Uf–Wr‚&66R"“°¢Ğ ¢gVæ7F–öâ6VÆV7D÷W&F–æuö–çB†÷W&F–æuö–çD–C¢7G&–ær’°¢6WD7F—fT÷W&F–æuö–çD–B†÷W&F–æuö–çD–B“°¢6öç7B'VâÒ66W2æf–æB‚†—FVÒ’Óâ—FVÒæ÷W&F–æuö–çD–BÓÓÒ÷W&F–æuö–çD–B’óòçVÆÃ°¢6WD7F—fT66T–B‡'Vãòæ–BóòçVÆÂ“°¢6WD66T&6VÆ–æT–B‡'Vãòç&VÆF–öç6†—òæ&6VÆ–æT66T–Bóò'Vãòæ–BóòçVÆÂ“°¢6WEv÷&·76Uf–Wr‚&66R"“°¢6WD7F—fU&ö&Rƒ“°¢Ğ ¢gVæ7F–öâ–æ†W&—E7F'F–æt66R‡&VfW&Væ6T66T–C¢7G&–ærÂ&Wf–÷W5&VfW&Væ6T66T–Có¢7G&–ær’°¢6öç7B&VfW&Væ6RÒ66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ&VfW&Væ6T66T–B“°¢–b‚&VfW&Væ6R’&WGW&ã°¢–b‚VF—F–æt66T–B’°¢6WDG&gB‚†7W'&VçB’Óâ°¢6öç7B–æ†W&—FVBÒ6ÆöæTÖWFFF‡&VfW&Væ6RæÖWFFF“°¢6öç7B&Wf–÷W5&VfW&Væ6RÒ66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ&Wf–÷W5&VfW&Væ6T66T–B“°¢6öç7B7W'&VçDæÖRÒ7W'&VçBææÖRçG&–Ò‚“°¢6öç7B&Wf–÷W4FVfVÇDæÖRÒ&Wf–÷W5&VfW&Væ6RòG·&Wf–÷W5&VfW&Væ6RæÖWFFFææÖWÒ&W'Væ¢"#°¢–æ†W&—FVBææÖRÒ7W'&VçDæÖRÇÂ7W'&VçDæÖRÓÓÒ&Wf–÷W4FVfVÇDæÖP¢òG·&VfW&Væ6RæÖWFFFææÖWÒ&W'Væ ¢¢7W'&VçBææÖS°¢6ÆV$6fE‡—6–72†–æ†W&—FVB“°¢&WGW&â–æ†W&—FVC°¢Ò“°¢6WDG&gDFW6–vä–B‡&VfW&Væ6RæFW6–vä–BóòçVÆÂ“°¢6WDG&gD÷W&F–æuö–çD–B‡&VfW&Væ6Ræ÷W&F–æuö–çD–BóòçVÆÂ“°¢6WDG&gDæWt÷W&F–æuö–çB†çVÆÂ“°¢Ğ¢6WEFW7EVæF–ær†çVÆÂ“°¢6WD6fEVæF–ær†çVÆÂ“°¢6WE&Wf–Wv–æu&W'Vâ†fÇ6R“°¢6WDW'&÷"‚""“°¢Ğ ¢gVæ7F–öâ6†ö÷6T66TfÖ–Ç’†&6VÆ–æT66T–C¢7G&–ær’°¢–b‚&6VÆ–æT66T–B’°¢6WDG&gE&VÆF–öç6†—†çVÆÂ“°¢6WEFW7EVæF–ær†çVÆÂ“°¢6WD6fEVæF–ær†çVÆÂ“°¢&WGW&ã°¢Ğ¢6WDG&gE&VÆF–öç6†—‡°¢&6VÆ–æT66T–BÀ¢&VfW&Væ6T66T–C¢&6VÆ–æT66T–BÀ¢6†ævVEf&–&ÆS¢G&gE&VÆF–öç6†—òæ6†ævVEf&–&ÆRóò&÷F†W""À¢6†ævVE&ÖWFW#¢G&gE&VÆF–öç6†—òæ6†ævVE&ÖWFW"óòçVÆÂÀ¢FW67&—F–öã¢G&gE&VÆF–öç6†—òæFW67&—F–öâóò""À¢Ò“°¢–æ†W&—E7F'F–æt66R†&6VÆ–æT66T–B“°¢Ğ ¢gVæ7F–öâ6†ö÷6U7F'F–æt66R‡&VfW&Væ6T66T–C¢7G&–ær’°¢6WDG&gE&VÆF–öç6†—‚†7W'&VçB’Óâ7W'&VçBò²ââæ7W'&VçBÂ&VfW&Væ6T66T–BÒ¢çVÆÂ“°¢–æ†W&—E7F'F–æt66R‡&VfW&Væ6T66T–BÂG&gE&VÆF–öç6†—òç&VfW&Væ6T66T–B“°¢Ğ ¢gVæ7F–öâ6†ö÷6T6†ævVE&ÖWFW"†6†ævVE&ÖWFW#¢6öçG&öÆÆVE&ÖWFW"ÂçVÆÂ’°¢6WDG&gE&VÆF–öç6†—‚†7W'&VçB’Óâ7W'&VçBò°¢ââæ7W'&VçBÀ¢6†ævVE&ÖWFW"À¢6†ævVEf&–&ÆS¢6†ævVE&ÖWFW"ò4ôåE$ôÄÄTEõ$ÔUDU%5¶6†ævVE&ÖWFW%Òçf&–&ÆR¢&÷F†W""À¢Ò¢çVÆÂ“°¢–b†G&gE&VfW&Væ6T66RbbVF—F–æt66T–B’°¢6WDG&gB‚†7W'&VçB’Óâ°¢6öç7B–æ†W&—FVBÒ6ÆöæTÖWFFF†G&gE&VfW&Væ6T66RæÖWFFF“°¢–æ†W&—FVBææÖRÒ7W'&VçBææÖS°¢–æ†W&—FVBç6öÇfW%'VçF–ÖT†÷W'2Ò7W'&VçBç6öÇfW%'VçF–ÖT†÷W'3°¢–æ†W&—FVBæ6fE&W77W&UVæ6W'F–çG•7BÒ7W'&VçBæ6fE&W77W&UVæ6W'F–çG•7C°¢–æ†W&—FVBæ6fEF–Ö–æuVæ6W'F–çG•W2Ò7W'&VçBæ6fEF–Ö–æuVæ6W'F–çG•W3°¢f÷"†6öç7B—FVÒöb…•4”55ôÔT5U$TÔTåEôDTd”ä•D”ôå2’–æ†W&—FVE¶—FVÒæ6fD¶W•ÒÒ7W'&VçE¶—FVÒæ6fD¶W•Ò2æWfW#°¢&WGW&â–æ†W&—FVC°¢Ò“°¢Ğ¢6WE&Wf–Wv–æu&W'Vâ†fÇ6R“°¢6WDW'&÷"‚""“°¢Ğ ¢gVæ7F–öâ&Wf–Wu&W'Vâ‚’°¢–b‚G&gE&VÆF–öç6†—ÇÂVF—F–æt66T–B’&WGW&âÇ”66R‚“°¢–b‚G&gE&VfW&Væ6T66R’&WGW&â6WDW'&÷"‚$6†ö÷6RF†RW†7B7F'F–ær'Vâf÷"F†—2&W'Vââ"“°¢–b‚G&gE&VÆF–öç6†—æ6†ævVE&ÖWFW"’&WGW&â6WDW'&÷"‚$6†ö÷6RF†R6–ævÆR4dB&ÖWFW"&V–ærFW7FVBâ"“°¢–b†G&gDg&÷¦VåÆä–B’°¢6öç7Bg&÷¦VåÆâÒg&÷¦Vå'VåÆç2æf–æB‚‡Æâ’ÓâÆâçv÷&´÷&FW"æ–BÓÓÒG&gDg&÷¦VåÆä–BbbÆâç7FGW2ÓÓÒ'VæF–ær"“°¢–b‚g&÷¦VåÆâ’&WGW&â6WDW'&÷"‚%F†—2g&÷¦Vâ'VâÆâ—2æòÆöævW"VæF–ærâ7F'B÷"&W7VÖRF†R7W'&VçB&V6öÖÖVæFF–öâ–ç7FVBâ"“°¢–b†g&÷¦VåÆâçv÷&´÷&FW"ç7F'F–æt66Ræ–BÓÒG&gE&VfW&Væ6T66Ræ–BÇÂg&÷¦VåÆâçv÷&´÷&FW"æ6†ævRç&ÖWFW"ÓÒG&gE&VÆF–öç6†—æ6†ævVE&ÖWFW"’&WGW&â6WDW'&÷"‚%F†R&W'VâæòÆöævW"ÖF6†W2—G2g&÷¦Vâ7F'F–ær66RæBöæR×&ÖWFW"&V6öÖÖVæFF–öââ"“°¢6öç7BF&vWBÒg&÷¦VåÆâçv÷&´÷&FW"æ6†ævRç7VvvW7FVEF&vWEfÇVS°¢6öç7B&–Ö'”f–VÆBÒ4ôåE$ôÄÄTEõ$ÔUDU%5¶G&gE&VÆF–öç6†—æ6†ævVE&ÖWFW%Òç&–Ö'”f–VÆC°¢–b‡F&vWBÓÒçVÆÂbbÖWFFFfÇVTWVÂ†G&gE·&–Ö'”f–VÆEÒÂF&vWB’’&WGW&â6WDW'&÷"†F†Rg&÷¦Vâ'Vâ&WV—&W2G·&ÖWFW$Æ&VÂ†G&gE&VÆF–öç6†—æ6†ævVE&ÖWFW"’çFôÆ÷vW$66R‚—ÒÒGµ7G&–ær‡F&vWB—Òâ7&VFRæWrÆâFòW6RF–ffW&VçBF&vWBæ“°¢Ğ¢–b‚6†ævVE&W'Väf–VÆG2æÆVæwF‚’&WGW&â6WDW'&÷"†6†ævRBÆV7BöæRG·&ÖWFW$Æ&VÂ†G&gE&VÆF–öç6†—æ6†ævVE&ÖWFW"’çFôÆ÷vW$66R‚—Òf–VÆB&Vf÷&R&Wf–Wv–ærF†—2&W'Vâæ“°¢–b‚6fEVæF–ær’&WGW&â6WDW'&÷"‚%WÆöBæBÖF†RæWr4dB&W7VÇB&Vf÷&R&Wf–Wv–ærF†—2&W'Vââ"“°¢–b†6fEVæF–ærç6–væÇ2æÆVæwF‚ÓÒG&gBç&ö&U÷6—F–öç4FVræÆVæwF‚’&WGW&â6WDW'&÷"†F†R4dBf–ÆR6öçF–ç2G¶6fEVæF–ærç6–væÇ2æÆVæwF‡Ò&ö&W2Â'WBF†R7F'F–ær'VâW6W2G¶G&gBç&ö&U÷6—F–öç4FVræÆVæwF‡Òæ“°¢6WDW'&÷"‚""“°¢6WE&Wf–Wv–æu&W'Vâ‡G'VR“°¢Ğ ¢gVæ7F–öâÇ”ÖV7W&VD÷W&F–æuö–çB‚’°¢–b‚G&gBææÖRçG&–Ò‚’’&WGW&â6WDW'&÷"‚$v—fRF†—2ÖV7W&VB÷W&F–ærö–çBæÖRâ"“°¢–b‚G&gBç&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVB’&WGW&â6WDW'&÷"‚$6öæf—&ÒF†BWfW'’W‡W&–ÖVçFÂ&ö&RW6W2öæR7–æ6‡&öæ—¦VBF–ÖR&6Râ"“°¢–b‚çVÖ&W"æ—4f–æ—FR†G&gBææçVÇW4ÖVäF–ÖWFW$ÖÒ’ÇÂG&gBææçVÇW4ÖVäF–ÖWFW$ÖÒÃÒ’&WGW&â6WDW'&÷"‚$VçFW"÷6—F—fRæçVÇW2ÖVâF–ÖWFW"â"“°¢–b‚çVÖ&W"æ—4f–æ—FR†G&gBææçVÇW4F–ÖWFW%Væ6W'F–çG”ÖÒ’ÇÂG&gBææçVÇW4F–ÖWFW%Væ6W'F–çG”ÖÒÂ’&WGW&â6WDW'&÷"‚$F–ÖWFW"Væ6W'F–çG’×W7B&R¦W&ò÷"w&VFW"â"“°¢–b†G&gBç&ö&U÷6—F–öç4FVræÆVæwF‚Â2ÇÂG&gBç&ö&U÷6—F–öç4FVrç6öÖR‚‡fÇVR’ÓâçVÖ&W"æ—4f–æ—FR‡fÇVR’’’&WGW&â6WDW'&÷"‚$VçFW"BÆV7BF‡&VRfÆ–B&ö&RævÆW2â"“°¢–b‚çVÖ&W"æ—4–çFVvW"†G&gBæÖ†–×VÕvfT6÷VçB’ÇÂG&gBæÖ†–×VÕvfT6÷VçBÂÇÂG&gBæÖ†–×VÕvfT6÷VçBâ"’&WGW&â6WDW'&÷"‚$Ö†–×VÒW‡V7FVBvfR6÷VçB×W7B&Râ–çFVvW"g&öÒFò"â"“°¢6öç7B÷6—F—fT–çWG3¢'&“Å·7G&–ærÂçVÖ&W%ÓâÒ°¢²$W‡W&–ÖVçB6Vç6÷"&æGv–GF‚"ÂG&gBæW‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡¥ÒÂ²$W‡W&–ÖVçBf–ÇFW"7WFöfb"ÂG&gBæW‡W&–ÖVçDf–ÇFW$7WFöfd´‡¥ÒÀ¢²$–æÆWB&W77W&R"ÂG&gBæ–æÆWE&W77W&T&%ÒÂ²$&6²&W77W&R"ÂG&gBæ&6µ&W77W&T&%ÒÂ²$–æÆWBFV×W&GW&R"ÂG&gBæ–æÆWEFV×W&GW&TµÒÂ²$WV—fÆVæ6R&F–ò"ÂG&gBæWV—fÆVæ6U&F–õÒÂ²$Ö72fÆ÷r"ÂG&gBæÖ74fÆ÷t¶u5ÒÀ¢Ó°¢6öç7B–çfÆ–E÷6—F—fRÒ÷6—F—fT–çWG2æf–æB‚…²ÂfÇVUÒ’ÓâçVÖ&W"æ—4f–æ—FR‡fÇVR’ÇÂfÇVRÃÒ“°¢–b†–çfÆ–E÷6—F—fR’&WGW&â6WDW'&÷"†G¶–çfÆ–E÷6—F—fU³×Ò×W7B&RçVÖ&W"w&VFW"F†â¦W&òæ“°¢–b†G&gBæ–æÆWE&W77W&T&"ÃÒG&gBæ&6µ&W77W&T&"’&WGW&â6WDW'&÷"‚$–æÆWB&W77W&R×W7BW†6VVB&6²&W77W&Râ"“°¢6öç7BVæ6W'F–çF–W3¢'&“Å·7G&–ærÂçVÖ&W%ÓâÒ°¢²$W‡W&–ÖVçB&W77W&RVæ6W'F–çG’"ÂG&gBç&W77W&UVæ6W'F–çG•7EÒÂ²$W‡W&–ÖVçBF–Ö–ærVæ6W'F–çG’"ÂG&gBçF–Ö–æuVæ6W'F–çG•W5ÒÀ¢Ó°¢6öç7B–çfÆ–EVæ6W'F–çG’ÒVæ6W'F–çF–W2æf–æB‚…²ÂfÇVUÒ’ÓâçVÖ&W"æ—4f–æ—FR‡fÇVR’ÇÂfÇVRÂ“°¢–b†–çfÆ–EVæ6W'F–çG’’&WGW&â6WDW'&÷"†G¶–çfÆ–EVæ6W'F–çG•³×Ò×W7B&R¦W&ò÷"w&VFW"æ“°¢6öç7B–çfÆ–D÷F–öæÅ‡—6–72Ò…•4”55ôÔT5U$TÔTåEôDTd”ä•D”ôå2æf–æB‚†—FVÒ’Óâ°¢6öç7BfÇVRÒG&gE¶—FVÒæW‡W&–ÖVçD¶W•Ó°¢&WGW&âG—VöbfÇVRÓÓÒ&çVÖ&W""bbçVÖ&W"æ—4f–æ—FR‡fÇVR’bb—FVÒç6–væVBbbfÇVRÂ°¢Ò“°¢–b†–çfÆ–D÷F–öæÅ‡—6–72’&WGW&â6WDW'&÷"†G¶–çfÆ–D÷F–öæÅ‡—6–72æÆ&VÇÒ×W7B&R¦W&ò÷"w&VFW"v†Vâ7WÆ–VBæ“°¢–b‚FW7EVæF–ær’&WGW&â6WDW'&÷"‚%WÆöBæBÖF†R7–æ6‡&öæ—¦VBW‡W&–ÖVçFÂ&W77W&Rf–ÆRâ"“°¢–b‡FW7EVæF–ærç6–væÇ2æÆVæwF‚ÓÒG&gBç&ö&U÷6—F–öç4FVræÆVæwF‚’&WGW&â6WDW'&÷"†F†RW‡W&–ÖVçBf–ÆR6öçF–ç2G·FW7EVæF–ærç6–væÇ2æÆVæwF‡Ò&ö&W2Â'WBG¶G&gBç&ö&U÷6—F–öç4FVræÆVæwF‡Ò&ö&RævÆW2vW&RVçFW&VBæ“°¢–b‚G&gD÷W&F–æuö–çD–BÇÂG&gDFW6–vä–B’&WGW&â6WDW'&÷"‚$6†ö÷6RâVæv–æRFW6–vâ&Vf÷&RFF–ærâ÷W&F–ærö–çBâ"“°¢G'’°¢æÇ—¦U&FU&ö&U6WB‡FW7EVæF–ærç6–væÇ2ÂG&gBç&ö&U÷6—F–öç4FVrÂG&gBææçVÇW4ÖVäF–ÖWFW$ÖÒÂ²Ö†–×VÕvfT6÷VçC¢G&gBæÖ†–×VÕvfT6÷VçBÂ7–æ6‡&öæ—¦F–öä6öæf—&ÖVC¢G'VRÂ6Vç6÷$&æGv–GF„´‡£¢G&gBæW‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡¢Âf–ÇFW$7WFöfd´‡£¢G&gBæW‡W&–ÖVçDf–ÇFW$7WFöfd´‡¢Ò“°¢6öç7BæW‡Eö–çC¢÷W&F–æuö–çBÒ°¢–C¢G&gD÷W&F–æuö–çD–BÀ¢FW6–vä–C¢G&gDFW6–vä–BÀ¢æÖS¢G&gBææÖRÀ¢6÷W&6S¢G&gDæWt÷W&F–æuö–çCòç6÷W&6Róò'WÆöFVB"À¢–æÆWE&W77W&T&#¢G&gBæ–æÆWE&W77W&T&"À¢–æÆWEFV×W&GW&T³¢G&gBæ–æÆWEFV×W&GW&T²À¢WV—fÆVæ6U&F–ó¢G&gBæWV—fÆVæ6U&F–òÀ¢Ö74fÆ÷t¶u3¢G&gBæÖ74fÆ÷t¶u2À¢&6µ&W77W&T&#¢G&gBæ&6µ&W77W&T&"À¢W‡W&–ÖVçC¢°¢6–væÇ3¢FW7EVæF–ærç6–væÇ2À¢–×÷'E&÷fVææ6S¢FW7EVæF–ærç&÷fVææ6RÀ¢æçVÇW4ÖVäF–ÖWFW$ÖÓ¢G&gBææçVÇW4ÖVäF–ÖWFW$ÖÒÀ¢æçVÇW4F–ÖWFW%Væ6W'F–çG”ÖÓ¢G&gBææçVÇW4F–ÖWFW%Væ6W'F–çG”ÖÒÀ¢&ö&U÷6—F–öç4FVs¢²ââæG&gBç&ö&U÷6—F–öç4FVuÒÀ¢Ö†–×VÕvfT6÷VçC¢G&gBæÖ†–×VÕvfT6÷VçBÀ¢&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVC¢G'VRÀ¢W‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡£¢G&gBæW‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡¢À¢W‡W&–ÖVçDf–ÇFW$7WFöfd´‡£¢G&gBæW‡W&–ÖVçDf–ÇFW$7WFöfd´‡¢À¢&W77W&UVæ6W'F–çG•7C¢G&gBç&W77W&UVæ6W'F–çG•7BÀ¢F–Ö–æuVæ6W'F–çG•W3¢G&gBçF–Ö–æuVæ6W'F–çG•W2À¢‡—6–73¢W‡W&–ÖVçE‡—6–74g&öÔÖWFFF†G&gB’À¢vÆÄf–VÆC¢FW7EvÆÅVæF–ærÀ¢ÒÀ¢&V6öÖÖVæFF–öã¢G&gDæWt÷W&F–æuö–çCòç&V6öÖÖVæFF–öâóòçVÆÂÀ¢Ó°¢6WD÷W&F–æuö–çG2‚†7W'&VçB’Óâ²ââæ7W'&VçBÂæW‡Eö–çEÒ“°¢6WD7F—fTFW6–vä–B†G&gDFW6–vä–B“°¢6WD7F—fT÷W&F–æuö–çD–B†æW‡Eö–çBæ–B“°¢6WD7F—fT66T–B†çVÆÂ“°¢6WE&öGV7Ef–Wr‚&VçfVÆ÷R"“°¢6WE6†÷tÆöFW"†fÇ6R“°¢6WDG&gDæWt÷W&F–æuö–çB†çVÆÂ“°¢6WEFW7EVæF–ær†çVÆÂ“°¢6WEFW7EvÆÅVæF–ær†çVÆÂ“°¢6WDW'&÷"‚""“°¢Ò6F6‚‡&V6öâ’°¢6WDW'&÷"‡&V6öâ–ç7Fæ6VöbW'&÷"ò&V6öâæÖW76vR¢%F†RW‡W&–ÖVçFÂ&W77W&RFF6÷VÆBæ÷B&RæÇ—¦VBâ"“°¢Ğ¢Ğ ¢gVæ7F–öâÇ”66R‚’°¢–b‚G&gBææÖRçG&–Ò‚’’&WGW&â6WDW'&÷"‚$v—fRF†—2÷W&F–ærö–çBæÖRâ"“°¢–b‚G&gBç&ö&U7–æ6‡&öæ—¦F–öä6öæf—&ÖVB’&WGW&â6WDW'&÷"‚$6öæf—&ÒF†BWfW'’&ö&R–âV6‚f–ÆRW6W2öæR7–æ6‡&öæ—¦VBF–ÖR&6Râ"“°¢–b‚çVÖ&W"æ—4f–æ—FR†G&gBææçVÇW4ÖVäF–ÖWFW$ÖÒ’ÇÂG&gBææçVÇW4ÖVäF–ÖWFW$ÖÒÃÒ’&WGW&â6WDW'&÷"‚$VçFW"÷6—F—fRæçVÇW2ÖVâF–ÖWFW"â"“°¢–b†G&gBç&ö&U÷6—F–öç4FVræÆVæwF‚Â2ÇÂG&gBç&ö&U÷6—F–öç4FVrç6öÖR‚‡fÇVR’ÓâçVÖ&W"æ—4f–æ—FR‡fÇVR’’’&WGW&â6WDW'&÷"‚$VçFW"BÆV7BF‡&VRfÆ–B&ö&RævÆW2â"“°¢–b‚çVÖ&W"æ—4–çFVvW"†G&gBæÖ†–×VÕvfT6÷VçB’ÇÂG&gBæÖ†–×VÕvfT6÷VçBÂÇÂG&gBæÖ†–×VÕvfT6÷VçBâ"’&WGW&â6WDW'&÷"‚$Ö†–×VÒW‡V7FVBvfR6÷VçB×W7B&Râ–çFVvW"g&öÒFò"â"“°¢6öç7B÷6—F—fT–çWG3¢'&“Å·7G&–ærÂçVÖ&W%ÓâÒ°¢²$W‡W&–ÖVçB6Vç6÷"&æGv–GF‚"ÂG&gBæW‡W&–ÖVçE6Vç6÷$&æGv–GF„´‡¥ÒÂ²$W‡W&–ÖVçBf–ÇFW"7WFöfb"ÂG&gBæW‡W&–ÖVçDf–ÇFW$7WFöfd´‡¥ÒÀ¢²$–æÆWB&W77W&R"ÂG&gBæ–æÆWE&W77W&T&%ÒÂ²$&6²&W77W&R"ÂG&gBæ&6µ&W77W&T&%ÒÂ²$–æÆWBFV×W&GW&R"ÂG&gBæ–æÆWEFV×W&GW&TµÒÂ²$WV—fÆVæ6R&F–ò"ÂG&gBæWV—fÆVæ6U&F–õÒÂ²$Ö72fÆ÷r"ÂG&gBæÖ74fÆ÷t¶u5ÒÀ¢²%7F–Â÷&FW""ÂG&gBç7F–Ä÷&FW%ÒÂ²%FV×÷&Â÷&FW""ÂG&gBçFV×÷&Ä÷&FW%ÒÂ²$4dÂ"ÂG&gBæ6fÅÒÂ²%F÷FÂÖW6‚6VÆÇ2"ÂG&gBæÖW6„6VÆÇ5ÒÀ¢²$Ö–æ–×VÒg&öçB6VÆÂ"ÂG&gBæÖ–æ–×VÔ6VÆÅ6—¦TÖÕÒÂ²$6VÆÇ2W"–æGV7F–öâÆVæwF‚"ÂG&gBæ6VÆÇ5W$–æGV7F–öäÆVæwF…ÒÂ²$æV"×vÆÂ6VÆÂ"ÂG&gBææV%vÆÄ6VÆÅ6—¦TÖÕÒÀ¢²%F–ÖR7FW"ÂG&gBçF–ÖU7FWW5ÒÂ²$6†VÖ—7G'’7V6–W2"ÂG&gBæ6†VÖ—7G'•7V6–W5ÒÂ²$6†VÖ—7G'’&V7F–öç2"ÂG&gBæ6†VÖ—7G'•&V7F–öç5ÒÀ¢Ó°¢6öç7B–çfÆ–E÷6—F—fRÒ÷6—F—fT–çWG2æf–æB‚…²ÂfÇVUÒ’ÓâçVÖ&W"æ—4f–æ—FR‡fÇVR’ÇÂfÇVRÃÒ“°¢–b†–çfÆ–E÷6—F—fR’&WGW&â6WDW'&÷"†G¶–çfÆ–E÷6—F—fU³×Ò×W7B&RçVÖ&W"w&VFW"F†â¦W&òæ“°¢–b†G&gBæ–æÆWE&W77W&T&"ÃÒG&gBæ&6µ&W77W&T&"’&WGW&â6WDW'&÷"‚$–æÆWB&W77W&R×W7BW†6VVB&6²&W77W&Râ"“°¢6öç7BVæ6W'F–çG”–çWG3¢'&“Å·7G&–ærÂçVÖ&W%ÓâÒ°¢²$F–ÖWFW"Væ6W'F–çG’"ÂG&gBææçVÇW4F–ÖWFW%Væ6W'F–çG”ÖÕÒÂ²$W‡W&–ÖVçB&W77W&RVæ6W'F–çG’"ÂG&gBç&W77W&UVæ6W'F–çG•7EÒÀ¢²$W‡W&–ÖVçBF–Ö–ærVæ6W'F–çG’"ÂG&gBçF–Ö–æuVæ6W'F–çG•W5ÒÂ²$4dB&W77W&RVæ6W'F–çG’"ÂG&gBæ6fE&W77W&UVæ6W'F–çG•7EÒÂ²$4dBF–Ö–ærVæ6W'F–çG’"ÂG&gBæ6fEF–Ö–æuVæ6W'F–çG•W5ÒÀ¢Ó°¢6öç7B–çfÆ–EVæ6W'F–çG’ÒVæ6W'F–çG”–çWG2æf–æB‚…²ÂfÇVUÒ’ÓâçVÖ&W"æ—4f–æ—FR‡fÇVR’ÇÂfÇVRÂ“°¢–b†–çfÆ–EVæ6W'F–çG’’&WGW&â6WDW'&÷"†G¶–çfÆ–EVæ6W'F–çG•³×Ò×W7B&R¦W&ò÷"w&VFW"æ“°¢–b„çVÖ&W"æ—4f–æ—FR†G&gBç6öÇfW%'VçF–ÖT†÷W'2’bbG&gBç6öÇfW%'VçF–ÖT†÷W'2ÃÒ’&WGW&â6WDW'&÷"‚%'VçF–ÖR×W7B&R÷6—F—fRv†Vâ7WÆ–VBâ"“°¢6öç7B–çfÆ–D÷F–öæÅ‡—6–72Ò…•4”55ôÔT5U$TÔTåEôDTd”ä•D”ôå2æf–æB‚†—FVÒ’Óâ°¢6öç7BfÇVW2Ò¶G&gE¶—FVÒæW‡W&–ÖVçD¶W•ÒÂG&gE¶—FVÒæ6fD¶W•ÕÓ°¢&WGW&âfÇVW2ç6öÖR‚‡fÇVR’ÓâG—VöbfÇVRÓÓÒ&çVÖ&W""bbçVÖ&W"æ—4f–æ—FR‡fÇVR’bb—FVÒç6–væVBbbfÇVRÂ“°¢Ò“°¢–b†–çfÆ–D÷F–öæÅ‡—6–72’&WGW&â6WDW'&÷"†G¶–çfÆ–D÷F–öæÅ‡—6–72æÆ&VÇÒ×W7B&R¦W&ò÷"w&VFW"v†Vâ7WÆ–VBæ“°¢6öç7BFW‡D–çWG3¢'&“Å·7G&–ærÂ7G&–æuÓâÒ°¢²%6öÇfW""ÂG&gBç6öÇfW%ÒÂ²%6öÇfW"fW'6–öâ"ÂG&gBç6öÇfW%fW'6–öåÒÂ²$F–ÖVç6–öæÆ—G’"ÂG&gBæF–ÖVç6–öæÆ—G•ÒÂ²%7F–Â66†VÖR"ÂG&gBç7F–Å66†VÖUÒÀ¢²$çVÖW&–6ÂfÇW‚"ÂG&gBæçVÖW&–6ÄfÇW…ÒÂ²$Æ–Ö—FW"Âf–ÇFW"Â÷"F—76—F–öâ"ÂG&gBæÆ–Ö—FW$f–ÇFW%ÒÂ²%FV×÷&Â66†VÖR"ÂG&gBçFV×÷&Å66†VÖUÒÀ¢²%GW&'VÆVæ6RÖöFVÂ"ÂG&gBçGW&'VÆVæ6TÖöFVÅÒÂ²$6öÖ'W7F–öâÖöFVÂ"ÂG&gBæ6öÖ'W7F–öäÖöFVÅÒÂ²$6†VÖ–6ÂÖV6†æ—6Ò"ÂG&gBæ6†VÖ—7G'”ÖöFVÅÒÀ¢²$6†VÖ—7G'’–çFVw&F–öâ"ÂG&gBæ6†VÖ—7G'”–çFVw&F÷%ÒÂ²%vÆÂF†W&ÖÂ6öæF—F–öâ"ÂG&gBçvÆÄ&÷VæF'”6öæF—F–öåÒÂ²$–æÆWBG&VFÖVçB"ÂG&gBæ–æÆWD&÷VæF'”6öæF—F–öåÒÂ²$–æÆWBf÷&6–ærÖWF†öB"ÂG&gBæ–æÆWDf÷&6–ætÖWF†öEÒÀ¢²$÷WFÆWBG&VFÖVçB"ÂG&gBæ÷WFÆWD&÷VæF'”6öæF—F–öåÒÂ²$–væ—F–öâ÷"–æ—F–Æ—¦F–öâ"ÂG&gBæ–æ—F–Æ—¦F–öäÖWF†öEÒÀ¢Ó°¢6öç7BÖ—76–æuFW‡BÒFW‡D–çWG2æf–æB‚…²ÂfÇVUÒ’ÓâfÇVRçG&–Ò‚’“°¢–b†Ö—76–æuFW‡B’&WGW&â6WDW'&÷"†G¶Ö—76–æuFW‡E³×Ò—2&WV—&VBâVçFW"(	Äæöæ^(	ÒöæÇ’v†VâF†BÖöFVÂ÷"G&VFÖVçB—2æ÷BW6VBæ“°¢G'’°¢6öç7BVF—F–æt66RÒ66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒVF—F–æt66T–B’óòçVÆÃ°¢6öç7BVffV7F—fU&VÆF–öç6†—ÒVF—F–æt66Sòç&VÆF–öç6†—óòG&gE&VÆF–öç6†—°¢6öç7B&VfW&Væ6T–BÒVffV7F—fU&VÆF–öç6†—òç&VfW&Væ6T66T–BóòVffV7F—fU&VÆF–öç6†—òæ&6VÆ–æT66T–C°¢6öç7B&VfW&Væ6T66RÒ&VfW&Væ6T–Bò66W2æf–æB‚†—FVÒ’Óâ—FVÒæ–BÓÓÒ&VfW&Væ6T–B’óòçVÆÂ¢çVÆÃ°¢6öç7BæW‡EFW7BÒFW7EVæF–æsòç6–væÇ2óòVF—F–æt66SòçFW7E6–væÇ2óò&VfW&Væ6T66SòçFW7E6–væÇ2óòG&gD÷W&F–æuö–çCòæW‡W&–ÖVçCòç6–væÇ3°¢6öç7BæW‡D6fBÒ6fEVæF–æsòç6–væÇ2óòVF—F–æt66Sòæ6fE6–væÇ3°¢–b‚æW‡EFW7B’&WGW&â6WDW'&÷"‚%WÆöBF†RW‡W&–ÖVçFÂ×VÇF’×&ö&Rf–ÆRf÷"F†—2÷W&F–ærö–çBâ"“°¢–b‚æW‡D6fB’&WGW&â6WDW'&÷"†VffV7F—fU&VÆF–öç6†—ò%WÆöBF†RæWr4dB×VÇF’×&ö&R&W7VÇBf÷"F†—2&W'Vââ"¢%WÆöBF†R4dB×VÇF’×&ö&Rf–ÆRf÷"F†—2&6VÆ–æR'Vââ"“°¢–b†æW‡EFW7BæÆVæwF‚ÓÒG&gBç&ö&U÷6—F–öç4FVræÆVæwF‚ÇÂæW‡D6fBæÆVæwF‚ÓÒG&gBç&ö&U÷6—F–öç4FVræÆVæwF‚’&WGW&â6WDW'&÷"†F†Rf–ÆW26öçF–âG¶æW‡EFW7BæÆVæwF‡ÒW‡W&–ÖVçBæBG¶æW‡D6fBæÆVæwF‡Ò4dB&ö&W2Â'WBG¶G&gBç&ö&U÷6—F–öç4FVræÆVæwF‡Ò&ö&RævÆW2vW&RVçFW&VBæ“°¢6öç7B–BÒVF—F–æt66T–BóòG´FFRææ÷r‚’çFõ7G&–ærƒ3b—ÒÒG´ÖF‚ç&æFöÒ‚’çFõ7G&–ærƒ3b’ç6Æ–6Rƒ"Â‚—Ö°¢–b†VffV7F—fU&VÆF–öç6†—òæ&6VÆ–æT66T–BÓÓÒ–B’&WGW&â6WDW'&÷"‚$'Vâ6ææ÷B&R—G2÷vâ&6VÆ–æRâ"“°¢–b†VffV7F—fU&VÆF–öç6†—’°¢–b‚&VfW&Væ6T66RÇÂ&VfW&Væ6T66Ræ–BÓÒVffV7F—fU&VÆF–öç6†—æ&6VÆ–æT66T–Bbb&VfW&Væ6T66Rç&VÆF–öç6†—òæ&6VÆ–æT66T–BÓÒVffV7F—fU&VÆF–öç6†—æ&6VÆ–æT66T–B’&WGW&â6WDW'&÷"‚$6†ö÷6R7F'F–ær'Vâg&öÒF†R6VÆV7FVB÷W&F–ærö–çBâ"“°¢Ğ¢6öç7BW‡W&–ÖVçE&÷fVææ6RÒFW7EVæF–æsòç&÷fVææ6RóòVF—F–æt66Sòæ–×÷'G3òæW‡W&–ÖVçBóò&VfW&Væ6T66Sòæ–×÷'G3òæW‡W&–ÖVçBóòG&gD÷W&F–æuö–çCòæW‡W&–ÖVçCòæ–×÷'E&÷fVææ6S°¢6öç7B6fE&÷fVææ6RÒ6fEVæF–æsòç&÷fVææ6RóòVF—F–æt66Sòæ–×÷'G3òæ6fC°¢6öç7BæW‡D–×÷'G2ÒW‡W&–ÖVçE&÷fVææ6Rbb6fE&÷fVææ6Rò²W‡W&–ÖVçC¢W‡W&–ÖVçE&÷fVææ6RÂ6fC¢6fE&÷fVææ6RÒ¢çVÆÃ°¢6öç7BæW‡E&VÆF–öç6†—ÒVffV7F—fU&VÆF–öç6†—ò²ââæVffV7F—fU&VÆF–öç6†—Â&VfW&Væ6T66T–C¢VffV7F—fU&VÆF–öç6†—ç&VfW&Væ6T66T–Bı¸ë«h‘éì¶»§q«^t€€€Ñ•µÁ½É…±M¡•µ”è€‰MMAI,Ìˆ°(€€€€€€€Ñ•µÁ½É…±=É‘•Èè€Ì°(€€€€€€€™°è€À¸ÌÔ°(€€€€€€€ÑÕÉ‰Õ±•¹•5½‘•°è€‰MMP¬·>$ˆ°(€€€€€€€½µ‰ÕÍÑ¥½¹5½‘•°è€‰¥¹¥Ñ”µÉ…Ñ”ˆ°(€€€€€€€¡•µ¥ÍÑÉå5½‘•°è€‰!å‘É½•¸É•‘Õ•µ•¡…¹¥Í´ˆ°(€€€€€€€¡•µ¥ÍÑÉåMÁ•¥•Ìè€ä°(€€€€€€€¡•µ¥ÍÑÉåI•…Ñ¥½¹Ìè€Ää°(€€€€€€€¡•µ¥ÍÑÉå%¹Ñ•É…Ñ½Èè€‰%µÁ±¥¥Ğ	ˆ°(€€€€€€€µ•Í¡•±±Ìè€É|ÔÀÁ|ÀÀÀ°(€€€€€€€µ¥¹¥µÕµ•±±M¥é•5´è€À¸ÈÔ°(€€€€€€€•±±ÍA•É%¹‘ÕÑ¥½¹1•¹Ñ è€à°(€€€€€€€¹•…É]…±±•±±M¥é•5´è€À¸Ä°(€€€€€€€Ñ¥µ•MÑ•ÁUÌè€À¸ÈÔ°(€€€€€€€Í½±Ù•ÉIÕ¹Ñ¥µ•!½ÕÉÌè€ÄÀ°(€€€€€€€İ…±±	½Õ¹‘…Éå½¹‘¥Ñ¥½¸è€‰%Í½Ñ¡•Éµ…°€ĞÔÀ,ˆ°(€€€€€€€¥¹±•Ñ	½Õ¹‘…Éå½¹‘¥Ñ¥½¸è€‰5•…ÍÕÉ•Ñ½Ñ…°ÍÑ…Ñ”€¬µ…ÍÌ™±½Üˆ°(€€€€€€€¥¹±•Ñ½É¥¹5•Ñ¡½è€‰9¼¥¹±•Ğ™½É¥¹œ…ÁÁ±¥•ˆ°(€€€€€€€½ÕÑ±•Ñ	½Õ¹‘…Éå½¹‘¥Ñ¥½¸è€‰9½¸µÉ•™±•Ñ¥¹œÁÉ•ÍÍÕÉ”½ÕÑ±•Ğˆ°(€€€€€€€¥¹¥Ñ¥…±¥é…Ñ¥½¹5•Ñ¡½è€‰M¥¹±”µÁ½¥¹Ğ¥¹¥Ñ¥½¸­•É¹•°ˆ°(€€€€€€€µ•Í¡½¹Ù•É•¹•AĞè9Õµ‰•È¹9…8°(€€€€€€€Ñ¥µ•MÑ•Á½¹Ù•É•¹•AĞè9Õµ‰•È¹9…8°(€€€€€€€ÁÉ•ÍÍÕÉ•U¹•ÉÑ…¥¹ÑåAĞè€Ä¸Ô°(€€€€€€€Ñ¥µ¥¹U¹•ÉÑ…¥¹ÑåUÌè€À¸Ô°(€€€€€€€™‘AÉ•ÍÍÕÉ•U¹•ÉÑ…¥¹ÑåAĞè€È°(€€€€€€€™‘Q¥µ¥¹U¹•ÉÑ…¥¹ÑåUÌè€À¸ÈÔ°(€€€ôì(€€€½¹ÍĞ±½¹•M¥¹…±Ì€ô€¡Í¥¹…±ÌèM¥¹…±mt¤€ôøÍ¥¹…±Ì¹µ…À ¡Í¥¹…°¤€ôø€¡ì€¸¸¹Í¥¹…°°Ñ¥µ”èl¸¸¹Í¥¹…°¹Ñ¥µ•t°ÁÉ•ÍÍÕÉ”èl¸¸¹Í¥¹…°¹ÁÉ•ÍÍÕÉ•tô¤¤ì(€€€½¹ÍĞ‰±•¹‘Q½İ…É‘áÁ•É¥µ•¹Ğ€ô€¡™…Ñ½Èè¹Õµ‰•È¤€ôø‘•µ¼¹™¹µ…À ¡Í¥¹…°°ÁÉ½‰”¤€ôø€¡ì€¸¸¹Í¥¹…°°ÁÉ•ÍÍÕÉ”èÍ¥¹…°¹ÁÉ•ÍÍÕÉ”¹µ…À ¡Ù…±Õ”°¥¹‘•à¤€ôøÙ…±Õ”€¬™…Ñ½È€¨€¡‘•µ¼¹Ñ•ÍÑmÁÉ½‰•t¹ÁÉ•ÍÍÕÉ•m¥¹‘•át€´Ù…±Õ”¤¤ô¤¤ì(€€€½¹ÍĞ™¥¹•5•Ñ…‘…Ñ„€ôì€¸¸¹±½¹•5•Ñ…‘…Ñ„¡‰…Í•5•Ñ…‘…Ñ„¤°¹…µ”è€‰Må¹Ñ¡•Ñ¥Œµ•Í É•™¥¹•µ•¹Ğˆ°µ•Í¡•±±Ìè€Õ|ÀÀÁ|ÀÀÀ°µ¥¹¥µÕµ•±±M¥é•5´è€À¸ÄÈÔ°•±±ÍA•É%¹‘ÕÑ¥½¹1•¹Ñ è€ÄØ°¹•…É]…±±•±±M¥é•5´è€À¸ÀÔ°Í½±Ù•ÉIÕ¹Ñ¥µ•!½ÕÉÌè€Äàôì(€€€½¹ÍĞ™¥¹•M¥¹…±Ì€ô‰±•¹‘Q½İ…É‘áÁ•É¥µ•¹Ğ À¸äÔ¤ì(€€€½¹ÍĞİ…±±M¥¹…±Ì€ô™¥¹•M¥¹…±Ì¹µ…À ¡Í¥¹…°°ÁÉ½‰”¤€ôø€¡ì€¸¸¹Í¥¹…°°ÁÉ•ÍÍÕÉ”èÍ¥¹…°¹ÁÉ•ÍÍÕÉ”¹µ…À ¡Ù…±Õ”°¥¹‘•à¤€ôøÙ…±Õ”€¬€À¸ÀÀÄ€¨€¡‘•µ¼¹Ñ•ÍÑmÁÉ½‰•t¹ÁÉ•ÍÍÕÉ•m¥¹‘•át€´Ù…±Õ”¤¤ô¤¤ì(€€€½¹ÍĞ•á…µÁ±•Ìè¹…±åÍ¥Í…Í•mt€ôl(€€€€€ì¥è‰…Í•±¥¹•%°‘•Í¥¹%°½Á•É…Ñ¥¹A½¥¹Ñ%°Í½ÕÉ”è€‰‘•µ¼ˆ°É•±…Ñ¥½¹Í¡¥Àè¹Õ±°°µ•Ñ…‘…Ñ„è‰…Í•5•Ñ…‘…Ñ„°Ñ•ÍÑM¥¹…±Ìè±½¹•M¥¹…±Ì¡‘•µ¼¹Ñ•ÍĞ¤°™‘M¥¹…±Ìè±½¹•M¥¹…±Ì¡‘•µ¼¹™¤ô°(€€€€€ì(€€€€€€€¥èµ•Í¡%°‘•Í¥¹%°½Á•É…Ñ¥¹A½¥¹Ñ%°Í½ÕÉ”è€‰‘•µ¼ˆ°(€€€€€€€É•±…Ñ¥½¹Í¡¥Àèì‰…Í•±¥¹•…Í•%è‰…Í•±¥¹•%°É•™•É•¹•…Í•%è‰…Í•±¥¹•%°¡…¹•‘Y…É¥…‰±”è€‰µ•Í ˆ°¡…¹•‘A…É…µ•Ñ•Èè€‰µ•Í µÉ•Í½±ÕÑ¥½¸ˆ°‘•ÍÉ¥ÁÑ¥½¸è€ˆÔÀ”™É½¹ĞµÉ•¥½¸•±°µÍ¥é”É•™¥¹•µ•¹Ğˆô°(€€€€€€€µ•Ñ…‘…Ñ„è™¥¹•5•Ñ…‘…Ñ„°(€€€€€€€Ñ•ÍÑM¥¹…±Ìè±½¹•M¥¹…±Ì¡‘•µ¼¹Ñ•ÍĞ¤°™‘M¥¹…±Ìè™¥¹•M¥¹…±Ì°(€€€€€ô°(€€€€€ì(€€€€€€€¥èİ…±±%°‘•Í¥¹%°½Á•É…Ñ¥¹A½¥¹Ñ%°Í½ÕÉ”è€‰‘•µ¼ˆ°(€€€€€€€É•±…Ñ¥½¹Í¡¥Àèì‰…Í•±¥¹•…Í•%è‰…Í•±¥¹•%°É•™•É•¹•…Í•%èµ•Í¡%°¡…¹•‘Y…É¥…‰±”è€‰İ…±°ˆ°¡…¹•‘A…É…µ•Ñ•Èè€‰İ…±°µÑÉ•…Ñµ•¹Ğˆ°‘•ÍÉ¥ÁÑ¥½¸è€‰‘©…•¹Ğİ…±°Ñ¡•Éµ…°‰½Õ¹‘…Éäˆô°(€€€€€€€µ•Ñ…‘…Ñ„èì€¸¸¹±½¹•5•Ñ…‘…Ñ„¡™¥¹•5•Ñ…‘…Ñ„¤°¹…µ”è€‰Må¹Ñ¡•Ñ¥Œİ…±°Í•¹Í¥Ñ¥Ù¥Ñäˆ°İ…±±	½Õ¹‘…Éå½¹‘¥Ñ¥½¸è€‰‘¥…‰…Ñ¥Œˆ°Í½±Ù•ÉIÕ¹Ñ¥µ•!½ÕÉÌè€Äà¸Ôô°(€€€€€€€Ñ•ÍÑM¥¹…±Ìè±½¹•M¥¹…±Ì¡‘•µ¼¹Ñ•ÍĞ¤°™‘M¥¹…±Ìèİ…±±M¥¹…±Ì°(€€€€€ô°(€€€tì(€€€½¹ÍĞ‘•µ½=Á•É…Ñ¥¹A½¥¹Ğè=Á•É…Ñ¥¹A½¥¹Ğ€ôì¥è½Á•É…Ñ¥¹A½¥¹Ñ%°‘•Í¥¹%°¹…µ”è€‰Må¹Ñ¡•Ñ¥Œ‰…Í•±¥¹”ˆ°Í½ÕÉ”è€‰‘•µ¼ˆ°¥¹±•ÑAÉ•ÍÍÕÉ•	…Èè€à°¥¹±•ÑQ•µÁ•É…ÑÕÉ•,è€ÌÀÀ°•ÅÕ¥Ù…±•¹•I…Ñ¥¼è€Ä°µ…ÍÍ±½İ-Lè€À¸ØÈ°‰…­AÉ•ÍÍÕÉ•	…Èè€Äôì(€€€Í•Ñ…Í•Ì ¡ÕÉÉ•¹Ğ¤€ôøl¸¸¹ÕÉÉ•¹Ğ°€¸¸¹•á…µÁ±•Ít¤ì(€€€Í•Ñ•Í¥¹Ì ¡ÕÉÉ•¹Ğ¤€ôøl¸¸¹ÕÉÉ•¹Ğ°¹½Éµ…±¥é•¹¥¹••Í¥¸¡‘•µ½•Í¥¸¥t¤ì(€€€Í•Ñ=Á•É…Ñ¥¹A½¥¹ÑÌ ¡ÕÉÉ•¹Ğ¤€ôøl¸¸¹ÕÉÉ•¹Ğ°‘•µ½=Á•É…Ñ¥¹A½¥¹Ñt¤ì(€€€Í•ÑÑ¥Ù••Í¥¹%¡‘•Í¥¹%¤ì(€€€Í•ÑÑ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%¡½Á•É…Ñ¥¹A½¥¹Ñ%¤ì(€€€Í•Ñ…Í•	…Í•±¥¹•%¡•á…µÁ±•ÍlÁt¹¥¤ì(€€€Í•ÑÑ¥Ù•…Í•%¡•á…µÁ±•ÍlÁt¹¥¤ìÍ•Ñ]½É­ÍÁ…•Y¥•Ü ‰…Í”ˆ¤ìÍ•ÑAÉ½‘ÕÑY¥•Ü ‰½µÁ…É¥Í½¸ˆ¤ìÍ•ÑÑ¥Ù•AÉ½‰” À¤ì(€ô((€™Õ¹Ñ¥½¸±½…‘AÕ‰±¥Í¡•‘¹Ù•±½Á•á…µÁ±” ¤ì(€€€½¹ÍĞÁ½¥¹ÑÌ€ô‰Õ¥±‘”ÈÀÈÉ=Á•É…Ñ¥¹A½¥¹ÑÌ ¤ì(€€€Í•Ñ•Í¥¹Ì ¡ÕÉÉ•¹Ğ¤€ôøÕÉÉ•¹Ğ¹Í½µ” ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€ôôô|ÈÀÈÉ}M%9}%¤€üÕÉÉ•¹Ğ€èl¸¸¹ÕÉÉ•¹Ğ°¹½Éµ…±¥é•¹¥¹••Í¥¸¡ì€¸¸¹|ÈÀÈÉ}M%8ô¥t¤ì(€€€Í•Ñ=Á•É…Ñ¥¹A½¥¹ÑÌ ¡ÕÉÉ•¹Ğ¤€ôøì(€€€€€½¹ÍĞ•á¥ÍÑ¥¹œ€ô¹•ÜM•Ğ¡ÕÉÉ•¹Ğ¹µ…À ¡¥Ñ•´¤€ôø¥Ñ•´¹¥¤¤ì(€€€€€É•ÑÕÉ¸l¸¸¹ÕÉÉ•¹Ğ°€¸¸¹Á½¥¹ÑÌ¹™¥±Ñ•È ¡¥Ñ•´¤€ôø€…•á¥ÍÑ¥¹œ¹¡…Ì¡¥Ñ•´¹¥¤¥tì(€€€ô¤ì(€€€Í•ÑÑ¥Ù••Í¥¹%¡|ÈÀÈÉ}M%9}%¤ì(€€€Í•ÑÑ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%¡Á½¥¹ÑÍlÁtü¹¥€üü¹Õ±°¤ì(€€€Í•ÑÑ¥Ù•…Í•%¡¹Õ±°¤ì(€€€Í•Ñ…Í•	…Í•±¥¹•%¡¹Õ±°¤ì(€€€Í•Ñ]½É­ÍÁ…•Y¥•Ü ‰…Í”ˆ¤ì(€€€Í•ÑAÉ½‘ÕÑY¥•Ü ‰•¹Ù•±½Á”ˆ¤ì(€€€Í•Ñ]½É­ÍÁ…•ÉÉ½È ˆˆ¤ì(€ô((€™Õ¹Ñ¥½¸‘½İ¹±½…‘á…µÁ±” ¤ì(€€€½¹ÍĞ‘•µ¼€ôµ…­••µ½AÉ½‰•M¥¹…±Ì ¤ì(€€€½¹ÍĞ¡•…‘•È€ôl‰Ñ¥µ•}µÌˆ°€¸¸¹‘•µ¼¹Ñ•ÍĞ¹µ…À ¡|°¥¹‘•à¤€ôøÀ‘í¥¹‘•à€¬€Åõ}5A…€¥t¹©½¥¸ ˆ°ˆ¤ì(€€€½¹ÍĞÉ½İÌ€ôm¡•…‘•È°€¸¸¹‘•µ¼¹Ñ•ÍÑlÁt¹Ñ¥µ”¹Í±¥” À°€àÀÀ¤¹µ…À ¡Ñ¥µ”°¥¹‘•à¤€ôømÑ¥µ”°€¸¸¹‘•µ¼¹Ñ•ÍĞ¹µ…À ¡Í¥¹…°¤€ôøÍ¥¹…°¹ÁÉ•ÍÍÕÉ•m¥¹‘•át¥t¹µ…À ¡Ù…±Õ”¤€ôøÙ…±Õ”¹Ñ½¥á• Ø¤¤¹©½¥¸ ˆ°ˆ¤¥tì(€€€½¹ÍĞÕÉ°€ôUI0¹É•…Ñ•=‰©•ÑUI0¡¹•Ü	±½ˆ¡mÉ½İÌ¹©½¥¸ ‰q¸ˆ¥t°ìÑåÁ”è€‰Ñ•áĞ½ÍØˆô¤¤ì(€€€½¹ÍĞ±¥¹¬€ô‘½Õµ•¹Ğ¹É•…Ñ•±•µ•¹Ğ ‰„ˆ¤ì±¥¹¬¹¡É•˜€ôÕÉ°ì±¥¹¬¹‘½İ¹±½…€ô€‰­åÑ¡É½ÌµµÕ±Ñ¤µÁÉ½‰”µ•á…µÁ±”¹ÍØˆì±¥¹¬¹±¥¬ ¤ìUI0¹É•Ù½­•=‰©•ÑUI0¡ÕÉ°¤ì(€ô((€™Õ¹Ñ¥½¸‘½İ¹±½…‘I•Á½ÉĞ ¤ì(€€€¥˜€ ……Ñ¥Ù•…Í”ñğ€…Ñ•ÍÑ5½‘”ñğ€…™‘5½‘”ñğ€……ÍÍ•ÍÍµ•¹Ğñğ€…‘•¥Í¥½¹EÕ…±¥Ñäñğ€…Á±…¹¹¥¹…Í”¤É•ÑÕÉ¸ì(€€€½¹ÍĞ•¹¥¹••Í¥¸€ô‘•Í¥¹Ì¹™¥¹ ¡‘•Í¥¸¤€ôø‘•Í¥¸¹¥€ôôô…Ñ¥Ù•…Í”¹‘•Í¥¹%¤€üü¹Õ±°ì(€€€½¹ÍĞ½Á•É…Ñ¥¹A½¥¹Ğ€ô½Á•É…Ñ¥¹A½¥¹ÑÌ¹™¥¹ ¡Á½¥¹Ğ¤€ôøÁ½¥¹Ğ¹¥€ôôô…Ñ¥Ù•…Í”¹½Á•É…Ñ¥¹A½¥¹Ñ%¤€üü¹Õ±°ì(€€€½¹ÍĞÉ•Á½ÉĞ€ôì(€€€€€Í¡•µ„è€‰­åÑ¡É½ÌµÉ‘”µÉÕ¸µÉ•Á½ÉĞˆ°(€€€€€…¹…±åÍ¥ÍY•ÉÍ¥½¸è91eM%M}YIM%=8°(€€€€€­¹½İ±•‘•	…Í•Y•ÉÍ¥½¸è-9=]1}	M}YIM%=8°(€€€€€•¹•É…Ñ•‘Ğè¹•Ü…Ñ” ¤¹Ñ½%M=MÑÉ¥¹œ ¤°(€€€€€¥¹ÁÕÑÌèì•¹¥¹••Í¥¸°½Á•É…Ñ¥¹A½¥¹Ğ°µ•Ñ…‘…Ñ„è…Ñ¥Ù•…Í”¹µ•Ñ…‘…Ñ„°•áÁ•É¥µ•¹ÑA¡åÍ¥Ìè•áÁ•É¥µ•¹ÑA¡åÍ¥ÍÉ½µ5•Ñ…‘…Ñ„¡…Ñ¥Ù•…Í”¹µ•Ñ…‘…Ñ„¤°™‘A¡åÍ¥Ìè™‘A¡åÍ¥ÍÉ½µ5•Ñ…‘…Ñ„¡…Ñ¥Ù•…Í”¹µ•Ñ…‘…Ñ„¤°É•±…Ñ¥½¹Í¡¥Àè…Ñ¥Ù•…Í”¹É•±…Ñ¥½¹Í¡¥À€üü¹Õ±°°Á…¥É¥¹Õ‘¥Ğè…Ñ¥Ù•…Í”¹Á…¥É¥¹Õ‘¥Ğ€üü¹Õ±°°™¥±•5…ÁÁ¥¹Ìè…Ñ¥Ù•…Í”¹¥µÁ½ÉÑÌ€üü¹Õ±°°•áÁ•É¥µ•¹Ñ…±M½ÕÉ•Ìè…Ñ¥Ù•…Í”¹Ñ•ÍÑM¥¹…±Ì¹µ…À ¡Í¥¹…°¤€ôøÍ¥¹…°¹¹…µ”¤°™‘M½ÕÉ•Ìè…Ñ¥Ù•…Í”¹™‘M¥¹…±Ì¹µ…À ¡Í¥¹…°¤€ôøÍ¥¹…°¹¹…µ”¤°Õ¹¥ÑÌèìÑ¥µ”è€‰µÌˆ°ÁÉ•ÍÍÕÉ”è€‰5A„ˆ°™É•ÅÕ•¹äè€‰­!èˆ°İ…Ù•MÁ••è€‰´½Ìˆôô°(€€€€€½ÕÑÁÕÑÌèì•áÁ•É¥µ•¹Ñ5½‘”èÑ•ÍÑ5½‘”°™‘5½‘”°Á¡åÍ¥Í½µÁ…É¥Í½¸è‰Õ¥±‘A¡åÍ¥Í½µÁ…É¥Í½¸¡…Ñ¥Ù•…Í”¹µ•Ñ…‘…Ñ„¤°Ù…±¥‘¥Ñäè…ÍÍ•ÍÍµ•¹Ğ¹Ù…±¥‘¥Ñä°‘…Ñ…EÕ…±¥Ñäè…ÍÍ•ÍÍµ•¹Ğ¹‘…Ñ…EÕ…±¥Ñä°½Ù•É…”è…ÍÍ•ÍÍµ•¹Ğ¹½Ù•É…”°µ•ÑÉ¥Ìè…ÍÍ•ÍÍµ•¹Ğ¹µ•ÑÉ¥Ì°¡åÁ½Ñ¡•Í•Ìè…ÍÍ•ÍÍµ•¹Ğ¹¡åÁ½Ñ¡•Í•Ì°…Ñ¥Ù•…Í•=ÕÑ½µ”è…Ñ¥Ù•…Í•Ù¥‘•¹”°‘•¥Í¥½¹EÕ…±¥Ñä°½¹ÑÉ½±±•‘9•áÑIÕ¸èÁ±…¹ÍÍ•ÍÍµ•¹Ğü¹¹•áÑIÕ¸€üü…ÍÍ•ÍÍµ•¹Ğ¹¹•áÑIÕ¸°…Í•!¥ÍÑ½ÉåÙ¥‘•¹”°İ…Ù•™½É´èì½ÉÉ•±…Ñ¥½¸°¹½Éµ…±¥é•‘IµÍ”è¹ÉµÍ”°ÁÉ•ÍÍÕÉ•	¥…Í5Á„èÁÉ•ÍÍÕÉ•	¥…Ì°Í¡…É•‘±¥¹µ•¹Ñ1…UÌèÁÉ½‰•M•Ñ½µÁ…É¥Í½¸ü¹Í¡…É•‘1…UÌ°¥¹‘¥Ù¥‘Õ…±1…UÌèÁÉ½‰•M•Ñ½µÁ…É¥Í½¸ü¹¥¹‘¥Ù¥‘Õ…±1…UÌ°…±¥¹µ•¹ÑMÁÉ•…‘UÌèÁÉ½‰•M•Ñ½µÁ…É¥Í½¸ü¹…±¥¹µ•¹ÑMÁÉ•…‘UÌôô°(€€€€€¥Ñ•‘M½ÕÉ•ÌèÍ½ÕÉ•Í½È¡l¸¸¹¹•ÜM•Ğ¡…ÍÍ•ÍÍµ•¹Ğ¹¡åÁ½Ñ¡•Í•Ì¹™±…Ñ5…À ¡¡åÁ½Ñ¡•Í¥Ì¤€ôø¡åÁ½Ñ¡•Í¥Ì¹Í½ÕÉ•%‘Ì¤¥t¤°(€€€€€µ•Ñ¡½‘M½ÕÉ•Ìè]Y}5Q!=}M=UIL°(€€€€€ÁÕ‰±¥Í¡•‘Y…±¥‘…Ñ¥½¹M½ÕÉ•ÌèAU	1%M!}Y1%Q%=9}M=UIL°(€€€€€•Ù¥‘•¹•I½±•Ìèì(€€€€€€€‘¥É•Ñ…Í•Ù¥‘•¹”è…Ñ¥Ù•…Í”¹Í½ÕÉ”€ôôô€‰‘•µ¼ˆ(€€€€€€€€€€ü€‰•¹•É…Ñ•‘•µ½¹ÍÑÉ…Ñ¥½¸ÁÉ•ÍÍÕÉ”Ù…±Õ•Ì°•¹Ñ•É•ÉÕ¸Í•ÑÑ¥¹Ì°‘•±…É•Õ¹•ÉÑ…¥¹Ñ¥•Ì°…¹Ù•É¥™¥•½¹”µ¡…¹”É•±…Ñ¥½¹Í¡¥ÁÌ‘•Ñ•Éµ¥¹”Ñ¡¥ÌÉ•ÍÕ±Ğ¸%Ğ¥Ì¹½Ğ•Ù¥‘•¹”™É½´„Á¡åÍ¥…°•¹¥¹”¸ˆ(€€€€€€€€€€è€‰Q¡”ÕÍ•ÈµÁÉ½Ù¥‘••áÁ•É¥µ•¹Ğ…¹ÁÉ•ÍÍÕÉ”Ù…±Õ•Ì°•¹Ñ•É•ÉÕ¸Í•ÑÑ¥¹Ì°‘•±…É•Õ¹•ÉÑ…¥¹Ñ¥•Ì°…¹Ù•É¥™¥•½¹”µ¡…¹”É•±…Ñ¥½¹Í¡¥ÁÌ‘•Ñ•Éµ¥¹”Ñ¡”µ•ÑÉ¥Ì…¹É•½µµ•¹‘…Ñ¥½¸¸ˆ°(€€€€€€€É•½µµ•¹‘…Ñ¥½¹M½Á”èì(€€€€€€€€€Í•±•Ñ•‘…Í”è…Ñ¥Ù•…Í”¹µ•Ñ…‘…Ñ„¹¹…µ”°(€€€€€€€€€Á±…¹¹¥¹I•™•É•¹•…Í”èÁ±…¹¹¥¹…Í”¹µ•Ñ…‘…Ñ„¹¹…µ”°(€€€€€€€€€Í¡…É•‘É½ÍÍ…Í•…µ¥±äè…Í•!¥ÍÑ½ÉåÙ¥‘•¹”¹±•¹Ñ €ø€À°(€€€€€€€€€•áÁ±…¹…Ñ¥½¸è€‰-åÑ¡É½ÌÉ•…±Õ±…Ñ•ÌÑ¡”Í•±•Ñ•ÉÕ¸Ì‘¥…¹½Í¥Ì½ÈÉ•ÉÕ¸É•ÍÕ±Ğ¸=¹”½Á•É…Ñ¥¹œÁ½¥¹Ğ½¹Ñ…¥¹Ì¥ÑÌ•áÁ•É¥µ•¹Ğ°‰…Í•±¥¹”°…¹ÅÕ…±¥™å¥¹œ½¹”µ¡…¹”É•ÉÕ¹Ì¸Q¡”¹•áĞµÉÕ¸Á±…¸ÍÑ…ÉÑÌ™É½´Ñ¡”µ½ÍĞÉ••¹ĞÉ•ÉÕ¸Ñ¡…ĞÁ…ÍÍ•„ÍÕÁÁ½ÉĞ½È½¹Ù•É•¹”ÉÕ±”¸ˆ°(€€€€€€€ô°(€€€€€€€ÍÑ½É…•	½Õ¹‘…Éäè€‰Í…Ù•İ½É­ÍÁ…”ÍÑ½É•ÌÑ¡”•¹Ñ•É•Í•ÑÑ¥¹Ì°ÁÉ•ÍÍÕÉ”Ù…±Õ•Ì°™¥±”µ…ÁÁ¥¹Ì°…¹ÉÕ¸É•±…Ñ¥½¹Í¡¥ÁÌ¸]¡•¸Ñ¡”İ½É­ÍÁ…”¥ÌÉ•½Á•¹•°-åÑ¡É½ÌÉ•…±Õ±…Ñ•ÌÑ¡”µ•ÑÉ¥Ì°‘¥…¹½Í•Ì°É•ÉÕ¸±…ÍÍ¥™¥…Ñ¥½¹Ì°…¹É•½µµ•¹‘…Ñ¥½¸¸ˆ°(€€€€€€€‘¥…¹½ÍÑ¥IÕ±•M½ÕÉ•Ìè±¥­•±åM½ÕÉ•Ì°(€€€€€€€µ•Ñ¡½‘M½ÕÉ•Ìè]Y}5Q!=}M=UIL°(€€€€€€€ÁÕ‰±¥¹…±åé•ÉY…±¥‘…Ñ¥½¸èì(€€€€€€€€€ÍÕµµ…ÉäèAU	1%M!}Y1%Q%=9}MU55Id°(€€€€€€€€€…Í•ÌèI]}QMQ}Y1%Q%=9}ML°(€€€€€€€€€É½±”è€‰M½™Ñİ…É”Ù…±¥‘…Ñ¥½¸½¹±ä¸AÕ‰±¥Œ‰•¹¡µ…É¬…Í•ÌÑ•ÍĞÑ¡”…¹…±åé•ÈìÑ¡•ä‘¼¹½Ğ½Õ¹Ğ…Ì¥¹‘•Á•¹‘•¹Ğ½Á•É…Ñ¥¹œµÁ½¥¹Ğ•Ù¥‘•¹”…¹‘¼¹½Ğ¡½½Í”Ñ¡”É•½µµ•¹‘…Ñ¥½¸™½ÈÑ¡¥ÌÕÍ•ÈµÁÉ½Ù¥‘•ÉÕ¸¸ˆ°(€€€€€€€ô°(€€€€€ô°(€€€€€ÁÉ•‘¥Ñ¥Ù•5½‘•±MÑ…Ñ”èì½Á•É…‰¥±¥Ñäè€‰9½Ğ™¥ÑÑ•ˆ°‰…­™±½Üè€‰9½Ğ…Ù…¥±…‰±”ˆ°Á•É™½Éµ…¹”è€‰9½Ğ…Ù…¥±…‰±”ˆ°Ñ¡•Éµ…°è€‰9½Ğ…Ù…¥±…‰±”ˆ°•áÁ±…¹…Ñ¥½¸è€‰9¼ÁÉ•‘¥Ñ¥Ù”½ÕÑÁÕĞ¥ÌÍÕ‰ÍÑ¥ÑÕÑ•™½È„µ¥ÍÍ¥¹œÙ…±¥‘…Ñ•µ½‘•°¸ˆô°(€€€€€Á•ÉAÉ½‰”è½µÁ…É¥Í½¹Ì°(€€€€€µ•Ñ¡½‘Ìèl‰Í¡…É•‰½Õ¹‘•É½ÍÌµ½ÉÉ•±…Ñ¥½¸ˆ°€‰!…¹¸µİ¥¹‘½İ•PÁÉ•ÍÍÕÉ”ÍÁ•ÑÉÕ´ˆ°€‰å±”µ‰äµå±”Á…ÍÍ…”ÑÉ…­¥¹œˆ°€‰Í±¥‘¥¹œµİ¥¹‘½Ü¥ÉÕµ™•É•¹Ñ¥…°Á¡…Í”µµ½‘”™¥Ğˆ°€‰Õ¹•ÉÑ…¥¹ÑäÉ•Í½±ÕÑ¥½¸‰äIMLˆ°€‰ÍÑÉÕÑÕÉ•‘¥…¹½ÍÑ¥ŒÉÕ±•Ìˆ°€‰…‘…ÁÑ¥Ù”½¹ÑÉ½±±•µÉ•ÉÕ¸½ÕÑ½µ”±…ÍÍ¥™¥…Ñ¥½¸‰t°(€€€€€±¥µ¥Ñ…Ñ¥½¹Ìèl‰Q¡”É…¹­••áÁ±…¹…Ñ¥½¹Ì¡½½Í”İ¡¥ ½¹”µ¡…¹”Ñ•ÍĞÑ¼ÉÕ¸¹•áĞìÑ¡•ä‘¼¹½ĞÁÉ½Ù”…ÕÍ…±¥Ñä¸ˆ°€‰Q¡”ÍÕÁÁ½ÉĞ°É•©•Ñ¥½¸°…¹½¹Ù•É•¹”±¥µ¥ÑÌ…É”-åÑ¡É½ÌÁÉ½Ñ½ÑåÁ”ÁÉ½‘ÕĞÉÕ±•Ì¸Q¡•ä…É”¹½ĞÁÉ½‰…‰¥±¥Ñ¥•Ì…¹…É”¹½ĞÑ…­•¸™É½´Ñ¡”¥Ñ•Á…Á•ÉÌ¸ˆ°€‰-åÑ¡É½ÌÁÉ½Á……Ñ•ÌÁÉ•ÍÍÕÉ”…¹Ñ¥µ¥¹œÕ¹•ÉÑ…¥¹Ñä½¹±ä¥¹Ñ¼Ñ¡”Í…±…È½ÕÑÁÕÑÌÑ¡…ĞÍÕÁÁ½ÉĞÑ¡…Ğ…±Õ±…Ñ¥½¸¸ˆ°€‰]…Ù”µµ½‘”¥¹™•É•¹”É•ÅÕ¥É•ÌÍå¹¡É½¹¥é•ÁÉ½‰•Ì…¹…ÍÍÕµ•Ì½¹”‘½µ¥¹…¹ĞÉ½Ñ…Ñ¥¹œµ½‘”¸-åÑ¡É½ÌÉ•Á½ÉÑÌ…µ‰¥Õ½ÕÌ½ÈÍ¥µÕ±Ñ…¹•½ÕÌµ½‘•Ì…Ì¹½Ğ¥‘•¹Ñ¥™¥…‰±”¸ˆ°€‰=ÁÑ¥½¹…°Á•É™½Éµ…¹”°™••µÍåÍÑ•´°Ñ¡•Éµ…°°…¹‘ÕÉ…Ñ¥½¸‘¥™™•É•¹•Ì…É”‘•ÍÉ¥ÁÑ¥Ù”Õ¹Ñ¥°ÅÕ…¹Ñ¥ÑäµÍÁ•¥™¥Œ‘•™¥¹¥Ñ¥½¹Ì…¹Õ¹•ÉÑ…¥¹Ñä‰Õ‘•ÑÌ…É”ÍÕÁÁ±¥•¸‰t°(€€€ôì(€€€½¹ÍĞÕÉ°€ôUI0¹É•…Ñ•=‰©•ÑUI0¡¹•Ü	±½ˆ¡m)M=8¹ÍÑÉ¥¹¥™ä¡É•Á½ÉĞ°¹Õ±°°€È¥t°ìÑåÁ”è€‰…ÁÁ±¥…Ñ¥½¸½©Í½¸ˆô¤¤ì(€€€½¹ÍĞ±¥¹¬€ô‘½Õµ•¹Ğ¹É•…Ñ•±•µ•¹Ğ ‰„ˆ¤ì±¥¹¬¹¡É•˜€ôÕÉ°ì±¥¹¬¹‘½İ¹±½…€ô€‰­åÑ¡É½ÌµÉ‘”µÉÕ¸µÉ•Á½ÉĞ¹©Í½¸ˆì±¥¹¬¹±¥¬ ¤ìUI0¹É•Ù½­•=‰©•ÑUI0¡ÕÉ°¤ì(€ô((€™Õ¹Ñ¥½¸‘½İ¹±½…‘É½é•¹A±…¸¡Á±…¸èÉ½é•¹IÕ¹A±…¸¤ì(€€€½¹ÍĞÕÉ°€ôUI0¹É•…Ñ•=‰©•ÑUI0¡¹•Ü	±½ˆ¡m)M=8¹ÍÑÉ¥¹¥™ä¡Á±…¸¹İ½É­=É‘•È°¹Õ±°°€È¥t°ìÑåÁ”è€‰…ÁÁ±¥…Ñ¥½¸½©Í½¸ˆô¤¤ì(€€€½¹ÍĞ±¥¹¬€ô‘½Õµ•¹Ğ¹É•…Ñ•±•µ•¹Ğ ‰„ˆ¤ì(€€€±¥¹¬¹¡É•˜€ôÕÉ°ì(€€€±¥¹¬¹‘½İ¹±½…€ô¹•áÑIÕ¹]½É­=É‘•É¥±•9…µ”¡Á±…¸¹İ½É­=É‘•È¤ì(€€€±¥¹¬¹±¥¬ ¤ì(€€€UI0¹É•Ù½­•=‰©•ÑUI0¡ÕÉ°¤ì(€ô((€™Õ¹Ñ¥½¸ÕÉÉ•¹ÑÉ½é•¹A±…¸ ¤ì(€€€¥˜€ …Á±…¹¹¥¹…Í”ñğ€…Á±…¹ÍÍ•ÍÍµ•¹Ğ¤É•ÑÕÉ¸¹Õ±°ì(€€€½¹ÍĞİ½É­=É‘•È€ôÉ•…Ñ•9•áÑIÕ¹]½É­=É‘•È¡Á±…¹ÍÍ•ÍÍµ•¹Ğ¹¹•áÑIÕ¸°Á±…¹¹¥¹…Í”¤ì(€€€¥˜€ …İ½É­=É‘•È¤É•ÑÕÉ¸¹Õ±°ì(€€€½¹ÍĞ•á¥ÍÑ¥¹œ€ô™É½é•¹IÕ¹A±…¹Ì¹™¥¹ ¡Á±…¸¤€ôøÁ±…¸¹ÍÑ…ÑÕÌ€ôôô€‰Á•¹‘¥¹œˆ€˜˜Í…µ•]½É­=É‘•É•™¥¹¥Ñ¥½¸¡Á±…¸¹İ½É­=É‘•È°İ½É­=É‘•È¤¤ì(€€€¥˜€¡•á¥ÍÑ¥¹œ¤É•ÑÕÉ¸•á¥ÍÑ¥¹œì(€€€½¹ÍĞÉ•…Ñ•€ô™É••é•IÕ¹A±…¸¡İ½É­=É‘•È¤ì(€€€Í•ÑÉ½é•¹IÕ¹A±…¹Ì ¡ÕÉÉ•¹Ğ¤€ôøl¸¸¹ÕÉÉ•¹Ğ°É•…Ñ•‘t¤ì(€€€É•ÑÕÉ¸É•…Ñ•ì(€ô((€™Õ¹Ñ¥½¸‘½İ¹±½…‘9•áÑIÕ¹]½É­=É‘•È ¤ì(€€€½¹ÍĞÁ±…¸€ôÕÉÉ•¹ÑÉ½é•¹A±…¸ ¤ì(€€€¥˜€¡Á±…¸¤‘½İ¹±½…‘É½é•¹A±…¸¡Á±…¸¤ì(€ô((€™Õ¹Ñ¥½¸‘½İ¹±½…‘=Á•¹½…µ!…¹‘½™˜ ¤ì(€€€½¹ÍĞÁ±…¸€ôÕÉÉ•¹ÑÉ½é•¹A±…¸ ¤ì(€€€¥˜€ …Á±…¸¤É•ÑÕÉ¸ì(€€€½¹ÍĞ¡…¹‘½™˜€ô‰Õ¥±‘=Á•¹½…µ9•áÑIÕ¹!…¹‘½™˜¡Á±…¸¹İ½É­=É‘•È¤ì(€€€½¹ÍĞÕÉ°€ôUI0¹É•…Ñ•=‰©•ÑUI0¡¹•Ü	±½ˆ¡m)M=8¹ÍÑÉ¥¹¥™ä¡¡…¹‘½™˜°¹Õ±°°€È¥t°ìÑåÁ”è€‰…ÁÁ±¥…Ñ¥½¸½©Í½¸ˆô¤¤ì(€€€½¹ÍĞ±¥¹¬€ô‘½Õµ•¹Ğ¹É•…Ñ•±•µ•¹Ğ ‰„ˆ¤ì(€€€±¥¹¬¹¡É•˜€ôÕÉ°ì(€€€±¥¹¬¹‘½İ¹±½…€ô­åÑ¡É½Ìµ½Á•¹™½…´µ¡…¹‘½™˜´‘íÁ±…¸¹İ½É­=É‘•È¹¥‘ô¹©Í½¹€ì(€€€±¥¹¬¹±¥¬ ¤ì(€€€UI0¹É•Ù½­•=‰©•ÑUI0¡ÕÉ°¤ì(€ô((€™Õ¹Ñ¥½¸½Á•¹É½é•¹IÕ¹A±…¸¡Á±…¸èÉ½é•¹IÕ¹A±…¸¤ì(€€€½¹ÍĞİ½É­=É‘•È€ôÁ±…¸¹İ½É­=É‘•Èì(€€€½¹ÍĞÍÑ…ÉÑ¥¹…Í”€ô…Í•Ì¹™¥¹ ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€ôôôİ½É­=É‘•È¹ÍÑ…ÉÑ¥¹…Í”¹¥¤ì(€€€¥˜€ …ÍÑ…ÉÑ¥¹…Í”ñğÁ±…¸¹ÍÑ…ÑÕÌ€„ôô€‰Á•¹‘¥¹œˆ¤É•ÑÕÉ¸ì(€€€½¹ÍĞ‘•™¥¹¥Ñ¥½¸€ô=9QI=11}AI5QIMmİ½É­=É‘•È¹¡…¹”¹Á…É…µ•Ñ•Étì(€€€½¹ÍĞ¥¹¡•É¥Ñ•€ô±½¹•5•Ñ…‘…Ñ„¡ÍÑ…ÉÑ¥¹…Í”¹µ•Ñ…‘…Ñ„¤ì(€€€¥¹¡•É¥Ñ•¹¹…µ”€ô€‘íÍÑ…ÉÑ¥¹…Í”¹µ•Ñ…‘…Ñ„¹¹…µ•ôƒ
+Ü€‘í‘•™¥¹¥Ñ¥½¸¹±…‰•±õ€ì(€€€±•…É™‘A¡åÍ¥Ì¡¥¹¡•É¥Ñ•¤ì(€€€¥˜€¡ÑåÁ•½˜İ½É­=É‘•È¹¡…¹”¹ÍÕ•ÍÑ•‘Q…É•ÑY…±Õ”€ôôô€‰¹Õµ‰•Èˆ¤ì(€€€€€€¡¥¹¡•É¥Ñ•‘m‘•™¥¹¥Ñ¥½¸¹ÁÉ¥µ…Éå¥•±‘t…Ì¹Õµ‰•È¤€ôİ½É­=É‘•È¹¡…¹”¹ÍÕ•ÍÑ•‘Q…É•ÑY…±Õ”ì(€€€ô(€€€½¹ÍĞ‰…Í•±¥¹•…Í•%€ôÍÑ…ÉÑ¥¹…Í”¹É•±…Ñ¥½¹Í¡¥Àü¹‰…Í•±¥¹•…Í•%€üüÍÑ…ÉÑ¥¹…Í”¹¥ì(€€€Í•Ñ‘¥Ñ¥¹…Í•%¡¹Õ±°¤ì(€€€Í•ÑÉ…™Ñ•Í¥¹%¡ÍÑ…ÉÑ¥¹…Í”¹‘•Í¥¹%€üü…Ñ¥Ù••Í¥¹%¤ì(€€€Í•ÑÉ…™Ñ=Á•É…Ñ¥¹A½¥¹Ñ%¡ÍÑ…ÉÑ¥¹…Í”¹½Á•É…Ñ¥¹A½¥¹Ñ%€üü…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%¤ì(€€€Í•ÑÉ…™Ñ9•İ=Á•É…Ñ¥¹A½¥¹Ğ¡¹Õ±°¤ì(€€€Í•ÑÉ…™ÑÉ½é•¹A±…¹%¡İ½É­=É‘•È¹¥¤ì(€€€Í•Ñ1½…‘•É5½‘” ‰½µÁ…É¥Í½¸µÉÕ¸ˆ¤ì(€€€Í•ÑÉ…™ÑI•±…Ñ¥½¹Í¡¥À¡ì(€€€€€‰…Í•±¥¹•…Í•%°(€€€€€É•™•É•¹•…Í•%èÍÑ…ÉÑ¥¹…Í”¹¥°(€€€€€¡…¹•‘Y…É¥…‰±”è‘•™¥¹¥Ñ¥½¸¹Ù…É¥…‰±”°(€€€€€¡…¹•‘A…É…µ•Ñ•Èè‘•™¥¹¥Ñ¥½¸¹¥°(€€€€€‘•ÍÉ¥ÁÑ¥½¸è‘•™¥¹¥Ñ¥½¸¹Õ¥‘…¹”°(€€€€€É•½µµ•¹‘…Ñ¥½¸èÉ•½µµ•¹‘…Ñ¥½¹M¹…ÁÍ¡½Ğ¡İ½É­=É‘•È¤°(€€€ô¤ì(€€€Í•ÑÉ…™Ğ¡¥¹¡•É¥Ñ•¤ì(€€€Í•ÑQ•ÍÑA•¹‘¥¹œ¡¹Õ±°¤ìÍ•Ñ™‘A•¹‘¥¹œ¡¹Õ±°¤ìÍ•ÑQ•ÍÑ]…±±A•¹‘¥¹œ¡¹Õ±°¤ìÍ•Ñ™‘]…±±A•¹‘¥¹œ¡¹Õ±°¤ìÍ•ÑÉÉ½È ˆˆ¤ìÍ•ÑI•Ù¥•İ¥¹I•ÉÕ¸¡™…±Í”¤ìÍ•ÑM¡½İ1½…‘•È¡ÑÉÕ”¤ì(€ô((€™Õ¹Ñ¥½¸ÍÑ…ÉÑI•½µµ•¹‘•‘I•ÉÕ¸ ¤ì(€€€½¹ÍĞÁ±…¸€ôÕÉÉ•¹ÑÉ½é•¹A±…¸ ¤ì(€€€¥˜€¡Á±…¸¤½Á•¹É½é•¹IÕ¹A±…¸¡Á±…¸¤ì(€ô((€™Õ¹Ñ¥½¸‘½İ¹±½…‘]½É­ÍÁ…” ¤ì(€€€¥˜€ ……Í•Ì¹±•¹Ñ €˜˜€…‘•Í¥¹Ì¹±•¹Ñ ¤É•ÑÕÉ¸ì(€€€½¹ÍĞ½¹Ñ•¹Ğ€ôÍ•É¥…±¥é•]½É­ÍÁ…”¡ì…Í•Ì°…Ñ¥Ù•…Í•%°‰…Í•±¥¹•…Í•%è…Í•	…Í•±¥¹•%°‘•Í¥¹Ì°…Ñ¥Ù••Í¥¹%°½Á•É…Ñ¥¹A½¥¹ÑÌ°…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%°™É½é•¹IÕ¹A±…¹Ìô¤ì(€€€½¹ÍĞÕÉ°€ôUI0¹É•…Ñ•=‰©•ÑUI0¡¹•Ü	±½ˆ¡m½¹Ñ•¹Ñt°ìÑåÁ”è€‰…ÁÁ±¥…Ñ¥½¸½©Í½¸ˆô¤¤ì(€€€½¹ÍĞ±¥¹¬€ô‘½Õµ•¹Ğ¹É•…Ñ•±•µ•¹Ğ ‰„ˆ¤ì(€€€±¥¹¬¹¡É•˜€ôÕÉ°ì(€€€±¥¹¬¹‘½İ¹±½…€ôİ½É­ÍÁ…•¥±•9…µ” ¤ì(€€€±¥¹¬¹±¥¬ ¤ì(€€€UI0¹É•Ù½­•=‰©•ÑUI0¡ÕÉ°¤ì(€ô((€…Íå¹Œ™Õ¹Ñ¥½¸½Á•¹]½É­ÍÁ…”¡•Ù•¹Ğè¡…¹•Ù•¹Ğñ!Q51%¹ÁÕÑ±•µ•¹Ğø¤ì(€€€½¹ÍĞ™¥±”€ô•Ù•¹Ğ¹Ñ…É•Ğ¹™¥±•Ìü¹lÁtì(€€€•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”€ô€ˆˆì(€€€¥˜€ …™¥±”¤É•ÑÕÉ¸ì(€€€ÑÉäì(€€€€€½¹ÍĞÉ•ÍÑ½É•€ô‘•Í•É¥…±¥é•]½É­ÍÁ…”¡…İ…¥Ğ™¥±”¹Ñ•áĞ ¤¤ì(€€€€€¥˜€ ¡…Í•Ì¹±•¹Ñ ñğ‘•Í¥¹Ì¹±•¹Ñ ¤€˜˜€…İ¥¹‘½Ü¹½¹™¥É´ ‰I•Á±…”Ñ¡”ÕÉÉ•¹Ğ‰É½İÍ•ÈµÍ•ÍÍ¥½¸•¹¥¹•Ì°½Á•É…Ñ¥¹œÁ½¥¹ÑÌ°…¹ÉÕ¹Ìİ¥Ñ Ñ¡¥ÌÍ…Ù•İ½É­ÍÁ…”üˆ¤¤É•ÑÕÉ¸ì(€€€€€Í•Ñ…Í•Ì¡É•ÍÑ½É•¹…Í•Ì¤ì(€€€€€Í•Ñ•Í¥¹Ì¡É•ÍÑ½É•¹‘•Í¥¹Ì¤ì(€€€€€Í•Ñ=Á•É…Ñ¥¹A½¥¹ÑÌ¡É•ÍÑ½É•¹½Á•É…Ñ¥¹A½¥¹ÑÌ¤ì(€€€€€Í•ÑÉ½é•¹IÕ¹A±…¹Ì¡É•ÍÑ½É•¹™É½é•¹IÕ¹A±…¹Ì¤ì(€€€€€Í•ÑÑ¥Ù••Í¥¹%¡É•ÍÑ½É•¹…Ñ¥Ù••Í¥¹%¤ì(€€€€€Í•ÑÑ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%¡É•ÍÑ½É•¹…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%¤ì(€€€€€Í•ÑÑ¥Ù•…Í•%¡É•ÍÑ½É•¹…Ñ¥Ù•…Í•%¤ì(€€€€€Í•Ñ…Í•	…Í•±¥¹•%¡É•ÍÑ½É•¹‰…Í•±¥¹•…Í•%¤ì(€€€€€Í•Ñ‘¥Ñ¥¹…Í•%¡¹Õ±°¤ì(€€€€€Í•ÑÉ…™Ğ¡±½¹•5•Ñ…‘…Ñ„¡5AQe}5QQ¤¤ì(€€€€€Í•ÑÉ…™ÑI•±…Ñ¥½¹Í¡¥À¡¹Õ±°¤ì(€€€€€Í•ÑÉ…™ÑÉ½é•¹A±…¹%¡¹Õ±°¤ì(€€€€€Í•ÑQ•ÍÑA•¹‘¥¹œ¡¹Õ±°¤ì(€€€€€Í•Ñ™‘A•¹‘¥¹œ¡¹Õ±°¤ì(€€€€€Í•ÑM¡½İ1½…‘•È¡™…±Í”¤ì(€€€€€Í•ÑM¡½İ!•±À¡™…±Í”¤ì(€€€€€Í•ÑÉÉ½È ˆˆ¤ì(€€€€€Í•Ñ]½É­ÍÁ…•ÉÉ½È ˆˆ¤ì(€€€€€Í•ÑÑ¥Ù•AÉ½‰” À¤ì(€€€€€Í•ÑÑ¥Ù•Y¥•Ü ‰Í¥¹…±Ìˆ¤ì(€€€€€Í•Ñ]½É­ÍÁ…•Y¥•Ü ‰…Í”ˆ¤ì(€€€€€Í•ÑAÉ½‘ÕÑY¥•Ü¡É•ÍÑ½É•¹…Ñ¥Ù•…Í•%€ü€‰½µÁ…É¥Í½¸ˆ€èÉ•ÍÑ½É•¹…Ñ¥Ù••Í¥¹%€ü€‰‘•Í¥¸ˆ€è€‰¡½µ”ˆ¤ì(€€€ô…Ñ €¡É•…Í½¸¤ì(€€€€€Í•Ñ]½É­ÍÁ…•ÉÉ½È¡É•…Í½¸¥¹ÍÑ…¹•½˜ÉÉ½È€üÉ•…Í½¸¹µ•ÍÍ…”€è€‰Q¡”İ½É­ÍÁ…”½Õ±¹½Ğ‰”½Á•¹•¸ˆ¤ì(€€€ô(€ô((€½¹ÍĞÕÁ‘…Ñ•9Õµ‰•È€ô€¡­•äè­•å½˜…Í•5•Ñ…‘…Ñ„°Ù…±Õ”èÍÑÉ¥¹œ¤€ôøÍ•ÑÉ…™Ğ ¡ÕÉÉ•¹Ğ¤€ôø€¡ì€¸¸¹ÕÉÉ•¹Ğ°m­•åtèÙ…±Õ”€ôôô€ˆˆ€ü9Õµ‰•È¹9…8€è9Õµ‰•È¡Ù…±Õ”¤ô¤¤ì(€½¹ÍĞÕÁ‘…Ñ•Q•áĞ€ô€¡­•äè­•å½˜…Í•5•Ñ…‘…Ñ„°Ù…±Õ”èÍÑÉ¥¹œ¤€ôøÍ•ÑÉ…™Ğ ¡ÕÉÉ•¹Ğ¤€ôø€¡ì€¸¸¹ÕÉÉ•¹Ğ°m­•åtèÙ…±Õ”ô¤¤ì(€½¹ÍĞ¹Õµ‰•ÉY…±Õ”€ô€¡Ù…±Õ”è¹Õµ‰•ÈğÕ¹‘•™¥¹•¤€ôøÑåÁ•½˜Ù…±Õ”€ôôô€‰¹Õµ‰•Èˆ€˜˜9Õµ‰•È¹¥Í¥¹¥Ñ”¡Ù…±Õ”¤€üÙ…±Õ”€è€ˆˆì((€™Õ¹Ñ¥½¸Í…Ù•¹¥¹••Í¥¸¡‘•Í¥¸è¹¥¹••Í¥¸¤ì(€€€½¹ÍĞÁÉ•Ù¥½ÕÌ€ô‘•Í¥¹Ì¹™¥¹ ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€ôôô‘•Í¥¸¹¥¤€üü¹Õ±°ì(€€€½¹ÍĞÍ…Ù•€ôÉ•…Ñ•¹¥¹•I•Ù¥Í¥½¸¡‘•Í¥¸°ÁÉ•Ù¥½ÕÌ¤ì(€€€Í•Ñ•Í¥¹Ì ¡ÕÉÉ•¹Ğ¤€ôøl¸¸¹ÕÉÉ•¹Ğ°Í…Ù•‘t¤ì(€€€Í•ÑÑ¥Ù••Í¥¹%¡Í…Ù•¹¥¤ì(€ô((€É•ÑÕÉ¸€ñµ…¥¸±…ÍÍ9…µ”ô‰…ÁÀµÍ¡•±°ˆø(€€€€ñ¡•…‘•È±…ÍÍ9…µ”ô‰ÁÉ½‘ÕĞµ¡•…‘•Èˆø(€€€€€€ñ„±…ÍÍ9…µ”ô‰‰É…¹ˆ¡É•˜ôˆÑ½Àˆ…É¥„µ±…‰•°ô‰¼Ñ¼-åÑ¡É½Ì¡½µ”ˆ½¹±¥¬õì¡•Ù•¹Ğ¤€ôøì•Ù•¹Ğ¹ÁÉ•Ù•¹Ñ•™…Õ±Ğ ¤ìÍ•ÑAÉ½‘ÕÑY¥•Ü ‰¡½µ”ˆ¤ìÉ•ÅÕ•ÍÑ¹¥µ…Ñ¥½¹É…µ”  ¤€ôø‘½Õµ•¹Ğ¹•Ñ±•µ•¹Ñ	å% ‰Ñ½Àˆ¤ü¹ÍÉ½±±%¹Ñ½Y¥•Ü¡ì‰•¡…Ù¥½Èè€‰Íµ½½Ñ ˆ°‰±½¬è€‰ÍÑ…ÉĞˆô¤¤ìõôøñÍÁ…¸±…ÍÍ9…µ”ô‰‰É…¹µµ…É¬ˆù,ğ½ÍÁ…¸øñÍÁ…¸øñÍÑÉ½¹œù-eQ!I=Lğ½ÍÑÉ½¹œøñÍµ…±°ù	d1ULğ½Íµ…±°øğ½ÍÁ…¸øğ½„ø(€€€€€€ñÀùI‘•Í¥¸°Í¥µÕ±…Ñ¥½¸°…¹Ù…±¥‘…Ñ¥½¸ğ½Àø(€€€€€€ñ¹…Ø±…ÍÍ9…µ”ô‰ÁÉ½‘ÕĞµÑ…‰Ìˆ…É¥„µ±…‰•°ô‰-åÑ¡É½Ìİ½É­ÍÁ…•Ìˆøñ‰ÕÑÑ½¸±…ÍÍ9…µ”õíÁÉ½‘ÕÑY¥•Ü€ôôô€‰¡½µ”ˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô…É¥„µÕÉÉ•¹ĞõíÁÉ½‘ÕÑY¥•Ü€ôôô€‰¡½µ”ˆ€ü€‰Á…”ˆ€èÕ¹‘•™¥¹•‘ô½¹±¥¬õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰¡½µ”ˆ¥ôù!½µ”ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”õíÁÉ½‘ÕÑY¥•Ü€ôôô€‰‘•Í¥¸ˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô…É¥„µÕÉÉ•¹ĞõíÁÉ½‘ÕÑY¥•Ü€ôôô€‰‘•Í¥¸ˆ€ü€‰Á…”ˆ€èÕ¹‘•™¥¹•‘ô½¹±¥¬õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰‘•Í¥¸ˆ¥ôù•Í¥¸ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”õíÁÉ½‘ÕÑY¥•Ü€ôôô€‰Í¥µÕ±…Ñ¥½¸ˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô…É¥„µÕÉÉ•¹ĞõíÁÉ½‘ÕÑY¥•Ü€ôôô€‰Í¥µÕ±…Ñ¥½¸ˆ€ü€‰Á…”ˆ€èÕ¹‘•™¥¹•‘ô½¹±¥¬õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰Í¥µÕ±…Ñ¥½¸ˆ¥ôøÉM¥µÕ±…Ñ¥½¸ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”õíÁÉ½‘ÕÑY¥•Ü€ôôô€‰•¹Ù•±½Á”ˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô…É¥„µÕÉÉ•¹ĞõíÁÉ½‘ÕÑY¥•Ü€ôôô€‰•¹Ù•±½Á”ˆ€ü€‰Á…”ˆ€èÕ¹‘•™¥¹•‘ô½¹±¥¬õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰•¹Ù•±½Á”ˆ¥ôù¹Ù•±½Á”ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”õíÁÉ½‘ÕÑY¥•Ü€ôôô€‰½µÁ…É¥Í½¸ˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô…É¥„µÕÉÉ•¹ĞõíÁÉ½‘ÕÑY¥•Ü€ôôô€‰½µÁ…É¥Í½¸ˆ€ü€‰Á…”ˆ€èÕ¹‘•™¥¹•‘ô½¹±¥¬õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰½µÁ…É¥Í½¸ˆ¥ôùáÁ•É¥µ•¹ĞY…±¥‘…Ñ¥½¸ğ½‰ÕÑÑ½¸øğ½¹…Øø(€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡•…‘•Èµ…Ñ¥½¹ÌˆøñÍÁ…¸±…ÍÍ9…µ”ô‰ÁÉ½Ñ½ÑåÁ”µÑ…œˆùÙí91eM%M}YIM%=9ôğ½ÍÁ…¸øñAİ…%¹ÍÑ…±±	ÕÑÑ½¸€¼øñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸Í•½¹‘…Éä¡•±Àµ‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÍ•ÑM¡½İ!•±À¡ÑÉÕ”¥ôù!•±Àğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸ÁÉ¥µ…Éäˆ½¹±¥¬õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü¡‘•Í¥¹Ì¹±•¹Ñ €ü€‰Í¥µÕ±…Ñ¥½¸ˆ€è€‰‘•Í¥¸ˆ¥ôùí‘•Í¥¹Ì¹±•¹Ñ €ü€‰=Á•¸€ÉM¥µÕ±…Ñ¥½¸ˆ€è€ˆ¬9•Ü•¹¥¹”‰ôğ½‰ÕÑÑ½¸øğ½‘¥Øø(€€€€ğ½¡•…‘•Èø(€€€íİ½É­ÍÁ…•ÉÉ½È€˜˜€ñÀ±…ÍÍ9…µ”ô‰İ½É­ÍÁ…”µ•ÉÉ½Èµ‰…¹¹•ÈˆÉ½±”ô‰…±•ÉĞˆùíİ½É­ÍÁ…•ÉÉ½Éôğ½Àùô((€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰½¹Ñ•¹Ğˆ¥ô‰Ñ½Àˆø(€€€€€íÁÉ½‘ÕÑY¥•Ü€ôôô€‰¡½µ”ˆ€ü€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰¡½µ”µİ½É­ÍÁ…”ˆ…É¥„µ±…‰•±±•‘‰äô‰¡½µ”µÑ¥Ñ±”ˆø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡½µ”µ¡•É¼ˆø(€€€€€€€€€€ñÍÁ…¸±…ÍÍ9…µ”ô‰•µÁÑäµ­¥­•ÈˆùM%8ƒŠHM%5U1QƒŠH91eiƒŠH%5AI=Yğ½ÍÁ…¸ø(€€€€€€€€€€ñ Ä¥ô‰¡½µ”µÑ¥Ñ±”ˆù•Ù•±½À…¸I¥¸½¹”½¹¹•Ñ•İ½É­ÍÁ…”ğ½ Äø(€€€€€€€€€€ñÀù•™¥¹”Ñ¡”•¹¥¹”°¡½½Í”„™…ÍĞ€ÉÍ•ÑÕÀ°…¹ÉÕ¸=Á•¹=4½¸å½ÕÈ½İ¸½µÁÕÑ•ÈÑ¡É½Õ Ñ¡”±½…°-åÑ¡É½ÌÉÕ¹¹•È¸I•ÑÕÉ¹•Í½±Ù•ÈÉ•ÍÕ±ÑÌ‰•½µ”Í•Á…É…Ñ”Í¥µÕ±…Ñ¥½¸…¹•¹¥¹”…Ñ¥½¹Ì¸‘¡½Ğµ™¥É”‘…Ñ„½¹±ä™½ÈÁ¡åÍ¥…°Ù…±¥‘…Ñ¥½¸¸ğ½Àø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡½µ”µ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸ÁÉ¥µ…Éäˆ½¹±¥¬õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü¡‘•Í¥¹Ì¹±•¹Ñ €ü€‰Í¥µÕ±…Ñ¥½¸ˆ€è€‰‘•Í¥¸ˆ¥ôùí‘•Í¥¹Ì¹±•¹Ñ €ü€‰=Á•¸€ÉM¥µÕ±…Ñ¥½¸ƒŠHˆ€è€‰•Í¥¸Ñ¡”™¥ÉÍĞIƒŠH‰ôğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸Í•½¹‘…Éäˆ½¹±¥¬õì ¤€ôøÍ•ÑM¡½İ!•±À¡ÑÉÕ”¥ôùM•”¡½Ü¥Ğİ½É­Ìğ½‰ÕÑÑ½¸øğ½‘¥Øø(€€€€€€€€ğ½‘¥Øø((€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰¡½µ”µ±½…µ…Éˆ…É¥„µ±…‰•±±•‘‰äô‰¡½µ”µ±½…µÑ¥Ñ±”ˆø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡½µ”µ±½…µ¡•…‘¥¹œˆøñÍÁ…¸ù=A8]=I-MAğ½ÍÁ…¸øñ È¥ô‰¡½µ”µ±½…µÑ¥Ñ±”ˆù½¹Ñ¥¹Õ”İ½É¬½È¥¹ÍÁ•Ğ…¸•á…µÁ±”ğ½ ÈøñÀù±°İ½É­ÍÁ…”±½…‘•ÉÌ±¥Ù”¡•É”¸9•ÜI‘•Ù•±½Áµ•¹ĞÍÑ…ÉÑÌİ¥Ñ •Í¥¸ìÍ…Ù•…¹•á…µÁ±”ÁÉ½©•ÑÌÉ•ÍÑ½É”Ñ¡•¥È•á¥ÍÑ¥¹œ•¹¥¹•Ì°Í¥µÕ±…Ñ¥½¹Ì°…¹•Ù¥‘•¹”¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡½µ”µ±½…µ½ÁÑ¥½¹Ìˆø(€€€€€€€€€€€€ñ…ÉÑ¥±”øñÍÁ…¸ùe=UH]=I,ğ½ÍÁ…¸øñÍÑÉ½¹œùM…Ù•-åÑ¡É½Ìİ½É­ÍÁ…”ğ½ÍÑÉ½¹œøñÀùI•ÍÑ½É”•¹¥¹”É•Ù¥Í¥½¹Ì°½Á•É…Ñ¥¹œÁ½¥¹ÑÌ°…Í•Ì°•áÁ•É¥µ•¹Ñ…°•Ù¥‘•¹”°…¹™É½é•¸¹•áĞµÉÕ¸Á±…¹Ì¸ğ½Àøñ±…‰•°±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸ÁÉ¥µ…Éäİ½É­ÍÁ…”µ™¥±”µ‰ÕÑÑ½¸ˆù=Á•¸Í…Ù•İ½É­ÍÁ…”ñ¥¹ÁÕĞÑåÁ”ô‰™¥±”ˆ…•ÁĞôˆ¹©Í½¸ˆ½¹¡…¹”õí½Á•¹]½É­ÍÁ…•ô¡¥‘‘•¸€¼øğ½±…‰•°øğ½…ÉÑ¥±”ø(€€€€€€€€€€€€ñ…ÉÑ¥±”øñÍÁ…¸ùI0AU	1%M!MU55Idğ½ÍÁ…¸øñÍÑÉ½¹œù=‰Í•ÉÙ•½Á•É…Ñ¥¹œÁ½¥¹ÑÌğ½ÍÑÉ½¹œøñÀù%¹ÍÁ•ĞÍ½ÕÉ”µ‰…­•½Á•É…Ñ¥¹œ½¹‘¥Ñ¥½¹Ì…¹É•Á½ÉÑ•İ…Ù”µ½‘•Ì¸Q¡¥Ì•á…µÁ±”‘½•Ì¹½Ğ¥¹±Õ‘”É…Ü™¥•±‘Ì¸ğ½Àøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸Í•½¹‘…Éäˆ½¹±¥¬õí±½…‘AÕ‰±¥Í¡•‘¹Ù•±½Á•á…µÁ±•ôù1½…ÁÕ‰±¥Í¡•½‰Í•ÉÙ…Ñ¥½¹Ìğ½‰ÕÑÑ½¸øğ½…ÉÑ¥±”ø(€€€€€€€€€€€€ñ…ÉÑ¥±”øñÍÁ…¸ùMe9Q!Q%ƒ
+Ü]=I-1=\=91dğ½ÍÁ…¸øñÍÑÉ½¹œù¹…±åÍ¥Ì‘•µ½¹ÍÑÉ…Ñ¥½¸ğ½ÍÑÉ½¹œøñÀù%¹ÍÁ•Ğ¡½Ü-åÑ¡É½Ì…¹…±åé•Ì„‰…Í•±¥¹”…Í”…¹ÑÉ…­Ì½¹ÑÉ½±±•É•ÉÕ¹Ì¸Q¡”•¹•É…Ñ•Ù…±Õ•Ì…É”¹½ĞÁ¡åÍ¥…°Ù…±¥‘…Ñ¥½¸¸ğ½Àøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸Í•½¹‘…Éäˆ½¹±¥¬õí±½…‘á…µÁ±•…Í•!¥ÍÑ½Éåôù1½…Íå¹Ñ¡•Ñ¥Œ‘•µ½¹ÍÑÉ…Ñ¥½¸ğ½‰ÕÑÑ½¸øğ½…ÉÑ¥±”ø(€€€€€€€€€€ğ½‘¥Øø(€€€€€€€€ğ½Í•Ñ¥½¸ø((€€€€€€€€ñ‘•Ñ…¥±Ì±…ÍÍ9…µ”ô‰¡½µ”µÍÕÁÁ½ÉÑ¥¹œµ‘•Ñ…¥±Ìˆø(€€€€€€€€€€ñÍÕµµ…ÉäøñÍÁ…¸ù5Q!=9Y%9ğ½ÍÁ…¸øñÍÑÉ½¹œù]¡…Ğ-åÑ¡É½Ì‘½•Ì…¹‘½•Ì¹½Ğ‘¼ğ½ÍÑÉ½¹œøñÍµ…±°ù=Á•¸Ñ¡”™¥Ù”µÍÑ•Àİ½É­™±½Ü°Í½±Ù•È‰½Õ¹‘…Éä°…¹ÁÕ‰±¥Œ…¹…±åé•È¡•­Ì¸ğ½Íµ…±°øğ½ÍÕµµ…Éäø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡½µ”µÍÕÁÁ½ÉÑ¥¹œµ½¹Ñ•¹Ğˆø(€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰¡½µ”µİ½É­™±½Üµ…Éˆ…É¥„µ±…‰•°ô‰%¹Ñ•¹‘•-åÑ¡É½Ìİ½É­™±½Üˆø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…Éµ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸ùAI%5Id]=I-1=\ğ½ÍÁ…¸øñ Èù=¹”•¹¥¹”É•½É™É½´½¹•ÁĞÑ¡É½Õ Ù…±¥‘…Ñ¥½¸ğ½ ÈøñÀù… ÍÑ…”¥¹¡•É¥ÑÌÑ¡”•á…Ğ•¹¥¹”É•Ù¥Í¥½¸…¹½Á•É…Ñ¥¹œ½¹‘¥Ñ¥½¸°Í¼•½µ•ÑÉä°Í•ÑÑ¥¹Ì°½ÕÑÁÕÑÌ°É•½µµ•¹‘…Ñ¥½¹Ì°…¹•áÁ•É¥µ•¹ÑÌÉ•µ…¥¸ÑÉ…•…‰±”¸ğ½Àøğ½‘¥Øøğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰ÍÉ••¹¥¹œµİ½É­™±½Üˆøñ…ÉÑ¥±”øñˆøÄğ½ˆøñÍÁ…¸øñÍÑÉ½¹œù•Í¥¸ğ½ÍÑÉ½¹œøñÍµ…±°ù•™¥¹”•½µ•ÑÉä°¥¹©•Ñ½ÉÌ°ÁÉ½Á•±±…¹ÑÌ°µ…Ñ•É¥…±Ì°½½±¥¹œ°…¹½Á•É…Ñ¥¹œ±¥µ¥ÑÌ¸ğ½Íµ…±°øğ½ÍÁ…¸øğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñˆøÈğ½ˆøñÍÁ…¸øñÍÑÉ½¹œùM•ĞÕÀ€Éğ½ÍÑÉ½¹œøñÍµ…±°ù¡½½Í”„ÅÕ¥¬°‰…±…¹•°½ÈÉ•™¥¹•ÁÉ•Í•Ğ™½ÈÑ¡”Á•É¥½‘¥Œ¡…µ‰•È¸ğ½Íµ…±°øğ½ÍÁ…¸øğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñˆøÌğ½ˆøñÍÁ…¸øñÍÑÉ½¹œùIÕ¸±½…±±äğ½ÍÑÉ½¹œøñÍµ…±°ùá•ÕÑ”É•…°=Á•¹=4½µµ…¹‘ÌÑ¡É½Õ Ñ¡”±½…±¡½ÍĞ½µÁ…¹¥½¸¸ğ½Íµ…±°øğ½ÍÁ…¸øğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñˆøĞğ½ˆøñÍÁ…¸øñÍÑÉ½¹œù¹…±åé”É•ÍÕ±Ğğ½ÍÑÉ½¹œøñÍµ…±°ùI•…½¹Ù•É•¹”°İ…Ù”°‰…­™±½Ü°…¹Ñ¡•Éµ…°½ÕÑÁÕÑÌ™É½´Ñ¡”Í½±Ù•È…‘…ÁÑ•È¸ğ½Íµ…±°øğ½ÍÁ…¸øğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñˆøÔğ½ˆøñÍÁ…¸øñÍÑÉ½¹œù%µÁÉ½Ù”ğ½ÍÑÉ½¹œøñÍµ…±°ùI••¥Ù”Í•Á…É…Ñ”•¹¥¹”µ‘•Í¥¸…¹¹•áĞµÍ¥µÕ±…Ñ¥½¸É•½µµ•¹‘…Ñ¥½¹Ì¸ğ½Íµ…±°øğ½ÍÁ…¸øğ½…ÉÑ¥±”øğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡½µ”µ•Ù¥‘•¹”µ‰½Õ¹‘…Éäˆøñ…ÉÑ¥±”øñÍÁ…¸ù-eQ!I=LAIAILğ½ÍÁ…¸øñÍÑÉ½¹œùQÉ…•…‰±”€É…Í”ğ½ÍÑÉ½¹œøñÀù•½µ•ÑÉä°½Á•É…Ñ¥¹œ½¹‘¥Ñ¥½¸°ÍÁ••ÁÉ•Í•Ğ°Á•É¥½‘¥Œµ•Í °ÁÉ½‰•Ì°…¹¥‘•¹Ñ¥Ñä¸ğ½Àøğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñÍÁ…¸ù1=0=A9=4IU99Hğ½ÍÁ…¸øñÍÑÉ½¹œùI•…°•á•ÕÑ¥½¸°¹¼±½Õ…½Õ¹Ğğ½ÍÑÉ½¹œøñÀùQ¡”½µÁ…¹¥½¸ÉÕ¹Ì½¸±½…±¡½ÍĞ…¹•áÁ½Í•ÌÍÑ…ÑÕÌ°±½Ì°…¹•±±…Ñ¥½¸°…¹É•ÑÕÉ¹•É•ÍÕ±ÑÌ¸ğ½Àøğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñÍÁ…¸ù9%9HAAI=YLğ½ÍÁ…¸øñÍÑÉ½¹œùI•…Ñ¥¹œµ™±½Üµ½‘•°ğ½ÍÑÉ½¹œøñÀù¡•µ¥ÍÑÉä°‰½Õ¹‘…É¥•Ì°¥¹¥Ñ¥½¸°¹Õµ•É¥Ì°…¹½¹Ù•É•¹”É•µ…¥¸•áÁ±¥¥ĞÉ•Ù¥•Ü…Ñ•Ì¸ğ½Àøğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñÍÁ…¸ù-eQ!I=LI=559Lğ½ÍÁ…¸øñÍÑÉ½¹œù]¡…Ğ¡…¹•Ì¹•áĞğ½ÍÑÉ½¹œøñÀùM½±Ù•È•Ù¥‘•¹”ÁÉ½‘Õ•Ì½¹”•¹¥¹”¡…¹”Ñ¼Ñ•ÍĞ…¹½¹”¹•áĞµÍ¥µÕ±…Ñ¥½¸…Ñ¥½¸¸ğ½Àøğ½…ÉÑ¥±”øğ½‘¥Øø(€€€€€€€€ğ½Í•Ñ¥½¸ø((€€€€€€€€ñAÕ‰±¥áÁ•É¥µ•¹Ñ	•¹¡µ…É­Ì€¼ø(€€€€€€€€€€ğ½‘¥Øø(€€€€€€€€ğ½‘•Ñ…¥±Ìø((€€€€€€ğ½Í•Ñ¥½¸ø€èÁÉ½‘ÕÑY¥•Ü€ôôô€‰‘•Í¥¸ˆ€ü€ñ•Í¥¹A±…¹¹•È‘•Í¥¹Ìõí‘•Í¥¹Íô…Ñ¥Ù••Í¥¹%õí…Ñ¥Ù••Í¥¹%‘ô½Á•É…Ñ¥¹A½¥¹ÑÌõí½Á•É…Ñ¥¹A½¥¹ÑÍô½¹M•±•Ñ•Í¥¸õíÍ•±•Ñ•Í¥¹ô½¹M…Ù••Í¥¸õíÍ…Ù•¹¥¹••Í¥¹ô½¹‘‘=Á•É…Ñ¥¹A½¥¹Ğõí½Á•¹=Á•É…Ñ¥¹A½¥¹Ñô½¹=Á•¹¹Ù•±½Á”õì¡‘•Í¥¹%¤€ôøìÍ•±•Ñ•Í¥¸¡‘•Í¥¹%¤ìÍ•ÑAÉ½‘ÕÑY¥•Ü ‰•¹Ù•±½Á”ˆ¤ìõô€¼ø€èÁÉ½‘ÕÑY¥•Ü€ôôô€‰Í¥µÕ±…Ñ¥½¸ˆ€ü€ñI‘”É‘]½É­ÍÁ…”‘•Í¥¹Ìõí‘•Í¥¹Íô…Ñ¥Ù••Í¥¹%õí…Ñ¥Ù••Í¥¹%‘ô½Á•É…Ñ¥¹A½¥¹ÑÌõí½Á•É…Ñ¥¹A½¥¹ÑÍô½¹M•±•Ñ•Í¥¸õíÍ•±•Ñ•Í¥¹ô½¹=Á•¹•Í¥¸õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰‘•Í¥¸ˆ¥ô½¹=Á•¹¹Ù•±½Á”õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰•¹Ù•±½Á”ˆ¥ô½¹=Á•¹Y…±¥‘…Ñ¥½¸õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰½µÁ…É¥Í½¸ˆ¥ô€¼ø€èÁÉ½‘ÕÑY¥•Ü€ôôô€‰•¹Ù•±½Á”ˆ€ü€ñ=Á•É…Ñ¥¹¹Ù•±½Á”‘•Í¥¹Ìõí‘•Í¥¹Íô…Ñ¥Ù••Í¥¹%õí…Ñ¥Ù••Í¥¹%‘ô½Á•É…Ñ¥¹A½¥¹ÑÌõí½Á•É…Ñ¥¹A½¥¹ÑÍôÉÕ¹Ìõí…Í•Íô½¹M•±•Ñ•Í¥¸õíÍ•±•Ñ•Í¥¹ô½¹‘‘=Á•É…Ñ¥¹A½¥¹Ğõí½Á•¹=Á•É…Ñ¥¹A½¥¹Ñô½¹=Á•¹•Í¥¸õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰‘•Í¥¸ˆ¥ô½¹=Á•¹!½µ”õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰¡½µ”ˆ¥ô½¹‘‘	…Í•±¥¹•™õí½Á•¹	…Í•±¥¹•™‘½É=Á•É…Ñ¥¹A½¥¹Ñô½¹=Á•¹IÕ¸õì¡…Í•%¤€ôøì½¹ÍĞÉÕ¸€ô…Í•Ì¹™¥¹ ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€ôôô…Í•%¤ì¥˜€¡ÉÕ¸ü¹½Á•É…Ñ¥¹A½¥¹Ñ%¤Í•ÑÑ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%¡ÉÕ¸¹½Á•É…Ñ¥¹A½¥¹Ñ%¤ìÍ•ÑÑ¥Ù•…Í•%¡…Í•%¤ìÍ•ÑÑ¥Ù•AÉ½‰” À¤ìÍ•Ñ]½É­ÍÁ…•Y¥•Ü ‰…Í”ˆ¤ìÍ•ÑAÉ½‘ÕÑY¥•Ü ‰½µÁ…É¥Í½¸ˆ¤ìõô€¼ø€è€……Ñ¥Ù•…Í”ñğ€……Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğñğ€…Ñ•ÍÑ5½‘”ñğ€…™‘5½‘”ñğ€……Ñ¥Ù•½µÁ…É¥Í½¸ñğ€……ÍÍ•ÍÍµ•¹Ğñğ€…Á±…¹ÍÍ•ÍÍµ•¹Ğñğ€…‘•¥Í¥½¹EÕ…±¥Ñäñğ€…Á±…¹¹¥¹…Í”€ü€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰•µÁÑäµİ½É­ÍÁ…”ˆø(€€€€€€€€ñÍÁ…¸±…ÍÍ9…µ”ô‰•µÁÑäµ­¥­•ÈˆùaAI%59PY1%Q%=8ƒ
+Ü=AQ%=90ğ½ÍÁ…¸øñ Äùí…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğü¹•áÁ•É¥µ•¹Ğ€ü€‰5•…ÍÕÉ•½Á•É…Ñ¥¹œÁ½¥¹ĞÉ•…‘äˆ€è€‰Y…±¥‘…Ñ”……¥¹ÍĞ„Á¡åÍ¥…°•¹¥¹”‰ôğ½ Äø(€€€€€€€€ñÀùí…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğü¹•áÁ•É¥µ•¹Ğ€ü€‰Q¡”•áÁ•É¥µ•¹Ñ…°½‰Í•ÉÙ…Ñ¥½¸¥Ì…±É•…‘äÁ…ÉĞ½˜Ñ¡”µ•…ÍÕÉ••¹Ù•±½Á”¸‘„‰…Í•±¥¹”É•ÍÕ±Ğ½¹±äİ¡•¸å½Ôİ…¹ĞÑ¼½µÁ…É”Í¥µÕ±…Ñ¥½¸İ¥Ñ Ñ¡¥Ìµ•…ÍÕÉ•µ•¹Ğ¸ˆ€è€‰¡½½Í”…¸•¹¥¹”…¹…‘„µ•…ÍÕÉ•½Á•É…Ñ¥¹œÁ½¥¹Ğ¸½µÁ…É¥Í½¹Ì…É”É•…Ñ•Í•Á…É…Ñ•±ä…¹ÍÑ…ä…ÑÑ…¡•Ñ¼Ñ¡…ĞÁ¡åÍ¥…°½¹‘¥Ñ¥½¸¸‰ôğ½Àø(€€€€€€€€ñÍÁ…¸±…ÍÍ9…µ”ô‰•µÁÑäµÍÑ…ÑÕÌˆùí…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğü¹•áÁ•É¥µ•¹Ğ€ü€‰9¼½µÁ…É¥Í½¸¡…Ì‰••¸…‘‘•™½ÈÑ¡¥Ì½Á•É…Ñ¥¹œÁ½¥¹Ğˆ€è€‰9¼µ•…ÍÕÉ•½Á•É…Ñ¥¹œÁ½¥¹Ğ¡…Ì‰••¸Í•±•Ñ•‰ôğ½ÍÁ…¸ø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰•µÁÑäµ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸ÁÉ¥µ…Éäˆ½¹±¥¬õì ¤€ôø…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğü¹•áÁ•É¥µ•¹Ğ€ü½Á•¹	…Í•±¥¹•™‘½É=Á•É…Ñ¥¹A½¥¹Ğ¡…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğ¹¥¤€è½Á•¹9•İ…Í” ¥ôùí…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğü¹•áÁ•É¥µ•¹Ğ€ü€‰‘‰…Í•±¥¹”½µÁ…É¥Í½¸ƒŠHˆ€è…Ñ¥Ù••Í¥¹%€ü€‰‘™¥ÉÍĞµ•…ÍÕÉ•½Á•É…Ñ¥¹œÁ½¥¹ĞƒŠHˆ€è€‰•™¥¹”…¸•¹¥¹”™¥ÉÍĞƒŠH‰ôğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸Í•½¹‘…Éäˆ½¹±¥¬õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰¡½µ”ˆ¥ôù¼Ñ¼!½µ”ğ½‰ÕÑÑ½¸øğ½‘¥Øø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰•µÁÑäµÉ•ÅÕ¥É•µ•¹ÑÌˆøñÍÁ…¸øñˆøÄğ½ˆøñ¤øñÍÑÉ½¹œù½µÁ…É”ğ½ÍÑÉ½¹œøµ…Ñ¡••áÁ•É¥µ•¹Ğ…¹ÁÉ•ÍÍÕÉ”ÑÉ…•Ìğ½¤øğ½ÍÁ…¸øñÍÁ…¸øñˆøÈğ½ˆøñ¤øñÍÑÉ½¹œù¥…¹½Í”ğ½ÍÑÉ½¹œøÁÉ•ÍÍÕÉ”…¹É½Ñ…Ñ¥¹œµİ…Ù”µ¥Íµ…Ñ¡•Ìğ½¤øğ½ÍÁ…¸øñÍÁ…¸øñˆøÌğ½ˆøñ¤øñÍÑÉ½¹œùIÕ¸…¹ÕÁ‘…Ñ”ğ½ÍÑÉ½¹œøÑ¡”…‘…ÁÑ¥Ù”Á±…¸ğ½¤øğ½ÍÁ…¸øğ½‘¥Øø(€€€€€€ğ½Í•Ñ¥½¸ø€è€ğø(€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰•áÁ•É¥µ•¹ĞµÙ…±¥‘…Ñ¥½¸µ¹½Ñ¥”ˆøñ‘¥ØøñÍÁ…¸ùaAI%59PY1%Q%=8ğ½ÍÁ…¸øñÍÑÉ½¹œùQ¡¥ÌÍÉ••¸…¹Íİ•ÉÌİ¡•Ñ¡•Èµ…Ñ¡•Ì¡½Ğµ™¥É”‘…Ñ„¸ğ½ÍÑÉ½¹œøñÀù½È€Éµ½¹±ä‘•Ù•±½Áµ•¹Ğ…¹•¹¥¹”µ¡…¹”É•½µµ•¹‘…Ñ¥½¹Ì°ÕÍ”Ñ¡”€ÉM¥µÕ±…Ñ¥½¸İ½É­ÍÁ…”¸ğ½Àøğ½‘¥Øøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸Í•½¹‘…Éäˆ½¹±¥¬õì ¤€ôøÍ•ÑAÉ½‘ÕÑY¥•Ü ‰Í¥µÕ±…Ñ¥½¸ˆ¥ôù	…¬Ñ¼€ÉM¥µÕ±…Ñ¥½¸ƒŠHğ½‰ÕÑÑ½¸øğ½Í•Ñ¥½¸ø(€€€€€€€€ñ½µÁ…É¥Í½¹!¥•É…É¡ä‘•Í¥¹Ìõí‘•Í¥¹Íô½Á•É…Ñ¥¹A½¥¹ÑÌõí½Á•É…Ñ¥¹A½¥¹ÑÍôÉÕ¹Ìõí…Í•Íô…Ñ¥Ù••Í¥¹%õí…Ñ¥Ù••Í¥¹%‘ô…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%õí…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%‘ô…Ñ¥Ù•IÕ¹%õí…Ñ¥Ù•…Í•%‘ô½¹M•±•Ñ•Í¥¸õíÍ•±•Ñ•Í¥¹ô½¹M•±•Ñ=Á•É…Ñ¥¹A½¥¹ĞõíÍ•±•Ñ=Á•É…Ñ¥¹A½¥¹Ñô½¹M•±•ÑIÕ¸õì¡¥¤€ôøìÍ•ÑÑ¥Ù•…Í•%¡¥¤ìÍ•ÑÑ¥Ù•AÉ½‰” À¤ìÍ•Ñ]½É­ÍÁ…•Y¥•Ü ‰…Í”ˆ¤ìõô½¹‘‘=Á•É…Ñ¥¹A½¥¹Ğõì ¤€ôø…Ñ¥Ù••Í¥¹%€˜˜½Á•¹=Á•É…Ñ¥¹A½¥¹Ğ¡…Ñ¥Ù••Í¥¹%¥ô½¹‘‘IÕ¸õí½Á•¹9•İIÕ¹½É=Á•É…Ñ¥¹A½¥¹Ñô½¹Y¥•İ!¥ÍÑ½Éäõì ¤€ôøÍ•Ñ]½É­ÍÁ…•Y¥•Ü ‰½µÁ…É”ˆ¥ô½¹M…Ù•]½É­ÍÁ…”õí‘½İ¹±½…‘]½É­ÍÁ…•ô€¼ø(€€€€€€€€ñAÉ½ÍÁ•Ñ¥Ù•Y…±¥‘…Ñ¥½¹1•‘•ÈÁ±…¹Ìõí™É½é•¹IÕ¹A±…¹Íô…Í•Ìõí…Í•Íô…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%õí…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ñ%‘ô½¹I•ÍÕµ”õí½Á•¹É½é•¹IÕ¹A±…¹ô½¹½İ¹±½…õí‘½İ¹±½…‘É½é•¹A±…¹ô€¼ø((€€€€€€€íİ½É­ÍÁ…•Y¥•Ü€ôôô€‰½µÁ…É”ˆ€˜˜‰…Í•±¥¹•MÕµµ…Éä€ü€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…Í”µ¡¥ÍÑ½Éäµ½µÁ…É¥Í½¸ˆ…É¥„µ±…‰•°ô‰…Í”¡¥ÍÑ½Éäˆø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…Í”µ¡¥ÍÑ½Éäµ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰•µÁÑäµ­¥­•ÈˆùIU8!%MQ=Idğ½ÍÁ…¸øñ Äùí…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğ¹¹…µ•ôğ½ ÄøñÀùí½Á•É…Ñ¥¹A½¥¹Ñ1…‰•°¡…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğ¥ô¸Ù•ÉäÉ½Ü¥Ì„ÉÕ¸…ĞÑ¡¥Ì½¹”Á¡åÍ¥…°½¹‘¥Ñ¥½¸¸É•ÉÕ¸…™™•ÑÌÑ¡”Á±…¸½¹±äİ¡•¸•á…Ñ±ä½¹”¹…µ•Á…É…µ•Ñ•È¡…¹•Ì¸ğ½Àøğ½‘¥Øøñ±…‰•°±…ÍÍ9…µ”ô‰‰…Í•±¥¹”µÍ•±•ĞˆøñÍÁ…¸ù	…Í•±¥¹”ÉÕ¸ğ½ÍÁ…¸øñÍ•±•ĞÙ…±Õ”õí‰…Í•±¥¹•MÕµµ…Éä¹¥Ñ•´¹¥‘ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•Ñ…Í•	…Í•±¥¹•%¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ôùí…Í•MÕµµ…É¥•Ì¹™¥±Ñ•È ¡ÍÕµµ…Éä¤€ôø€…ÍÕµµ…Éä¹¥Ñ•´¹É•±…Ñ¥½¹Í¡¥À¤¹µ…À ¡ÍÕµµ…Éä¤€ôø€ñ½ÁÑ¥½¸­•äõíÍÕµµ…Éä¹¥Ñ•´¹¥‘ôÙ…±Õ”õíÍÕµµ…Éä¹¥Ñ•´¹¥‘ôùíÍÕµµ…Éä¹¥Ñ•´¹µ•Ñ…‘…Ñ„¹¹…µ•ôğ½½ÁÑ¥½¸ø¥ôğ½Í•±•Ğøğ½±…‰•°øğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…Í”µ¡¥ÍÑ½ÉäµÑ…‰±”µİÉ…ÀˆøñÑ…‰±”±…ÍÍ9…µ”ô‰…Í”µ¡¥ÍÑ½ÉäµÑ…‰±”‘¥É•Ğµ‘•±Ñ„µÑ…‰±”ˆø(€€€€€€€€€€€€ñÑ¡•…øñÑÈøñÑ ùIÕ¸ğ½Ñ øñÑ ù=Á•É…Ñ¥¹œµÁ½¥¹Ğ¡•¬ğ½Ñ øñÑ ùáÁ•É¥µ•¹Ñ…°¡…¹”ğ½Ñ øñÑ ù•ÉÉ½È¡…¹”ğ½Ñ øñÑ ùIÕ¸ÍÑ…ÑÕÌğ½Ñ øğ½ÑÈøğ½Ñ¡•…ø(€€€€€€€€€€€€ñÑ‰½‘äùí…Í•MÕµµ…É¥•Ì¹µ…À ¡ÍÕµµ…Éä¤€ôøì(€€€€€€€€€€€€€½¹ÍĞ‘•±Ñ„€ô‰Õ¥±‘…Í••±Ñ„¡‰…Í•±¥¹•MÕµµ…Éä°ÍÕµµ…Éä¤ì(€€€€€€€€€€€€€½¹ÍĞ¥Í	…Í•±¥¹”€ôÍÕµµ…Éä¹¥Ñ•´¹¥€ôôô‰…Í•±¥¹•MÕµµ…Éä¹¥Ñ•´¹¥ì(€€€€€€€€€€€€€½¹ÍĞÉ•±…Ñ¥½¹Ù¥‘•¹”€ô‰Õ¥±‘…Í•!¥ÍÑ½ÉåÙ¥‘•¹”¡…Í•Ì°‰…Í•±¥¹•MÕµµ…Éä¹¥Ñ•´¹¥¤¹™¥¹ ¡¥Ñ•´¤€ôø¥Ñ•´¹…Í•%€ôôôÍÕµµ…Éä¹¥Ñ•´¹¥¤ì(€€€€€€€€€€€€€½¹ÍĞ…Í•I•Ù¥•İÌ€ôÍÕµµ…Éä¹…ÍÍ•ÍÍµ•¹Ğ¹µ•ÑÉ¥Ì¹™¥±Ñ•È ¡µ•ÑÉ¥Œ¤€ôøµ•ÑÉ¥Œ¹Ñ½¹”€ôôô€‰É•Ù¥•Üˆ¤¹±•¹Ñ ì(€€€€€€€€€€€€€É•ÑÕÉ¸€ñÑÈ­•äõíÍÕµµ…Éä¹¥Ñ•´¹¥‘ô±…ÍÍ9…µ”õí¥Í	…Í•±¥¹”€ü€‰‰…Í•±¥¹”µÉ½Üˆ€è€ˆ‰ôø(€€€€€€€€€€€€€€€€ñÑ Í½Á”ô‰É½Üˆøñ‰ÕÑÑ½¸½¹±¥¬õì ¤€ôøìÍ•ÑÑ¥Ù•…Í•%¡ÍÕµµ…Éä¹¥Ñ•´¹¥¤ìÍ•ÑÑ¥Ù•AÉ½‰” À¤ìÍ•Ñ]½É­ÍÁ…•Y¥•Ü ‰…Í”ˆ¤ìõôùíÍÕµµ…Éä¹¥Ñ•´¹µ•Ñ…‘…Ñ„¹¹…µ•ôñÍÁ…¸ùí¥Í	…Í•±¥¹”€ü€‰M•±•Ñ•‰…Í•±¥¹”ˆ€è€‰=Á•¸…¹…±åÍ¥ÌƒŠH‰ôğ½ÍÁ…¸øğ½‰ÕÑÑ½¸øğ½Ñ ø(€€€€€€€€€€€€€€€€ñÑùí¥Í	…Í•±¥¹”€ü€ñÍÑÉ½¹œùI•™•É•¹”½¹‘¥Ñ¥½¸ğ½ÍÑÉ½¹œø€è€ğøñÍÑÉ½¹œû>íÍ¥¹•¡‘•±Ñ„¹½¹‘¥Ñ¥½¸¹•ÅÕ¥Ù…±•¹•I…Ñ¥¼°€È¥ôƒ
+ÜÁÉ•ÍÍÕÉ”íÍ¥¹•¡‘•±Ñ„¹½¹‘¥Ñ¥½¸¹¥¹±•ÑAÉ•ÍÍÕÉ•	…È°€Ä¥ô‰…Èğ½ÍÑÉ½¹œøñÍÁ…¸ùQ•µÁ•É…ÑÕÉ”íÍ¥¹•¡‘•±Ñ„¹½¹‘¥Ñ¥½¸¹¥¹±•ÑQ•µÁ•É…ÑÕÉ•,°€À¥ô,ğ½ÍÁ…¸øñÍÁ…¸ù5…ÍÌ™±½ÜíÍ¥¹•¡‘•±Ñ„¹½¹‘¥Ñ¥½¸¹µ…ÍÍ±½İ-L°€È¥ô­œ½Ìğ½ÍÁ…¸øğ¼ùôğ½Ñø(€€€€€€€€€€€€€€€€ñÑùí¥Í	…Í•±¥¹”€ü€ñÍÑÉ½¹œùI•™•É•¹”‰•¡…Ù¥½Èğ½ÍÑÉ½¹œø€è€ğøñÍÑÉ½¹œùÉ•ÅÕ•¹äíÍ¥¹•¡‘•±Ñ„¹•áÁ•É¥µ•¹Ğ¹™É•ÅÕ•¹å-!è°€È¥ô­!èğ½ÍÑÉ½¹œøñÍÁ…¸ùA•…¬ÁÉ•ÍÍÕÉ”íÍ¥¹•¡‘•±Ñ„¹•áÁ•É¥µ•¹Ğ¹Á•…­AÉ•ÍÍÕÉ•5Á„°€Ì¥ô5A„ğ½ÍÁ…¸øñÍÁ…¸ùµÁ±¥ÑÕ‘”íÍ¥¹•¡‘•±Ñ„¹•áÁ•É¥µ•¹Ğ¹ÁÉ•ÍÍÕÉ•µÁ±¥ÑÕ‘•5Á„°€Ì¥ô5A„ƒ
+ÜÙ…É¥…‰¥±¥ÑäíÍ¥¹•¡‘•±Ñ„¹•áÁ•É¥µ•¹Ğ¹å±•Y…É¥…‰¥±¥ÑåA½¥¹ÑÌ°€Ä¥ôÁĞğ½ÍÁ…¸øğ¼ùôğ½Ñø(€€€€€€€€€€€€€€€€ñÑùí¥Í	…Í•±¥¹”€ü€ñÍÑÉ½¹œùI•™•É•¹”•ÉÉ½Èğ½ÍÑÉ½¹œø€è€ğøñÍÑÉ½¹œùÉ•ÅÕ•¹ä•ÉÉ½ÈíÍ¥¹•¡‘•±Ñ„¹™‘É••µ•¹Ğ¹™É•ÅÕ•¹åÉÉ½ÉA½¥¹Ñ¡…¹”°€Ä¥ôÁĞğ½ÍÑÉ½¹œøñÍÁ…¸ùA•…¬•ÉÉ½ÈíÍ¥¹•¡‘•±Ñ„¹™‘É••µ•¹Ğ¹Á•…­AÉ•ÍÍÕÉ•ÉÉ½ÉA½¥¹Ñ¡…¹”°€Ä¥ôÁĞğ½ÍÁ…¸øñÍÁ…¸ùµÁ±¥ÑÕ‘”•ÉÉ½ÈíÍ¥¹•¡‘•±Ñ„¹™‘É••µ•¹Ğ¹…µÁ±¥ÑÕ‘•ÉÉ½ÉA½¥¹Ñ¡…¹”°€Ä¥ôÁĞğ½ÍÁ…¸øğ¼ùôğ½Ñø(€€€€€€€€€€€€€€€€ñÑøñÍÁ…¸±…ÍÍ9…µ”õí½µÁ…É¥Í½¸µÍÑ…ÑÕÌ€‘íÉ•±…Ñ¥½¹Ù¥‘•¹”ü¹ÍÑ…Ñ”€ôôô€‰ÍÕÁÁ½ÉÑÌˆñğÉ•±…Ñ¥½¹Ù¥‘•¹”ü¹Í•ÅÕ•¹•MÑ…ÑÕÌ€ôôô€‰½¹Ù•É•ˆ€ü€‰Á…ÍÌˆ€èÉ•±…Ñ¥½¹Ù¥‘•¹”ü¹½¹ÑÉ½±±•€ü€‰É•Ù¥•Üˆ€èÍÕµµ…Éä¹…ÍÍ•ÍÍµ•¹Ğ¹Ù…±¥‘¥Ñä¹ÍÑ…ÑÕÌ€ôôô€‰	±½­•ˆñğ…Í•I•Ù¥•İÌ€ü€‰É•Ù¥•Üˆ€è€‰¹•ÕÑÉ…°‰õôùí¥Í	…Í•±¥¹”€ü€‰	…Í•±¥¹”ˆ€èÉ•±…Ñ¥½¹Ù¥‘•¹”ü¹½¹ÑÉ½±±•€ü½ÕÑ½µ•1…‰•°¡É•±…Ñ¥½¹Ù¥‘•¹”¤€è€‰½µÁ…É¥Í½¸½¹±ä‰ôğ½ÍÁ…¸øğ½Ñø(€€€€€€€€€€€€€€ğ½ÑÈøì(€€€€€€€€€€€ô¥ôğ½Ñ‰½‘äø(€€€€€€€€€€ğ½Ñ…‰±”øğ½‘¥Øø(€€€€€€€€€€ñÀ±…ÍÍ9…µ”ô‰…Í”µ¡¥ÍÑ½Éäµ¹½Ñ”ˆøñÍÑÉ½¹œù!½ÜÑ¡¥Ìİ½É­Ìèğ½ÍÑÉ½¹œø-åÑ¡É½Ì¡•­ÌÑ¡”Í…Ù•Í•ÑÑ¥¹Ì…¹•áÁ•É¥µ•¹ĞÍ…µÁ±•Ì¸Ù…±¥½¹”µ¡…¹”É•ÉÕ¸ÕÁ‘…Ñ•ÌÑ¡”Á±…¸ì„ÉÕ¸İ¥Ñ µÕ±Ñ¥Á±”¡…¹•ÌÉ•µ…¥¹Ì„½µÁ…É¥Í½¸…¹‘½•Ì¹½ĞÕÁ‘…Ñ”Ñ¡”Á±…¸¸ğ½Àø(€€€€€€€€ğ½Í•Ñ¥½¸ø€è€ğø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…Í”µ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”õíÍ½ÕÉ”µ‘½Ğ€‘í…Ñ¥Ù•…Í”¹Í½ÕÉ”€ôôô€‰‘•µ¼ˆ€ü€‰‘•µ¼ˆ€è€ˆ‰õô€¼øñÍÁ…¸ùí…Ñ¥Ù•…Í”¹Í½ÕÉ”€ôôô€‰‘•µ¼ˆ€ü€‰Må¹Ñ¡•Ñ¥Œ‘•µ½¹ÍÑÉ…Ñ¥½¸ÉÕ¸ˆ€è€‰UÍ•ÈµÁÉ½Ù¥‘•ÉÕ¸‰ôğ½ÍÁ…¸øğ½‘¥Øøñ Äùí…Ñ¥Ù•…Í”¹µ•Ñ…‘…Ñ„¹¹…µ•ôğ½ ÄøñÀùí…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğ¹¹…µ•ôƒ
+Üí…Ñ¥Ù•…Í”¹É•±…Ñ¥½¹Í¡¥À€ü½¹”µ¡…¹”€‘í…Ñ¥Ù•…Í”¹É•±…Ñ¥½¹Í¡¥À¹¡…¹•‘A…É…µ•Ñ•È€üÁ…É…µ•Ñ•É1…‰•°¡…Ñ¥Ù•…Í”¹É•±…Ñ¥½¹Í¡¥À¹¡…¹•‘A…É…µ•Ñ•È¤¹Ñ½1½İ•É…Í” ¤€è¡…¹•1…‰•°¡…Ñ¥Ù•…Í”¹É•±…Ñ¥½¹Í¡¥À¹¡…¹•‘Y…É¥…‰±”¤¹Ñ½1½İ•É…Í” ¥ôÉ•ÉÕ¸ÍÑ…ÉÑ¥¹œ™É½´€‘í…Ñ¥Ù•I•™•É•¹•9…µ”€üü‰…Í•±¥¹•…Í•9…µ”€üü€‰Ñ¡”‰…Í•±¥¹”ÉÕ¸‰õ€€è•áÁ•É¥µ•¹Ğ€¬‰…Í•±¥¹”İ¥Ñ €‘í…Í•!¥ÍÑ½ÉåÙ¥‘•¹”¹±•¹Ñ¡ôÉ•±…Ñ•É•ÉÕ¸‘í…Í•!¥ÍÑ½ÉåÙ¥‘•¹”¹±•¹Ñ €ôôô€Ä€ü€ˆˆ€è€‰Ì‰õôğ½Àøğ½‘¥Øø((€€€€€€€€€€ñ¹¥¹••É¥¹•¥Í¥½¹A…¹•°ÍÕµµ…Éäõí‘•¥Í¥½¹MÕµµ…Éåô¹•áÑIÕ¸õíÁ±…¹ÍÍ•ÍÍµ•¹Ğ¹¹•áÑIÕ¹ôÍ¡½İ1…Ñ•ÍÑI•ÍÕ±Ğõì……Ñ¥Ù•…Í•Ù¥‘•¹•ô‘•¥Í¥½¹EÕ…±¥Ñäõí‘•¥Í¥½¹EÕ…±¥ÑåôÍ•±•Ñ•‘…Í•9…µ”õí…Ñ¥Ù•…Í”¹µ•Ñ…‘…Ñ„¹¹…µ•ôÍ•±•Ñ•‘¹…±åÍ¥Í%¹ÁÕĞõí…Ñ¥Ù•¹…±åÍ¥Í%¹ÁÕÑôÁ±…¹¹¥¹…Í•9…µ”õíÁ±…¹¹¥¹…Í”¹µ•Ñ…‘…Ñ„¹¹…µ•ôÁÕ‰±¥Í¡•‘M½ÕÉ•Ìõí±¥­•±åM½ÕÉ•ÍôÉ•Í•…É¡±…¥µÌõí±¥­•±å!åÁ½Ñ¡•Í¥Ìü¹É•Í•…É¡±…¥µÌ€üümuôÁÕ‰±¥Í¡•‘Y…±¥‘…Ñ¥½¸õíAU	1%M!}Y1%Q%=9}MU55Ieô½¹‘¥Ğõí½Á•¹…Í•‘¥Ñ½Éô½¹½İ¹±½…‘I•Á½ÉĞõí‘½İ¹±½…‘I•Á½ÉÑô½¹½İ¹±½…‘9•áÑIÕ¸õíÁ±…¹ÍÍ•ÍÍµ•¹Ğ¹¹•áÑIÕ¸¹‘•¥Í¥½¹A½±¥ä¹¡…¹•‘A…É…µ•Ñ•È€ü‘½İ¹±½…‘9•áÑIÕ¹]½É­=É‘•È€è¹Õ±±ô½¹½İ¹±½…‘=Á•¹½…´õíÁ±…¹ÍÍ•ÍÍµ•¹Ğ¹¹•áÑIÕ¸¹‘•¥Í¥½¹A½±¥ä¹¡…¹•‘A…É…µ•Ñ•È€ü‘½İ¹±½…‘=Á•¹½…µ!…¹‘½™˜€è¹Õ±±ô½¹MÑ…ÉÑ9•áÑIÕ¸õíÁ±…¹ÍÍ•ÍÍµ•¹Ğ¹¹•áÑIÕ¸¹‘•¥Í¥½¹A½±¥ä¹¡…¹•‘A…É…µ•Ñ•È€üÍÑ…ÉÑI•½µµ•¹‘•‘I•ÉÕ¸€è¹Õ±±ô½¹M…Ù•]½É­ÍÁ…”õí‘½İ¹±½…‘]½É­ÍÁ…•ô½¹Y¥•İ!¥ÍÑ½Éäõí½Á•É…Ñ¥¹A½¥¹ÑIÕ¹Ì¹±•¹Ñ €ø€Ä€ü€ ¤€ôøÍ•Ñ]½É­ÍÁ…•Y¥•Ü ‰½µÁ…É”ˆ¤€è¹Õ±±ô€¼ø((€€€€€€€€€€ñ‘•Ñ…¥±Ì±…ÍÍ9…µ”ô‰½µÁ…É¥Í½¸µÍ•½¹‘…Éäµ‘•Ñ…¥±Ìˆø(€€€€€€€€€€€€ñÍÕµµ…ÉäøñÍÁ…¸ù%Q%=909%9A!eM%Lğ½ÍÁ…¸øñÍÑÉ½¹œùQ¡•Éµ…°°™••µÍåÍÑ•´°…¹Á•É™½Éµ…¹”•Ù¥‘•¹”ğ½ÍÑÉ½¹œøñÍµ…±°ù=Á•¸½ÁÑ¥½¹…°™¥•±‘Ì°İ…±°µ…ÁÌ°ÍÕÁÁ½ÉÑ¥¹œÙ…±¥‘¥Ñä¡•­Ì°…¹µ•…ÍÕÉ•µ•¹Ğ‘•™¥¹¥Ñ¥½¹Ì¸ğ½Íµ…±°øğ½ÍÕµµ…Éäø(€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰½µÁ…É¥Í½¸µÍ•½¹‘…Éäµ½¹Ñ•¹Ğˆø(€€€€€€€€€€ñI‘•A¡åÍ¥ÍY¥ÍÕ…°‘•Í¥¸õí…Ñ¥Ù••Í¥¹ôÉ½İÌõíÁ¡åÍ¥Í½µÁ…É¥Í½¹Íô•áÁ•É¥µ•¹Ñ]…±±¥•±õí…Ñ¥Ù•…Í”¹İ…±±¥•±‘Ìü¹•áÁ•É¥µ•¹Ğ€üü…Ñ¥Ù•=Á•É…Ñ¥¹A½¥¹Ğ¹•áÁ•É¥µ•¹Ğü¹İ…±±¥•±‘ô™‘]…±±¥•±õí…Ñ¥Ù•…Í”¹İ…±±¥•±‘Ìü¹™‘ô½¹‘¥Ğõí½Á•¹…Í•‘¥Ñ½Éô¼ø((€€€€€€€€€íÍ¡½İ•Ñ…¥±•‘Ù¥‘•¹”€˜˜€ğø(€€€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”õí…ÍÍ•ÍÍµ•¹Ğµ‰…¹¹•È€‘íÑ½Ñ…±I•Ù¥•Ü€ü€‰É•Ù¥•Üˆ€è€‰Á…ÍÌ‰õô…É¥„µ±…‰•°ô‰½µÁ…É¥Í½¸½¹±ÕÍ¥½¸ˆø(€€€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ù=5AI%M=8=91UM%=8ğ½ÍÁ…¸øñ Èùí…ÍÍ•ÍÍµ•¹Ğ¹Ù…±¥‘¥Ñä¹ÍÑ…ÑÕÌ€ôôô€‰	±½­•ˆ€ü€‰ÍÍ•ÍÍµ•¹Ğ‰±½­•Õ¹Ñ¥°•áÁ•É¥µ•¹ÓŠMµ…Ñ¡¥¹œ¥Ì½¹™¥Éµ•ˆ€èÑ½Ñ…±I•Ù¥•Ü€ü€‘íÑ½Ñ…±I•Ù¥•İô•Ù¥‘•¹”¡•¬‘íÑ½Ñ…±I•Ù¥•Ü€ôôô€Ä€ü€ˆˆ€è€‰Ì‰ôÉ•ÅÕ¥É”É•Ù¥•İ€€è€‰9¼Í•±•Ñ•µÑ¼µ•áÁ•É¥µ•¹Ğ‘¥™™•É•¹”•á••‘ÌÕÉÉ•¹ĞÕ¹•ÉÑ…¥¹Ñä‰ôğ½ ÈøñÀùí…ÍÍ•ÍÍµ•¹Ğ¹Ù…±¥‘¥Ñä¹ÍÑ…ÑÕÌ€ôôô€‰	±½­•ˆ€ü€‰¼¹½Ğ¡…¹”Ñ¡”µ½‘•°™É½´Ñ¡¥ÌÁ…¥É¥¹œå•Ğ¸ˆ€èÑ½Ñ…±I•Ù¥•Ü€ü€‰Q¡”¡¥¡±¥¡Ñ•™¥¹‘¥¹Ì‘•Ñ•Éµ¥¹”Ñ¡”É…¹­••áÁ±…¹…Ñ¥½¹Ì…¹½¹”µÙ…É¥…‰±”¹•áĞµÉÕ¸Á±…¸‰•±½Ü¸ˆ€è€‰Q¡¥Ì‘½•Ì¹½ĞÁÉ½Ù”Ñ¡”¥ÌÙ…±¥™½È•Ù•Éä½ÕÑÁÕĞ½È½Á•É…Ñ¥¹œÁ½¥¹Ğ¸%Ğµ•…¹ÌÑ¡¥ÌÉÕ¸½¹Ñ…¥¹Ì¹¼É•Í½±Ù•ÁÉ•ÍÍÕÉ”‘¥ÍÉ•Á…¹ä¸‰ôğ½Àøğ½‘¥Øø(€€€€€€€€€€€€ñÍÑÉ½¹œùí…ÍÍ•ÍÍµ•¹Ğ¹Ù…±¥‘¥Ñä¹ÍÑ…ÑÕÌ€ôôô€‰	±½­•ˆ€ü€‰	1=-ˆ€èÑ½Ñ…±I•Ù¥•Ü€ü€‰IY%\ˆ€è€‰9<IM=1Y5%M5Q ‰ôğ½ÍÑÉ½¹œø(€€€€€€€€€€ğ½Í•Ñ¥½¸ø((€€€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰½Ù•É…”µÉ¥ˆ…É¥„µ±…‰•°ô‰Y…±¥‘…Ñ¥½¸½Ù•É…”ˆø(€€€€€€€€€€€í…ÍÍ•ÍÍµ•¹Ğ¹½Ù•É…”¹µ…À ¡¥Ñ•´¤€ôø€ñ…ÉÑ¥±”­•äõí¥Ñ•´¹µ½‘Õ±•ô±…ÍÍ9…µ”õí¥Ñ•´¹ÍÑ…ÑÕÌ€ôôô€‰ÍÍ•ÍÍ•ˆ€ü€‰½Ù•É…”µ…ÍÍ•ÍÍ•ˆ€è¥Ñ•´¹ÍÑ…ÑÕÌ€ôôô€‰%¹½¹±ÕÍ¥Ù”ˆ€ü€‰½Ù•É…”µ¥¹½¹±ÕÍ¥Ù”ˆ€è€‰½Ù•É…”µµ¥ÍÍ¥¹œ‰ôøñÍÁ…¸ùí¥Ñ•´¹µ½‘Õ±•ôğ½ÍÁ…¸øñÍÑÉ½¹œùí¥Ñ•´¹ÍÑ…ÑÕÍôğ½ÍÑÉ½¹œøñÍµ…±°ùí¥Ñ•´¹‘•Ñ…¥±ôğ½Íµ…±°øğ½…ÉÑ¥±”ø¥ô(€€€€€€€€€€ğ½Í•Ñ¥½¸ø((€€€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰ÅÕ…±¥ÑäµÙ…±¥‘¥ÑäµÉ¥ˆø(€€€€€€€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰Ù…±¥‘¥ÑäµÁ…¹•°ˆøñ‘¥Ø±…ÍÍ9…µ”ô‰Í•Ñ¥½¸µ¡•…‘¥¹œˆøñÍÁ…¸øÀÄğ½ÍÁ…¸øñ‘¥Øøñ Èù½µÁ…É¥Í½¸Ù…±¥‘¥Ñäğ½ ÈøñÀù…¸Ñ¡¥ÌÁ…¥É¥¹œÍÕÁÁ½ÉĞ„½¹±ÕÍ¥½¸üğ½Àøğ½‘¥Øøğ½‘¥ØøñÕ°ùí…ÍÍ•ÍÍµ•¹Ğ¹Ù…±¥‘¥Ñä¹¡•­Ì¹µ…À ¡¡•¬¤€ôø€ñ±¤­•äõí¡•¬¹±…‰•±ôøñÍÁ…¸±…ÍÍ9…µ”õí¡•¬µ‘½Ğ€‘í¡•¬¹ÍÑ…ÑÕÌ¹Ñ½1½İ•É…Í” ¥õô€¼ø€ñ‘¥ØøñÍÑÉ½¹œùí¡•¬¹±…‰•±ôñ¤ùí¡•¬¹ÍÑ…ÑÕÍôğ½¤øğ½ÍÑÉ½¹œøñÍµ…±°ùí¡•¬¹‘•Ñ…¥±ôğ½Íµ…±°øğ½‘¥Øøğ½±¤ø¥ôğ½Õ°øğ½…ÉÑ¥±”ø(€€€€€€€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰‘…Ñ„µÅÕ…±¥ÑäµÁ…¹•°ˆøñ‘¥Ø±…ÍÍ9…µ”ô‰Í•Ñ¥½¸µ¡•…‘¥¹œˆøñÍÁ…¸øÀÈğ½ÍÁ…¸øñ‘¥Øøñ Èù…Ñ„ÅÕ…±¥Ñäğ½ ÈøñÀùM…µÁ±¥¹œ°‘ÕÉ…Ñ¥½¸°½¹Ñ¥¹Õ¥Ñä°…¹±¥ÁÁ¥¹œğ½Àøğ½‘¥Øøğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰ÅÕ…±¥ÑäµÍÑ…ÑÌˆøñÍÁ…¸øñˆùí…Ù•É…”¡…ÍÍ•ÍÍµ•¹Ğ¹‘…Ñ…EÕ…±¥Ñä¹•áÁ•É¥µ•¹Ğ¹µ…À ¡É•ÍÕ±Ğ¤€ôøÉ•ÍÕ±Ğ¹…ÁÑÕÉ•‘å±•Ì¤¤¹Ñ½¥á• Ä¥ôğ½ˆø•áÁ•É¥µ•¹Ğå±•Ìğ½ÍÁ…¸øñÍÁ…¸øñˆùí…Ù•É…”¡…ÍÍ•ÍÍµ•¹Ğ¹‘…Ñ…EÕ…±¥Ñä¹™¹µ…À ¡É•ÍÕ±Ğ¤€ôøÉ•ÍÕ±Ğ¹…ÁÑÕÉ•‘å±•Ì¤¤¹Ñ½¥á• Ä¥ôğ½ˆøå±•Ìğ½ÍÁ…¸øñÍÁ…¸øñˆùí…Ù•É…”¡…ÍÍ•ÍÍµ•¹Ğ¹‘…Ñ…EÕ…±¥Ñä¹•áÁ•É¥µ•¹Ğ¹µ…À ¡É•ÍÕ±Ğ¤€ôøÉ•ÍÕ±Ğ¹Í…µÁ±•ÍA•Éå±”¤¤¹Ñ½¥á• À¥ôğ½ˆøÍ…µÁ±•Ì½å±”ğ½ÍÁ…¸øğ½‘¥ØøñÕ°ùí…ÍÍ•ÍÍµ•¹Ğ¹‘…Ñ…EÕ…±¥Ñä¹™¥¹‘¥¹Ì¹µ…À ¡™¥¹‘¥¹œ¤€ôø€ñ±¤­•äõí™¥¹‘¥¹ôùí™¥¹‘¥¹ôğ½±¤ø¥ôğ½Õ°øğ½…ÉÑ¥±”ø(€€€€€€€€€€ğ½Í•Ñ¥½¸ø((€€€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰İ½É­™±½Üˆ…É¥„µ±…‰•°ô‰-åÑ¡É½Ì¥¹ÁÕÑÌ…¹½ÕÑÁÕÑÌˆø(€€€€€€€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰¥¹ÁÕÑÌµÁ…¹•°ˆøñ‘¥Ø±…ÍÍ9…µ”ô‰Á…¹•°µ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰ÍÑ•Àµ¹Õµ‰•ÈˆøÀÌğ½ÍÁ…¸øñ‘¥Øøñ Èù%¹ÁÕÑÌÕÍ•ğ½ ÈøñÀùÙ•ÉäÉ•ÅÕ¥É•™¥•±…™™•ÑÌÙ…±¥‘¥Ñä°…±Õ±…Ñ¥½¸°½È‘¥…¹½Í¥Ìğ½Àøğ½‘¥Øøğ½‘¥Øøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰Ñ•áĞµ‰ÕÑÑ½¸ˆ½¹±¥¬õí½Á•¹…Í•‘¥Ñ½Éôù‘¥ĞÉÕ¸ğ½‰ÕÑÑ½¸øğ½‘¥Øøñ½°±…ÍÍ9…µ”ô‰¥¹ÁÕĞµ±¥ÍĞˆùí¥¹ÁÕÑI½İÌ¹µ…À ¡m±…‰•°°Ù…±Õ•t¤€ôø€ñ±¤­•äõí±…‰•±ôøñ¤…É¥„µ¡¥‘‘•¸ô‰ÑÉÕ”ˆûŠrLğ½¤øñ‘¥ØøñÍÑÉ½¹œùí±…‰•±ôğ½ÍÑÉ½¹œøñÍÁ…¸ùíÙ…±Õ•ôğ½ÍÁ…¸øğ½‘¥Øøğ½±¤ø¥ôğ½½°øğ½…ÉÑ¥±”ø(€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™±½Üµ…ÉÉ½Üˆ…É¥„µ¡¥‘‘•¸ô‰ÑÉÕ”ˆøñÍÁ…¸ù91eiğ½ÍÁ…¸øñ¤ûŠHğ½¤øğ½‘¥Øø(€€€€€€€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰½ÕÑÁÕÑÌµÁ…¹•°ˆøñ‘¥Ø±…ÍÍ9…µ”ô‰Á…¹•°µ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰ÍÑ•Àµ¹Õµ‰•ÈˆøÀĞğ½ÍÁ…¸øñ‘¥Øøñ ÈùáÁ•É¥µ•¹ĞÙÌğ½ ÈøñÀùµ¥¹ÕÌ•áÁ•É¥µ•¹Ğ°É•Í½±Ù•……¥¹ÍĞÕ¹•ÉÑ…¥¹Ñäİ¡•É”ÍÕÁÁ½ÉÑ•ğ½Àøğ½‘¥Øøğ½‘¥Øøğ½‘¥Øø(€€€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰½µÁ…É¥Í½¸µÑ…‰±”µİÉ…ÀˆøñÑ…‰±”±…ÍÍ9…µ”ô‰½µÁ…É¥Í½¸µÑ…‰±”Õ¹•ÉÑ…¥¹ÑäµÑ…‰±”ˆø(€€€€€€€€€€€€€€€€ñÑ¡•…øñÑÈøñÑ ùEÕ…¹Ñ¥Ñäğ½Ñ øñÑ ùáÁ•É¥µ•¹Ğğ½Ñ øñÑ ùğ½Ñ øñÑ ùƒŠ"H•áÁ•É¥µ•¹Ğğ½Ñ øñÑ ù½µ‰¥¹•Õ¹•ÉÑ…¥¹Ñä½È-åÑ¡É½ÌÁÉ½Ñ½ÑåÁ”±¥µ¥Ğğ½Ñ øñÑ ùÍÍ•ÍÍµ•¹Ğğ½Ñ øğ½ÑÈøğ½Ñ¡•…ø(€€€€€€€€€€€€€€€€ñÑ‰½‘äùí…ÍÍ•ÍÍµ•¹Ğ¹µ•ÑÉ¥Ì¹µ…À ¡µ•ÑÉ¥Œ¤€ôø€ñÑÈ­•äõíµ•ÑÉ¥Œ¹¥‘ô±…ÍÍ9…µ”õíµ•ÑÉ¥Œ¹Ñ½¹”€ôôô€‰É•Ù¥•Üˆ€ü€‰½µÁ…É¥Í½¸µÉ½ÜµÉ•Ù¥•Üˆ€èµ•ÑÉ¥Œ¹Ñ½¹”€ôôô€‰¹•ÕÑÉ…°ˆ€ü€‰½µÁ…É¥Í½¸µÉ½Üµ¹•ÕÑÉ…°ˆ€è€ˆ‰ôø(€€€€€€€€€€€€€€€€€€ñÑ Í½Á”ô‰É½ÜˆøñÍÑÉ½¹œùíµ•ÑÉ¥Œ¹±…‰•±ôğ½ÍÑÉ½¹œøñÍµ…±°ùíµ•ÑÉ¥Œ¹ÁÕÉÁ½Í•ôğ½Íµ…±°øğ½Ñ ø(€€€€€€€€€€€€€€€€€€ñÑùí™½Éµ…Ñ5•ÑÉ¥Y…±Õ”¡µ•ÑÉ¥Œ°µ•ÑÉ¥Œ¹•áÁ•É¥µ•¹Ğ¥ôğ½ÑøñÑùí™½Éµ…Ñ5•ÑÉ¥Y…±Õ”¡µ•ÑÉ¥Œ°µ•ÑÉ¥Œ¹™¥ôğ½ÑøñÑ±…ÍÍ9…µ”ô‰‘¥™™•É•¹”µ•±°ˆùí™½Éµ…Ñ5•ÑÉ¥¥™™•É•¹”¡µ•ÑÉ¥Œ¥ôğ½Ñø(€€€€€€€€€€€€€€€€€€ñÑ±…ÍÍ9…µ”ô‰Õ¹•ÉÑ…¥¹Ñäµ•±°ˆùíµ•ÑÉ¥Œ¹Õ¹•ÉÑ…¥¹Ñä€ôôô¹Õ±°ñğµ•ÑÉ¥Œ¹…ÍÍ•ÍÍµ•¹Ğ¹ÍÑ…ÑÕÌ€ôôô€‰µ…Ñ ˆñğµ•ÑÉ¥Œ¹…ÍÍ•ÍÍµ•¹Ğ¹ÍÑ…ÑÕÌ€ôôô€‰µ¥Íµ…Ñ ˆ€üµ•ÑÉ¥Œ¹Õ¹•ÉÑ…¥¹Ñå1…‰•°€èƒ
+Ä‘íµ•ÑÉ¥Œ¹Õ¹•ÉÑ…¥¹Ñä¹Ñ½¥á•¡µ•ÑÉ¥¥¥ÑÌ¡µ•ÑÉ¥Œ¤¥ô‘íµ•ÑÉ¥Œ¹Õ¹¥Ğ€ü€€‘íµ•ÑÉ¥Œ¹Õ¹¥Ñõ€€è€ˆ‰õôñÍµ…±°ùíµ•ÑÉ¥Œ¹…ÍÍ•ÍÍµ•¹Ğ¹•áÁ±…¹…Ñ¥½¹ôğ½Íµ…±°øğ½Ñø(€€€€€€€€€€€€€€€€€€ñÑøñÍÁ…¸±…ÍÍ9…µ”õí½µÁ…É¥Í½¸µÍÑ…ÑÕÌ€‘íµ•ÑÉ¥Œ¹Ñ½¹•õôùíµ•ÑÉ¥Œ¹…ÍÍ•ÍÍµ•¹Ğ¹±…‰•±ôğ½ÍÁ…¸øğ½Ñø(€€€€€€€€€€€€€€€€ğ½ÑÈø¥ôğ½Ñ‰½‘äø(€€€€€€€€€€€€€€ğ½Ñ…‰±”øğ½‘¥Øø((€€€€€€€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É•ÍÕ±Ğµ‰±½¬µ¥Íµ…Ñ µ‰±½¬ˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰É•ÍÕ±Ğµ¥¹‘•àˆøÀÔğ½ÍÁ…¸øñ Ìù]…Ù•™½É´…É••µ•¹Ğğ½ Ìøğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰½µÁ…É¥Í½¸µµ•ÑÉ¥Ìˆø(€€€€€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”õíİ…Ù•™½Éµ]¥Ñ¡¥¹1¥µ¥Ğ€ü€‰µ•ÑÉ¥ŒµÁ…ÍÌˆ€è€‰µ•ÑÉ¥ŒµÉ•Ù¥•Ü‰ôøñÍÁ…¸ù±¥¹•½ÉÉ•±…Ñ¥½¸ğ½ÍÁ…¸øñÍÑÉ½¹œùí½ÉÉ•±…Ñ¥½¸¹Ñ½¥á• Ì¥ôğ½ÍÑÉ½¹œøñÍµ…±°ùíİ…Ù•™½Éµ]¥Ñ¡¥¹1¥µ¥Ğ€ü€‰A…ÍÍ•Ì-åÑ¡É½ÌÁÉ½Ñ½ÑåÁ”±¥µ¥Ğè…Ğ±•…ÍĞ€À¸ÜÀÀˆ€è€‰=ÕÑÍ¥‘”-åÑ¡É½ÌÁÉ½Ñ½ÑåÁ”±¥µ¥Ğè‰•±½Ü€À¸ÜÀÀ‰ôğ½Íµ…±°øğ½‘¥Øø(€€€€€€€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ù9½Éµ…±¥é•I5Mğ½ÍÁ…¸øñÍÑÉ½¹œùì¡¹ÉµÍ”€¨€ÄÀÀ¤¹Ñ½¥á• Ä¥ôñ¤ø”ğ½¤øğ½ÍÑÉ½¹œøñÍµ…±°ùI•Í¥‘Õ…°É•±…Ñ¥Ù”Ñ¼•áÁ•É¥µ•¹Ñ…°½Í¥±±…Ñ¥½¸I5Lğ½Íµ…±°øğ½‘¥Øø(€€€€€€€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ù5•…¸ÁÉ•ÍÍÕÉ”‰¥…Ìğ½ÍÁ…¸øñÍÑÉ½¹œùíÍ¥¹•¡ÁÉ•ÍÍÕÉ•	¥…Ì°€Ì¥ô€ñ¤ù5A„ğ½¤øğ½ÍÑÉ½¹œøñÍµ…±°ù%ÑÌÍ¥¹¥™¥…¹”¥Ì…ÍÍ•ÍÍ•¥¸Ñ¡”µ•…¸µÁÉ•ÍÍÕÉ”É½Ü…‰½Ù”ğ½Íµ…±°øğ½‘¥Øø(€€€€€€€€€€€€€€ğ½‘¥ØøñÀ±…ÍÍ9…µ”ô‰µ•ÑÉ¥Œµ¹½Ñ”ˆù½ÉÉ•±…Ñ¥½¸°¡…Éµ½¹¥Œ°…¹Ù…É¥…‰¥±¥Ñä¡•­ÌÕÍ”-åÑ¡É½ÌÁÉ½Ñ½ÑåÁ”ÁÉ½‘ÕĞ±¥µ¥ÑÌ¸Q¡”¥Ñ•Á…Á•ÉÌ‘¥¹½ĞÍ•ĞÑ¡•Í”±¥µ¥ÑÌ¸AÉ•ÍÍÕÉ”°™É•ÅÕ•¹ä°ÍÁ••°¥µÁÕ±Í”°…¹É¥Í”µÑ¥µ”É½İÌÕÍ”Ñ¡”•¹Ñ•É••áÁ•É¥µ•¹Ğ…¹Õ¹•ÉÑ…¥¹Ñ¥•Ì¸í¥¹½¹±ÕÍ¥Ù•5•ÑÉ¥Ì€ü€‘í¥¹½¹±ÕÍ¥Ù•5•ÑÉ¥Íôµ•ÑÉ¥Œ‘í¥¹½¹±ÕÍ¥Ù•5•ÑÉ¥Ì€ôôô€Ä€ü€ˆ…¹¹½Ğˆ€è€‰Ì…¹¹½Ğ‰ô‰”±…ÍÍ¥™¥•™É½´Ñ¡”…Ù…¥±…‰±”ÉÕ¸‘…Ñ„¹€€è€ˆ‰ôğ½Àøğ½Í•Ñ¥½¸ø((€€€€€€€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É•ÍÕ±Ğµ‰±½¬…ÕÍ•Ìµ‰±½¬ˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰É•ÍÕ±Ğµ¥¹‘•àˆøÀØğ½ÍÁ…¸øñ ÌùI…¹­•‘¥…¹½ÍÑ¥Œ¡åÁ½Ñ¡•Í•Ìğ½ Ìøğ½‘¥Øøñ½°ùí…ÍÍ•ÍÍµ•¹Ğ¹¡åÁ½Ñ¡•Í•Ì¹µ…À ¡¡åÁ½Ñ¡•Í¥Ì°¥¹‘•à¤€ôø€ñ±¤­•äõí¡åÁ½Ñ¡•Í¥Ì¹Ñ¥Ñ±•ôøñˆùí¥¹‘•à€¬€Åô¸í¡åÁ½Ñ¡•Í¥Ì¹Ñ¥Ñ±•ôğ½ˆøñÍÁ…¸ùí¡åÁ½Ñ¡•Í¥Ì¹•Ù¥‘•¹”¹µ…À ¡¥Ñ•´¤€ôø€‘í¥Ñ•´¹ÍÑ…Ñ•ôè€‘í¥Ñ•´¹½‰Í•ÉÙ…Ñ¥½¹õ€¤¹©½¥¸ ˆ€ˆ¥ôğ½ÍÁ…¸øñÍµ…±°ù5½‘•°¥¹ÁÕÑÌèí¡åÁ½Ñ¡•Í¥Ì¹µ½‘•±%¹ÁÕÑÌ¹™¥±Ñ•È¡	½½±•…¸¤¹©½¥¸ ˆƒ
+Ü€ˆ¥ôğ½Íµ…±°øğ½±¤ø¥ôğ½½°øñÍµ…±°ùQ¡•Í”…É”ÑÉ…¹ÍÁ…É•¹ĞÍ•¹Í¥Ñ¥Ù¥ÑäµÑ•ÍĞÁÉ¥½É¥Ñ¥•Ì°¹½Ğ…ÕÍ…°ÁÉ½½˜¸ğ½Íµ…±°øğ½Í•Ñ¥½¸ø((€€€€€€€€€€€€€€ñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰É•Á½ÉĞµ‰ÕÑÑ½¸ˆ½¹±¥¬õí‘½İ¹±½…‘I•Á½ÉÑôøñÍÁ…¸øñˆøÀàğ½ˆøñÍÑÉ½¹œù½İ¹±½…ÑÉ…•…‰±”É•Á½ÉĞğ½ÍÑÉ½¹œøñÍµ…±°ù%¹ÁÕÑÌ°Ù…±¥‘¥Ñä°Õ¹•ÉÑ…¥¹Ñä°µ•ÑÉ¥Ì°¡åÁ½Ñ¡•Í•Ì°…¹É•½µµ•¹‘•¹•áĞÉÕ¸ğ½Íµ…±°øğ½ÍÁ…¸øñ¤ûŠLğ½¤øğ½‰ÕÑÑ½¸ø(€€€€€€€€€€€€ğ½…ÉÑ¥±”ø(€€€€€€€€€€ğ½Í•Ñ¥½¸ø((€€€€€€€€€€ğ¼ùô((€€€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰•Ù¥‘•¹”µÁ…¹•°Á¡åÍ¥Ìµ½µÁ…É¥Í½¸µÁ…¹•°ˆ…É¥„µ±…‰•°ô‰¹¥¹”Á¡åÍ¥Ì½µÁ…É¥Í½¸ˆøñ‘¥Ø±…ÍÍ9…µ”ô‰•Ù¥‘•¹”µ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰…±Õ±…Ñ•µ±…‰•°ˆù=AQ%=90=U59QY%9ğ½ÍÁ…¸øñ ÈùA•É™½Éµ…¹”°™••µÍåÍÑ•´°Ñ¡•Éµ…°°…¹É•Á•…Ñ…‰¥±¥Ñä½µÁ…É¥Í½¸ğ½ ÈøñÀùíÁ¡åÍ¥ÍAÉ½Ù¥‘•‘½Õ¹Ğ€ü€‘íÁ¡åÍ¥ÍAÉ½Ù¥‘•‘½Õ¹Ñô½˜€‘íÁ¡åÍ¥Í½µÁ…É¥Í½¹Ì¹±•¹Ñ¡ôÅÕ…¹Ñ¥Ñ¥•Ì¡…Ù”…Ğ±•…ÍĞ½¹”‘½Õµ•¹Ñ•Ù…±Õ”¹€€è€‰9¼½ÁÑ¥½¹…°•¹¥¹”µÁ¡åÍ¥ÌÙ…±Õ•Ìİ•É”ÁÉ½Ù¥‘•™½ÈÑ¡¥ÌÉÕ¸¸‰ô-åÑ¡É½ÌÉ•Á½ÉÑÌµ¥¹ÕÌ•áÁ•É¥µ•¹Ğ½¹±äİ¡•¸‰½Ñ Ù…±Õ•Ì•á¥ÍĞì¥Ğ¹•Ù•È¥¹™•ÉÌ„µ¥ÍÍ¥¹œÙ…±Õ”¸ğ½Àøğ½‘¥Øøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸Í•½¹‘…Éäˆ½¹±¥¬õí½Á•¹…Í•‘¥Ñ½Éôù‘½È•‘¥ĞÙ…±Õ•Ìğ½‰ÕÑÑ½¸øğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰½µÁ…É¥Í½¸µÑ…‰±”µİÉ…ÀˆøñÑ…‰±”±…ÍÍ9…µ”ô‰½µÁ…É¥Í½¸µÑ…‰±”Á¡åÍ¥Ìµ½µÁ…É¥Í½¸µÑ…‰±”ˆøñÑ¡•…øñÑÈøñÑ ùÙ¥‘•¹”±…å•Èğ½Ñ øñÑ ùEÕ…¹Ñ¥Ñäğ½Ñ øñÑ ùáÁ•É¥µ•¹Ğğ½Ñ øñÑ ùğ½Ñ øñÑ ùƒŠ"H•áÁ•É¥µ•¹Ğğ½Ñ øğ½ÑÈøğ½Ñ¡•…øñÑ‰½‘äùíÁ¡åÍ¥Í½µÁ…É¥Í½¹Ì¹µ…À ¡É½Ü¤€ôø€ñÑÈ­•äõíÉ½Ü¹­•åôøñÑøñÍÁ…¸±…ÍÍ9…µ”ô‰Á¡åÍ¥Ìµ±…å•ÈµÑ…œˆùíÉ½Ü¹±…å•È€ôôô€‰™••ˆ€ü€‰••ÍåÍÑ•´ˆ€èÉ½Ü¹±…å•ÉlÁt¹Ñ½UÁÁ•É…Í” ¤€¬É½Ü¹±…å•È¹Í±¥” Ä¥ôğ½ÍÁ…¸øğ½ÑøñÑ Í½Á”ô‰É½ÜˆùíÉ½Ü¹±…‰•±ôğ½Ñ øñÑùí™½Éµ…ÑA¡åÍ¥ÍY…±Õ”¡É½Ü¹•áÁ•É¥µ•¹Ğ°É½Ü¹Õ¹¥Ğ¥ôğ½ÑøñÑùí™½Éµ…ÑA¡åÍ¥ÍY…±Õ”¡É½Ü¹™°É½Ü¹Õ¹¥Ğ¥ôğ½ÑøñÑ±…ÍÍ9…µ”ô‰‘¥™™•É•¹”µ•±°ˆùíÉ½Ü¹‘¥™™•É•¹”€ôôô¹Õ±°€ü€‰9½Ğ½µÁ…É…‰±”ˆ€è€‘íÉ½Ü¹‘¥™™•É•¹”€ø€À€ü€ˆ¬ˆ€è€ˆ‰ô‘í™½Éµ…ÑA¡åÍ¥ÍY…±Õ”¡É½Ü¹‘¥™™•É•¹”°É½Ü¹Õ¹¥Ğ¥õôğ½Ñøğ½ÑÈø¥ôğ½Ñ‰½‘äøğ½Ñ…‰±”øğ½‘¥ØøñÀ±…ÍÍ9…µ”ô‰µ•ÑÉ¥Œµ¹½Ñ”ˆùQ¡•Í”Í…±…È‘¥™™•É•¹•Ì…É”‘•ÍÉ¥ÁÑ¥Ù”¥¸Ñ¡¥ÌÙ•ÉÍ¥½¸¸Q¡•ä‘¼¹½Ğ…ÕÑ½µ…Ñ¥…±±äÁ…ÍÌ½È™…¥°„ÉÕ¸‰•…ÕÍ”Ñ¡”É•ÅÕ¥É•‘•™¥¹¥Ñ¥½¹Ì…¹Õ¹•ÉÑ…¥¹Ñä‰Õ‘•ÑÌ‘•Á•¹½¸Ñ¡”µ•…ÍÕÉ•µ•¹Ğµ•Ñ¡½¸ğ½Àøñ‘•Ñ…¥±Ì±…ÍÍ9…µ”ô‰±…ÍÍ¥™¥…Ñ¥½¸µµ•Ñ¡½Á¡åÍ¥ÌµÍ½ÕÉ•ÌˆøñÍÕµµ…Éäù5•…ÍÕÉ•µ•¹Ğ‰…Í¥Ì…¹ÁÉ¥µ…Éä•áÁ•É¥µ•¹Ñ…°Í½ÕÉ•Ìğ½ÍÕµµ…Éäøñ‘¥ØøñÀùíA!eM%M}M=UI}1%5%QQ%=9ôğ½ÀøñÕ°ùíA!eM%M}Y%9}M=UIL¹µ…À ¡Í½ÕÉ”¤€ôø€ñ±¤­•äõíÍ½ÕÉ”¹Ñ¥Ñ±•ôøñ„¡É•˜õíÍ½ÕÉ”¹ÕÉ±ôÑ…É•Ğô‰}‰±…¹¬ˆÉ•°ô‰¹½É•™•ÉÉ•ÈˆøñÍÑÉ½¹œùíÍ½ÕÉ”¹Ñ¥Ñ±•ôğ½ÍÑÉ½¹œøğ½„øñÍÁ…¸ùíÍ½ÕÉ”¹…ÕÑ¡½ÉÍô€¡íÍ½ÕÉ”¹å•…Éô¤ƒ
+ÜíÍ½ÕÉ”¹½¹ÑÉ¥‰ÕÑ¥½¹ôğ½ÍÁ…¸øğ½±¤ø¥ôğ½Õ°øğ½‘¥Øøğ½‘•Ñ…¥±Ìøğ½Í•Ñ¥½¸ø((€€€€€€€€€€€€ğ½‘¥Øø(€€€€€€€€€€ğ½‘•Ñ…¥±Ìø((€€€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰•Ù¥‘•¹”µÁ…¹•°ÁÉ¥µ…ÉäµÍ¥¹…°µ•Ù¥‘•¹”ˆ…É¥„µ±…‰•°ô‰…±Õ±…Ñ•Í¥¹…°•Ù¥‘•¹”ˆøñ‘¥Ø±…ÍÍ9…µ”ô‰•Ù¥‘•¹”µ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰…±Õ±…Ñ•µ±…‰•°ˆù1U1QQHM91eM%Lğ½ÍÁ…¸øñ ÈùAÉ•ÍÍÕÉ”…¹İ…Ù”•Ù¥‘•¹”ğ½ ÈøñÀùÙ•ÉäÑÉ…”°ÍÁ•ÑÉÕ´°ÁÉ½Á……Ñ¥½¸Á¡…Í”°…¹å±”ÍÑ…Ñ¥ÍÑ¥Œ¥Ì…±Õ±…Ñ•™É½´Ñ¡”…Ñ¥Ù”…Í”¸ğ½Àøğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰½¹ÑÉ½°µÉ½ÕÀˆøñ‘¥Ø±…ÍÍ9…µ”ô‰ÁÉ½‰”µÑ…‰Ìˆ…É¥„µ±…‰•°ô‰AÉ½‰”Í•±•Ñ¥½¸ˆùí…Ñ¥Ù•…Í”¹Ñ•ÍÑM¥¹…±Ì¹µ…À ¡|°ÁÉ½‰”¤€ôø€ñ‰ÕÑÑ½¸­•äõíÁÉ½‰•ô±…ÍÍ9…µ”õí…Ñ¥Ù•AÉ½‰”€ôôôÁÉ½‰”€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôøÍ•ÑÑ¥Ù•AÉ½‰”¡ÁÉ½‰”¥ôùAíÁÉ½‰”€¬€Åôğ½‰ÕÑÑ½¸ø¥ôğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰Ù¥•ÜµÑ…‰Ìˆ…É¥„µ±…‰•°ô‰Ù¥‘•¹”Ù¥•Üˆøñ‰ÕÑÑ½¸±…ÍÍ9…µ”õí…Ñ¥Ù•Y¥•Ü€ôôô€‰Í¥¹…±Ìˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôøÍ•ÑÑ¥Ù•Y¥•Ü ‰Í¥¹…±Ìˆ¥ôùAÉ•ÍÍÕÉ”ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”õí…Ñ¥Ù•Y¥•Ü€ôôô€‰ÍÁ•ÑÉÕ´ˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôøÍ•ÑÑ¥Ù•Y¥•Ü ‰ÍÁ•ÑÉÕ´ˆ¥ôùMÁ•ÑÉÕ´ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”õí…Ñ¥Ù•Y¥•Ü€ôôô€‰É•Í¥‘Õ…°ˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôøÍ•ÑÑ¥Ù•Y¥•Ü ‰É•Í¥‘Õ…°ˆ¥ôùI•Í¥‘Õ…°ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”õí…Ñ¥Ù•Y¥•Ü€ôôô€‰Á¡…Í”ˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôøÍ•ÑÑ¥Ù•Y¥•Ü ‰Á¡…Í”ˆ¥ôùAÉ½Á……Ñ¥½¸ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”õí…Ñ¥Ù•Y¥•Ü€ôôô€‰å±•Ìˆ€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôøÍ•ÑÑ¥Ù•Y¥•Ü ‰å±•Ìˆ¥ôùå±”ÍÑ…‰¥±¥Ñäğ½‰ÕÑÑ½¸øğ½‘¥Øøğ½‘¥Øøğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰¡…ÉĞµ¡•…‘¥¹œˆøñÍÁ…¸ùí…Ñ¥Ù•Y¥•Ü€ôôô€‰Á¡…Í”ˆ€ü€‘í…Ñ¥Ù•…Í”¹Ñ•ÍÑM¥¹…±Ì¹±•¹Ñ¡ôÁÉ½‰•Ìƒ
+Ü€‘íÑ•ÍÑ5½‘”¹¥‘•¹Ñ¥™¥…‰¥±¥Ñä¹Ñ½1½İ•É…Í” ¥ô•áÁ•É¥µ•¹Ñ…°µ½‘•€€è…Ñ¥Ù•Y¥•Ü€ôôô€‰å±•Ìˆ€ü€‘íÑ•ÍÑ5½‘”¹å±•M•É¥•Ì¹±•¹Ñ¡ô•áÁ•É¥µ•¹Ğå±•Ìƒ
+Ü€‘í™‘5½‘”¹å±•M•É¥•Ì¹±•¹Ñ¡ôå±•Í€€èAÉ½‰”@‘í…Ñ¥Ù•AÉ½‰”€¬€Åôƒ
+Ü€‘í…Ñ¥Ù•…Í”¹µ•Ñ…‘…Ñ„¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•m…Ñ¥Ù•AÉ½‰•u÷
+Àƒ
+Ü€‘í…Ñ¥Ù•½µÁ…É¥Í½¸¹Ñ¥µ”¹±•¹Ñ ¹Ñ½1½…±•MÑÉ¥¹œ ¥ô…±¥¹•Í…µÁ±•Íôğ½ÍÁ…¸øñ1••¹É•Í¥‘Õ…°õí…Ñ¥Ù•Y¥•Ü€ôôô€‰É•Í¥‘Õ…°‰ô€¼øğ½‘¥Øùí…Ñ¥Ù•Y¥•Ü€ôôô€‰Í¥¹…±Ìˆ€˜˜€ñM¥¹…±¡…ÉĞ½µÁ…É¥Í½¸õí…Ñ¥Ù•½µÁ…É¥Í½¹ô€¼ùõí…Ñ¥Ù•Y¥•Ü€ôôô€‰ÍÁ•ÑÉÕ´ˆ€˜˜€ñMÁ•ÑÉÕµ¡…ÉĞ½µÁ…É¥Í½¸õí…Ñ¥Ù•½µÁ…É¥Í½¹ô€¼ùõí…Ñ¥Ù•Y¥•Ü€ôôô€‰É•Í¥‘Õ…°ˆ€˜˜€ñI•Í¥‘Õ…±¡…ÉĞ½µÁ…É¥Í½¸õí…Ñ¥Ù•½µÁ…É¥Í½¹ô€¼ùõí…Ñ¥Ù•Y¥•Ü€ôôô€‰Á¡…Í”ˆ€˜˜€ñA¡…Í•¡…ÉĞ•áÁ•É¥µ•¹ĞõíÑ•ÍÑ5½‘•ôÍ¥µÕ±…Ñ¥½¸õí™‘5½‘•ôÁ½Í¥Ñ¥½¹Í•œõí…Ñ¥Ù•…Í”¹µ•Ñ…‘…Ñ„¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•ô€¼ùõí…Ñ¥Ù•Y¥•Ü€ôôô€‰å±•Ìˆ€˜˜€ñå±•¡…ÉĞ•áÁ•É¥µ•¹ĞõíÑ•ÍÑ5½‘•ôÍ¥µÕ±…Ñ¥½¸õí™‘5½‘•ô€¼ùôñ‘¥Ø±…ÍÍ9…µ”ô‰İ…Ù”µÍÕµµ…ÉäˆøñÍÁ…¸øñˆùíÁÉ½‰•M•Ñ½µÁ…É¥Í½¸ü¹Í¡…É•‘1…UÌ¹Ñ½¥á• È¥ôƒ
+ÕÌğ½ˆøÍ¡…É••áÁ•É¥µ•¹ÓŠM…±¥¹µ•¹Ğğ½ÍÁ…¸øñÍÁ…¸øñˆùíÑ•ÍÑ5½‘”¹¥‘•¹Ñ¥™¥…‰¥±¥Ñä€ôôô€‰9½Ğ¥‘•¹Ñ¥™¥…‰±”ˆ€ü€‰9½Ğ¥‘•¹Ñ¥™¥…‰±”ˆ€è€‘íÑ•ÍÑ5½‘”¹İ…Ù•½Õ¹Ñôµİ…Ù”€‘íÑ•ÍÑ5½‘”¹‘¥É•Ñ¥½¸¹Ñ½1½İ•É…Í” ¥õôğ½ˆø•áÁ•É¥µ•¹Ğƒ
+ÜíÑ•ÍÑ5½‘”¹¥‘•¹Ñ¥™¥…‰¥±¥Ñåôğ½ÍÁ…¸øñÍÁ…¸øñˆùí™‘5½‘”¹¥‘•¹Ñ¥™¥…‰¥±¥Ñä€ôôô€‰9½Ğ¥‘•¹Ñ¥™¥…‰±”ˆ€ü€‰9½Ğ¥‘•¹Ñ¥™¥…‰±”ˆ€è€‘í™‘5½‘”¹İ…Ù•½Õ¹Ñôµİ…Ù”€‘í™‘5½‘”¹‘¥É•Ñ¥½¸¹Ñ½1½İ•É…Í” ¥õôğ½ˆøƒ
+Üí™‘5½‘”¹¥‘•¹Ñ¥™¥…‰¥±¥Ñåôğ½ÍÁ…¸øñÍÁ…¸øñˆùíÑ•ÍÑ5½‘”¹¥‘•¹Ñ¥™¥…‰¥±¥Ñä€ôôô€‰9½Ğ¥‘•¹Ñ¥™¥…‰±”ˆñğ™‘5½‘”¹¥‘•¹Ñ¥™¥…‰¥±¥Ñä€ôôô€‰9½Ğ¥‘•¹Ñ¥™¥…‰±”ˆ€ü€‰9½Ğ¥‘•¹Ñ¥™¥…‰±”ˆ€è€‘íÑ•ÍÑ5½‘”¹Á¡…Í•)¥ÑÑ•É•œ¹Ñ½¥á• Ä¥÷
+À€¼€‘í™‘5½‘”¹Á¡…Í•)¥ÑÑ•É•œ¹Ñ½¥á• Ä¥÷
+Áôğ½ˆøÁ¡…Í”©¥ÑÑ•Èğ½ÍÁ…¸øğ½‘¥Øùíl¸¸¹Ñ•ÍÑ5½‘”¹İ…É¹¥¹Ì°€¸¸¹™‘5½‘”¹İ…É¹¥¹Ít¹±•¹Ñ €ø€À€˜˜€ñÕ°±…ÍÍ9…µ”ô‰İ…Ù”µİ…É¹¥¹Ìˆùíl¸¸¹¹•ÜM•Ğ¡l¸¸¹Ñ•ÍÑ5½‘”¹İ…É¹¥¹Ì°€¸¸¹™‘5½‘”¹İ…É¹¥¹Ít¥t¹µ…À ¡İ…É¹¥¹œ¤€ôø€ñ±¤­•äõíİ…É¹¥¹ôùíİ…É¹¥¹ôğ½±¤ø¥ôğ½Õ°ùôğ½Í•Ñ¥½¸ø(€€€€€€€€€€ñ™½½Ñ•ÈøñÍÁ…¸ù-åÑ¡É½ÌÙí91eM%M}YIM%=9ôƒ
+Ü…±Õ±…Ñ•™É½´Ñ¡”Í…Ù•ÉÕ¸‘…Ñ„ğ½ÍÁ…¸øñÍÁ…¸ùí½Á•É…Ñ¥¹A½¥¹ÑÌ¹±•¹Ñ¡ô½Á•É…Ñ¥¹œÁ½¥¹Ñí½Á•É…Ñ¥¹A½¥¹ÑÌ¹±•¹Ñ €ôôô€Ä€ü€ˆˆ€è€‰Ì‰ôƒ
+Üí…Í•Ì¹±•¹Ñ¡ôÉÕ¹í…Í•Ì¹±•¹Ñ €ôôô€Ä€ü€ˆˆ€è€‰Ì‰ôƒ
+Ü¹½Ğ„•ÉÑ¥™¥…Ñ¥½¸½È…ÕÍ…°ÁÉ½½˜ğ½ÍÁ…¸øğ½™½½Ñ•Èø(€€€€€€€€ğ¼ùô(€€€€€€ğ¼ùô(€€€€ğ½Í•Ñ¥½¸ø((€€€íÍ¡½İ1½…‘•È€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰µ½‘…°µ‰…­‘É½ÀˆÉ½±”ô‰ÁÉ•Í•¹Ñ…Ñ¥½¸ˆ½¹5½ÕÍ•½İ¸õì ¤€ôøÍ•ÑM¡½İ1½…‘•È¡™…±Í”¥ôøñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰±½…‘•Èµµ½‘…°ˆÉ½±”ô‰‘¥…±½œˆ…É¥„µµ½‘…°ô‰ÑÉÕ”ˆ…É¥„µ±…‰•±±•‘‰äô‰±½…‘•ÈµÑ¥Ñ±”ˆ½¹5½ÕÍ•½İ¸õì¡•Ù•¹Ğ¤€ôø•Ù•¹Ğ¹ÍÑ½ÁAÉ½Á……Ñ¥½¸ ¥ôø(€€€€€€ñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰±½Í”µ‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÍ•ÑM¡½İ1½…‘•È¡™…±Í”¥ô…É¥„µ±…‰•°ô‰±½Í”¥¹ÁÕÑÌˆû\ğ½‰ÕÑÑ½¸øñ‘¥Ø±…ÍÍ9…µ”ô‰±½…‘•Èµ¥¹ÑÉ¼ˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰µ½‘…°µ­¥­•Èˆùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰5MUI=AIQ%9A=%9Pˆ€è€‰=5AI%M=8IU8‰ôğ½ÍÁ…¸øñ È¥ô‰±½…‘•ÈµÑ¥Ñ±”ˆùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰‘µ•…ÍÕÉ•½Á•É…Ñ¥¹œÁ½¥¹Ğˆ€èÉ•Ù¥•İ¥¹I•ÉÕ¸€ü€‰I•Ù¥•Ü½¹”µ¡…¹”É•ÉÕ¸ˆ€è•‘¥Ñ¥¹…Í•%€ü€‰‘¥ĞÉÕ¸ˆ€è‘É…™ÑI•±…Ñ¥½¹Í¡¥À€ü€‰‘É•ÉÕ¸ˆ€è€‰‘‰…Í•±¥¹”½µÁ…É¥Í½¸‰ôğ½ Èøğ½‘¥Øùì…É•Ù¥•İ¥¹I•ÉÕ¸€˜˜€ñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰¥¹ÁÕĞµ¡•±Àµ‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÍ•ÑM¡½İ!•±À¡ÑÉÕ”¥ôù]¡…Ğ‘½•Ì•… ¥¹ÁÕĞµ•…¸üğ½‰ÕÑÑ½¸ùôğ½‘¥Øùì…É•Ù¥•İ¥¹I•ÉÕ¸€˜˜€ñÀùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰¹Ñ•ÈÑ¡”Á¡åÍ¥…°½¹‘¥Ñ¥½¸…¹•áÁ•É¥µ•¹Ñ…°µ•…ÍÕÉ•µ•¹ÑÌ¸AÉ•ÍÍÕÉ”ÁÉ½‰•Ì‘•™¥¹”Ñ¡”İ…Ù”É•ÍÁ½¹Í”ì½ÁÑ¥½¹…°Á•É™½Éµ…¹”°™••µÍåÍÑ•´°Ñ¡•Éµ…°°…¹‘ÕÉ…Ñ¥½¸Ù…±Õ•Ì…‘Í•Á…É…Ñ”•Ù¥‘•¹”±…å•ÉÌ¸9¼Í•ÑÕÀ½ÈÉ•ÍÕ±Ğ¥ÌÉ•ÅÕ¥É•¡•É”¸ˆ€è€‰Q¡”•áÁ•É¥µ•¹Ğ…¹Á¡åÍ¥…°½¹‘¥Ñ¥½¸…É”¥¹¡•É¥Ñ•™É½´Ñ¡”½Á•É…Ñ¥¹œÁ½¥¹Ğ¸‘¥¹ÁÕÑÌ¡•É”½¹±ä™½È½µÁ…É¥Í½¸…¹É•ÉÕ¸Á±…¹¹¥¹œ¸‰ôğ½Àùô((€€€€€íÉ•Ù¥•İ¥¹I•ÉÕ¸€˜˜‘É…™ÑI•™•É•¹•…Í”€˜˜‘É…™ÑI•±…Ñ¥½¹Í¡¥À€˜˜™‘A•¹‘¥¹œ€ü€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É•ÉÕ¸µÉ•Ù¥•ÜµÍÑ•Àˆ…É¥„µ±…‰•°ô‰½¹ÑÉ½±±•É•ÉÕ¸É•Ù¥•Üˆø(€€€€€€€€ñÍÁ…¸ùI•…‘äÑ¼…¹…±åé”ğ½ÍÁ…¸ø(€€€€€€€€ñ Ìùí‘É…™Ğ¹¹…µ•ôğ½ Ìø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰É•ÉÕ¸µÉ•Ù¥•Üµ±¥ÍĞˆø(€€€€€€€€€€ñÀøñÍÑÉ½¹œùMÑ…ÉÑ¥¹œÉÕ¸ğ½ÍÑÉ½¹œøñÍÁ…¸ùí‘É…™ÑI•™•É•¹•…Í”¹µ•Ñ…‘…Ñ„¹¹…µ•ôğ½ÍÁ…¸øğ½Àø(€€€€€€€€€€ñÀøñÍÑÉ½¹œùáÁ•É¥µ•¹ĞÉ•ÕÍ•ğ½ÍÑÉ½¹œøñÍÁ…¸ùí¥¹¡•É¥Ñ•‘áÁ•É¥µ•¹Ñ9…µ•ôğ½ÍÁ…¸øğ½Àø(€€€€€€€€€€ñÀøñÍÑÉ½¹œù¡…¹•½¹±äğ½ÍÑÉ½¹œøñÍÁ…¸ùí‘É…™ÑI•±…Ñ¥½¹Í¡¥À¹¡…¹•‘A…É…µ•Ñ•È€üÁ…É…µ•Ñ•É1…‰•°¡‘É…™ÑI•±…Ñ¥½¹Í¡¥À¹¡…¹•‘A…É…µ•Ñ•È¤€è¡…¹•1…‰•°¡‘É…™ÑI•±…Ñ¥½¹Í¡¥À¹¡…¹•‘Y…É¥…‰±”¥ôƒ
+Üí¡…¹•‘I•ÉÕ¹¥•±‘Ì¹µ…À¡…Í•¥•±‘1…‰•°¤¹©½¥¸ ˆ°€ˆ¥ôğ½ÍÁ…¸øğ½Àø(€€€€€€€€€€ñÀøñÍÑÉ½¹œù9•ÜÉ•ÍÕ±Ğğ½ÍÑÉ½¹œøñÍÁ…¸ùí™‘A•¹‘¥¹œ¹ÁÉ½Ù•¹…¹”¹™¥±•9…µ•ôğ½ÍÁ…¸øğ½Àø(€€€€€€€€ğ½‘¥Øø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰É•ÉÕ¸µÉ•Ù¥•Üµ½¹™¥Éµ…Ñ¥½¸ˆøñÍÑÉ½¹œù=Á•É…Ñ¥¹œÁ½¥¹Ğ…¹•áÁ•É¥µ•¹Ğ…É”±½­•¸ğ½ÍÑÉ½¹œøñÍÁ…¸ù-åÑ¡É½Ìİ¥±°½µÁ…É”Ñ¡¥ÌÉ•ÍÕ±Ğİ¥Ñ Ñ¡”¥¹¡•É¥Ñ••áÁ•É¥µ•¹Ğ…¹ÍÑ…ÉÑ¥¹œÉÕ¸Í•ÑÑ¥¹Ì¸ğ½ÍÁ…¸øğ½‘¥Øø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰µ½‘…°µ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸Í•½¹‘…Éäˆ½¹±¥¬õì ¤€ôøÍ•ÑI•Ù¥•İ¥¹I•ÉÕ¸¡™…±Í”¥ôù	…¬Ñ¼¥¹ÁÕÑÌğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸ÁÉ¥µ…Éäˆ½¹±¥¬õí…ÁÁ±å…Í•ôù¹…±åé”É•ÉÕ¸ƒŠHğ½‰ÕÑÑ½¸øğ½‘¥Øø(€€€€€€ğ½Í•Ñ¥½¸ø€è€ğø((€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆø(€€€€€€€€ñ Ìùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰¹¥¹”°½Á•É…Ñ¥¹œÁ½¥¹Ğ°…¹•áÁ•É¥µ•¹Ğ•½µ•ÑÉäˆ€è€‰¹¥¹”°ÉÕ¸°…¹•½µ•ÑÉä‰ôğ½ Ìø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÉ¥™½ÕÈˆø(€€€€€€€€€€ñ±…‰•°øñÍÁ…¸ù¹¥¹”€¼‘•Í¥¸ğ½ÍÁ…¸øñÍ•±•Ğ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ÑôÙ…±Õ”õí‘É…™Ñ•Í¥¹%€üü€ˆ‰ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•ÑÉ…™Ñ•Í¥¹%¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”ñğ¹Õ±°¥ôøñ½ÁÑ¥½¸Ù…±Õ”ôˆˆ‘¥Í…‰±•ùM•±•Ğ•¹¥¹”ğ½½ÁÑ¥½¸ùí‘•Í¥¹Ì¹µ…À ¡‘•Í¥¸¤€ôø€ñ½ÁÑ¥½¸­•äõí‘•Í¥¸¹¥‘ôÙ…±Õ”õí‘•Í¥¸¹¥‘ôùí‘•Í¥¸¹¹…µ•ôğ½½ÁÑ¥½¸ø¥ôğ½Í•±•Ğøğ½±…‰•°ø(€€€€€€€€€€ñ±…‰•°øñÍÁ…¸ùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰=Á•É…Ñ¥¹œÁ½¥¹Ğ¹…µ”ˆ€è‘É…™ÑI•±…Ñ¥½¹Í¡¥À€ü€‰I•ÉÕ¸¹…µ”ˆ€è€‰	…Í•±¥¹”ÉÕ¸¹…µ”‰ôğ½ÍÁ…¸øñ¥¹ÁÕĞÙ…±Õ”õí‘É…™Ğ¹¹…µ•ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰¹…µ”ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°ø(€€€€€€€€€€ñ±…‰•°øñÍÁ…¸ùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰5•…¸‘¥…µ•Ñ•È™É½´•¹¥¹”€¡µ´¤ˆ€è€‰5•…¸‘¥…µ•Ñ•È€¡µ´¤‰ôğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰…¹¹Õ±ÕÍ5•…¹¥…µ•Ñ•É5´ˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹…¹¹Õ±ÕÍ5•…¹¥…µ•Ñ•É5´¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰…¹¹Õ±ÕÍ5•…¹¥…µ•Ñ•É5´ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°ø(€€€€€€€€€€ñ±…‰•°øñÍÁ…¸ù¥…µ•Ñ•ÈÕ¹•ÉÑ…¥¹Ñä€¡µ´¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰…¹¹Õ±ÕÍ¥…µ•Ñ•ÉU¹•ÉÑ…¥¹Ñå5´ˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹…¹¹Õ±ÕÍ¥…µ•Ñ•ÉU¹•ÉÑ…¥¹Ñå5´¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰…¹¹Õ±ÕÍ¥…µ•Ñ•ÉU¹•ÉÑ…¥¹Ñå5´ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°ø(€€€€€€€€€€ñ±…‰•°øñÍÁ…¸ù5…á¥µÕ´•áÁ•Ñ•İ…Ù•Ìğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰µ…á¥µÕµ]…Ù•½Õ¹Ğˆ¥ôÑåÁ”ô‰¹Õµ‰•Èˆµ¥¸ôˆÄˆµ…àôˆÄÈˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹µ…á¥µÕµ]…Ù•½Õ¹Ğ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰µ…á¥µÕµ]…Ù•½Õ¹Ğˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°ø(€€€€€€€€ğ½‘¥Øø(€€€€€€€€ñ±…‰•°±…ÍÍ9…µ”ô‰ÁÉ½‰”µ…¹±”µ•‘¥Ñ½ÈˆøñÍÁ…¸ùAÉ½‰”…¹±•Ì€¡‘•œ¤ƒ
+Üµ¥¹¥µÕ´€Ì°¹½¹Õ¹¥™½É´ÁÉ•™•ÉÉ•ğ½ÍÁ…¸øñ‘¥Ø±…ÍÍ9…µ”ô‰…¹±”µ¥¹ÁÕÑÌˆùí‘É…™Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹µ…À ¡…¹±”°¥¹‘•à¤€ôø€ñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰ÁÉ½‰•A½Í¥Ñ¥½¹Í•œˆ¥ô­•äõí¥¹‘•áôÑåÁ”ô‰¹Õµ‰•Èˆ…É¥„µ±…‰•°õíAÉ½‰”€‘í¥¹‘•à€¬€Åô…¹±•ôÁ±…•¡½±‘•Èõí@‘í¥¹‘•à€¬€ÅõôÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡…¹±”¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•ÑÉ…™Ğ ¡ÕÉÉ•¹Ğ¤€ôø€¡ì€¸¸¹ÕÉÉ•¹Ğ°ÁÉ½‰•A½Í¥Ñ¥½¹Í•œèÕÉÉ•¹Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹µ…À ¡Ù…±Õ”°Á½Í¥Ñ¥½¸¤€ôøÁ½Í¥Ñ¥½¸€ôôô¥¹‘•à€ü€¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”€ôôô€ˆˆ€ü9Õµ‰•È¹9…8€è9Õµ‰•È¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¤¤€èÙ…±Õ”¤ô¤¥ô€¼ø¥ôñ‰ÕÑÑ½¸‘¥Í…‰±•õí½¹ÑÉ½±±•‘I•ÉÕ¹É…™Ğñğ€…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ÑôÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÍ•ÑÉ…™Ğ ¡ÕÉÉ•¹Ğ¤€ôø€¡ì€¸¸¹ÕÉÉ•¹Ğ°ÁÉ½‰•A½Í¥Ñ¥½¹Í•œèl¸¸¹ÕÉÉ•¹Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ°9Õµ‰•È¹9…9tô¤¥ôø¬ÁÉ½‰”ğ½‰ÕÑÑ½¸ùí‘É…™Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹±•¹Ñ €ø€Ì€˜˜€ñ‰ÕÑÑ½¸‘¥Í…‰±•õí½¹ÑÉ½±±•‘I•ÉÕ¹É…™Ğñğ€…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ÑôÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÍ•ÑÉ…™Ğ ¡ÕÉÉ•¹Ğ¤€ôø€¡ì€¸¸¹ÕÉÉ•¹Ğ°ÁÉ½‰•A½Í¥Ñ¥½¹Í•œèÕÉÉ•¹Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹Í±¥” À°€´Ä¤ô¤¥ôùI•µ½Ù”ğ½‰ÕÑÑ½¸ùôğ½‘¥Øøğ½±…‰•°ø(€€€€€€€€ñ±…‰•°±…ÍÍ9…µ”ô‰½¹™¥Éµ…Ñ¥½¸µ¡•¬ˆøñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰ÁÉ½‰•Må¹¡É½¹¥é…Ñ¥½¹½¹™¥Éµ•ˆ¥ôÑåÁ”ô‰¡•­‰½àˆ¡•­•õí‘É…™Ğ¹ÁÉ½‰•Må¹¡É½¹¥é…Ñ¥½¹½¹™¥Éµ•‘ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•ÑÉ…™Ğ ¡ÕÉÉ•¹Ğ¤€ôø€¡ì€¸¸¹ÕÉÉ•¹Ğ°ÁÉ½‰•Må¹¡É½¹¥é…Ñ¥½¹½¹™¥Éµ•è•Ù•¹Ğ¹Ñ…É•Ğ¹¡•­•ô¤¥ô€¼øñÍÁ…¸ù$½¹™¥É´•Ù•Éä•áÁ•É¥µ•¹Ñ…°ÁÉ•ÍÍÕÉ”ÁÉ½‰”ÕÍ•Ì½¹”Íå¹¡É½¹¥é•…ÅÕ¥Í¥Ñ¥½¸Ñ¥µ”‰…Í”¸ğ½ÍÁ…¸øğ½±…‰•°ø(€€€€€€€ì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰…ÕÑ½µ…Ñ¥ŒµÁ…¥É¥¹œˆøñÍÁ…¸ùUQ=5Q%A%I%9ğ½ÍÁ…¸øñÍÑÉ½¹œùY•É¥™¥•İ¡•¸Ñ¡”ÉÕ¸¥Ì…¹…±åé•ğ½ÍÑÉ½¹œøñÀù-åÑ¡É½Ì¡•­ÌÑ¡”¥¹¡•É¥Ñ•½Á•É…Ñ¥¹œÁ½¥¹Ğ°ÁÉ½‰”½Õ¹Ğ……¥¹ÍĞÑ¡”Í…Ù•…¹±”µ…À°Íå¹¡É½¹¥é•Ñ¥µ”‰…Í”°…¹½Ù•É±…ÁÁ¥¹œ•áÁ•É¥µ•¹ÓŠMİ¥¹‘½Ü¸Q¡”Í…Ù•ÉÕ¸É•½É‘ÌÑ¡”É•ÍÕ±Ñ¥¹œ™¥¹•ÉÁÉ¥¹Ğ¸ğ½Àøğ½‘¥Øùô(€€€€€€ğ½‘¥Øø((€€€€€ì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€˜˜€¡‘É…™Ñ=Á•É…Ñ¥¹A½¥¹ÑIÕ¹Ì¹±•¹Ñ €ø€Àñğ‘É…™ÑI•±…Ñ¥½¹Í¡¥À¤€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆøñ Ìùí•‘¥Ñ¥¹…Í•%€ü€‰IÕ¸É•±…Ñ¥½¹Í¡¥Àˆ€è€‰½¹ÑÉ½±±•É•ÉÕ¸‰ôğ½ ÌøñÀ±…ÍÍ9…µ”ô‰™½É´µ¡•±Àˆùí•‘¥Ñ¥¹…Í•%€ü€‰Q¡¥ÌÉ•±…Ñ¥½¹Í¡¥À¥Ì±½­•‰•…ÕÍ”¡…¹¥¹œ¥Ğİ½Õ±¡…¹”Ñ¡”µ•…¹¥¹œ½˜Ñ¡”Í…Ù•É•ÍÕ±Ğ¸ˆ€è€‰Q¡¥ÌÉ•ÉÕ¸¥¹¡•É¥ÑÌÑ¡”•¹¥¹”°½Á•É…Ñ¥¹œÁ½¥¹Ğ°•áÁ•É¥µ•¹Ğ°…¹ÁÉ½‰•Ì¸¡½½Í”•á…Ñ±ä½¹”Á…É…µ•Ñ•ÈÑ¼¡…¹”¸‰ôğ½Àøñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÉ¥™½ÕÈˆø(€€€€€€€€ñ±…‰•°øñÍÁ…¸ù=Á•É…Ñ¥¹œÁ½¥¹Ğ‰…Í•±¥¹”ÉÕ¸ğ½ÍÁ…¸øñÍ•±•Ğ‘¥Í…‰±•õí	½½±•…¸¡•‘¥Ñ¥¹…Í•%¤ñğ	½½±•…¸¡‘É…™ÑI•±…Ñ¥½¹Í¡¥À¥ôÙ…±Õ”õí‘É…™ÑI•±…Ñ¥½¹Í¡¥Àü¹‰…Í•±¥¹•…Í•%€üü€ˆ‰ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôø¡½½Í•…Í•…µ¥±ä¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ôøñ½ÁÑ¥½¸Ù…±Õ”ôˆˆù9½Ğ„É•±…Ñ•É•ÉÕ¸ğ½½ÁÑ¥½¸ùí‘É…™Ñ=Á•É…Ñ¥¹A½¥¹ÑIÕ¹Ì¹™¥±Ñ•È ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€„ôô•‘¥Ñ¥¹…Í•%€˜˜€…¥Ñ•´¹É•±…Ñ¥½¹Í¡¥À¤¹µ…À ¡¥Ñ•´¤€ôø€ñ½ÁÑ¥½¸­•äõí¥Ñ•´¹¥‘ôÙ…±Õ”õí¥Ñ•´¹¥‘ôùí¥Ñ•´¹µ•Ñ…‘…Ñ„¹¹…µ•ôğ½½ÁÑ¥½¸ø¥ôğ½Í•±•Ğøğ½±…‰•°ø(€€€€€€€€ñ±…‰•°øñÍÁ…¸ùMÑ…ÉÑ¥¹œÉÕ¸ğ½ÍÁ…¸øñÍ•±•Ğ‘¥Í…‰±•õì…‘É…™ÑI•±…Ñ¥½¹Í¡¥Àñğ	½½±•…¸¡•‘¥Ñ¥¹…Í•%¥ôÙ…±Õ”õí‘É…™ÑI•±…Ñ¥½¹Í¡¥Àü¹É•™•É•¹•…Í•%€üü‘É…™ÑI•±…Ñ¥½¹Í¡¥Àü¹‰…Í•±¥¹•…Í•%€üü€ˆ‰ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôø¡½½Í•MÑ…ÉÑ¥¹…Í”¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ôùí‘É…™ÑI•±…Ñ¥½¹Í¡¥À€˜˜‘É…™Ñ=Á•É…Ñ¥¹A½¥¹ÑIÕ¹Ì¹™¥±Ñ•È ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€„ôô•‘¥Ñ¥¹…Í•%€˜˜€¡¥Ñ•´¹¥€ôôô‘É…™ÑI•±…Ñ¥½¹Í¡¥À¹‰…Í•±¥¹•…Í•%ñğ¥Ñ•´¹É•±…Ñ¥½¹Í¡¥Àü¹‰…Í•±¥¹•…Í•%€ôôô‘É…™ÑI•±…Ñ¥½¹Í¡¥À¹‰…Í•±¥¹•…Í•%¤¤¹µ…À ¡¥Ñ•´¤€ôø€ñ½ÁÑ¥½¸­•äõí¥Ñ•´¹¥‘ôÙ…±Õ”õí¥Ñ•´¹¥‘ôùí¥Ñ•´¹µ•Ñ…‘…Ñ„¹¹…µ•ôğ½½ÁÑ¥½¸ø¥ôğ½Í•±•Ğøğ½±…‰•°ø(€€€€€€€€ñ±…‰•°øñÍÁ…¸ùM¥¹±”Á…É…µ•Ñ•Èğ½ÍÁ…¸øñÍ•±•Ğ‘¥Í…‰±•õì…‘É…™ÑI•±…Ñ¥½¹Í¡¥Àñğ	½½±•…¸¡•‘¥Ñ¥¹…Í•%¥ôÙ…±Õ”õí‘É…™ÑI•±…Ñ¥½¹Í¡¥Àü¹¡…¹•‘A…É…µ•Ñ•È€üü€ˆ‰ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôø¡½½Í•¡…¹•‘A…É…µ•Ñ•È¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”€ü•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”…Ì½¹ÑÉ½±±•‘A…É…µ•Ñ•È€è¹Õ±°¥ôøñ½ÁÑ¥½¸Ù…±Õ”ôˆˆù¡½½Í”½¹”•á…ĞÁ…É…µ•Ñ•Èğ½½ÁÑ¥½¸ùí=9QI=11}AI5QI}%9%Q%=9L¹µ…À ¡¥Ñ•´¤€ôø€ñ½ÁÑ¥½¸­•äõí¥Ñ•´¹¥‘ôÙ…±Õ”õí¥Ñ•´¹¥‘ôùí¥Ñ•´¹±…‰•±ôğ½½ÁÑ¥½¸ø¥ôğ½Í•±•Ğøğ½±…‰•°ø(€€€€€€€€ñ±…‰•°øñÍÁ…¸ù¡…¹”‘•ÍÉ¥ÁÑ¥½¸ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…‘É…™ÑI•±…Ñ¥½¹Í¡¥Àñğ	½½±•…¸¡•‘¥Ñ¥¹…Í•%¥ôÙ…±Õ”õí‘É…™ÑI•±…Ñ¥½¹Í¡¥Àü¹‘•ÍÉ¥ÁÑ¥½¸€üü€ˆ‰ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•ÑÉ…™ÑI•±…Ñ¥½¹Í¡¥À ¡ÕÉÉ•¹Ğ¤€ôøÕÉÉ•¹Ğ€üì€¸¸¹ÕÉÉ•¹Ğ°‘•ÍÉ¥ÁÑ¥½¸è•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”ô€è¹Õ±°¥ôÁ±…•¡½±‘•Èô‰”¹œ¸€ÔÀ”™É½¹Ğµ•±°É•™¥¹•µ•¹Ğˆ€¼øğ½±…‰•°ø(€€€€€€ğ½‘¥Øùí•‘¥Ñ¥¹…Í•%€ü€ñ‘¥Ø±…ÍÍ9…µ”ô‰É•ÉÕ¸µ¥¹¡•É¥Ñ…¹”ˆøñÍÑÉ½¹œùí‘É…™ÑI•±…Ñ¥½¹Í¡¥À€ü€‰½¹ÑÉ½±±•µÉ•ÉÕ¸‘•™¥¹¥Ñ¥½¸±½­•ˆ€è€‰	…Í•±¥¹”‘•™¥¹¥Ñ¥½¸±½­•‰ôğ½ÍÑÉ½¹œøñÍÁ…¸ùÉ•…Ñ”„¹•ÜÉÕ¸Ñ¼Ñ•ÍĞ„‘¥™™•É•¹ĞÁ…É…µ•Ñ•È¸ğ½ÍÁ…¸øğ½‘¥Øø€è‘É…™ÑI•™•É•¹•…Í”€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰É•ÉÕ¸µ¥¹¡•É¥Ñ…¹”ˆøñÍÑÉ½¹œùMÑ…ÉÑ¥¹œÉÕ¸½Á¥•èí‘É…™ÑI•™•É•¹•…Í”¹µ•Ñ…‘…Ñ„¹¹…µ•ôğ½ÍÑÉ½¹œøñÍÁ…¸ùì…‘É…™ÑI•±…Ñ¥½¹Í¡¥Àü¹¡…¹•‘A…É…µ•Ñ•È€ü€‰¡½½Í”Ñ¡”½¹”Á…É…µ•Ñ•È‰•¥¹œÑ•ÍÑ•¸ˆ€è=¹±ä€‘íÁ…É…µ•Ñ•É1…‰•°¡‘É…™ÑI•±…Ñ¥½¹Í¡¥À¹¡…¹•‘A…É…µ•Ñ•È¤¹Ñ½1½İ•É…Í” ¥ô™¥•±‘Ì…É”•‘¥Ñ…‰±”¸Q¡”½Á•É…Ñ¥¹œÁ½¥¹Ğ…¹•áÁ•É¥µ•¹Ğ…É”±½­•¹ôğ½ÍÁ…¸øğ½‘¥Øùôğ½‘¥Øùô((€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸µ¡•…‘¥¹œˆøñ‘¥Øøñ Ìùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰áÁ•É¥µ•¹Ñ…°ÁÉ•ÍÍÕÉ”µ•…ÍÕÉ•µ•¹ÑÌˆ€è€‰Må¹¡É½¹¥é•ÁÉ•ÍÍÕÉ”ÁÉ½‰•Ì‰ôğ½ ÌøñÀ±…ÍÍ9…µ”ô‰™½É´µ¡•±Àˆùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰5…ÀÑ¡”Ñ¥µ”½±Õµ¸…¹½¹”ÁÉ•ÍÍÕÉ”½±Õµ¸™½È•… Íå¹¡É½¹¥é••áÁ•É¥µ•¹Ñ…°ÁÉ½‰”¸ˆ€è€‰Q¡”½Á•É…Ñ¥¹œÁ½¥¹ĞÍÕÁÁ±¥•ÌÑ¡”•áÁ•É¥µ•¹Ñ…°µ•…ÍÕÉ•µ•¹ÑÌ¸UÁ±½……¹µ…ÀÑ¡”É•ÍÕ±Ğ™½ÈÑ¡¥Ì½µÁ…É¥Í½¸¸‰ôğ½Àøğ½‘¥Øøñ‰ÕÑÑ½¸½¹±¥¬õí‘½İ¹±½…‘á…µÁ±•ôù½İ¹±½…•á…µÁ±”MXğ½‰ÕÑÑ½¸øğ½‘¥Øø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”õí™¥±”µµ…ÁÁ•ÈµÉ¥€‘íµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰Í¥¹±”ˆ€è€ˆ‰õôø(€€€€€€€€€íµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ(€€€€€€€€€€€€ü€ñAÉ•ÍÍÕÉ•¥±•5…ÁÁ•È­•äõí•áÁ•É¥µ•¹Ğµ¹•Ü´‘í‘É…™Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹±•¹Ñ¡õô­¥¹ô‰áÁ•É¥µ•¹Ğˆ•áÁ•Ñ•‘AÉ½‰•½Õ¹Ğõí‘É…™Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹±•¹Ñ¡ô½¹5…ÁÁ•õíÍ•ÑQ•ÍÑA•¹‘¥¹ô€¼ø(€€€€€€€€€€€€è‘É…™ÑI•™•É•¹•…Í”€˜˜€…•‘¥Ñ¥¹…Í•%(€€€€€€€€€€€€€€ü€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰¥¹¡•É¥Ñ•µ•áÁ•É¥µ•¹Ğˆøñ‘¥ØøñÍÁ…¸ùaAI%59PIUMğ½ÍÁ…¸øñÍÑÉ½¹œùí¥¹¡•É¥Ñ•‘áÁ•É¥µ•¹Ñ9…µ•ôğ½ÍÑÉ½¹œøğ½‘¥ØøñÀùá…ĞÍ…µÁ±•Ì¥¹¡•É¥Ñ•™É½´€ñˆùí‘É…™ÑI•™•É•¹•…Í”¹µ•Ñ…‘…Ñ„¹¹…µ•ôğ½ˆø¸9¼•áÁ•É¥µ•¹ĞÉ”µÕÁ±½…¥Ì¹••‘•¸ğ½Àøğ½Í•Ñ¥½¸ø(€€€€€€€€€€€€€€è‘É…™Ñ=Á•É…Ñ¥¹A½¥¹Ğü¹•áÁ•É¥µ•¹Ğ€˜˜€…•‘¥Ñ¥¹…Í•%(€€€€€€€€€€€€€€€€ü€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰¥¹¡•É¥Ñ•µ•áÁ•É¥µ•¹Ğˆøñ‘¥ØøñÍÁ…¸ù5MUIaAI%59Pğ½ÍÁ…¸øñÍÑÉ½¹œùí‘É…™Ñ=Á•É…Ñ¥¹A½¥¹Ğ¹•áÁ•É¥µ•¹Ğ¹¥µÁ½ÉÑAÉ½Ù•¹…¹”ü¹™¥±•9…µ”€üü‘É…™Ñ=Á•É…Ñ¥¹A½¥¹Ğ¹¹…µ•ôğ½ÍÑÉ½¹œøğ½‘¥ØøñÀùáÁ•É¥µ•¹Ñ…°Í…µÁ±•Ì…É”¥¹¡•É¥Ñ•™É½´Ñ¡¥Ì½Á•É…Ñ¥¹œÁ½¥¹Ğ¸9¼É”µÕÁ±½…¥Ì¹••‘•¸ğ½Àøğ½Í•Ñ¥½¸ø(€€€€€€€€€€€€€€€€è€ñAÉ•ÍÍÕÉ•¥±•5…ÁÁ•È­•äõí•áÁ•É¥µ•¹Ğ´‘í•‘¥Ñ¥¹…Í•%€üü€‰¹•Ü‰ô´‘í‘É…™Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹±•¹Ñ¡õô­¥¹ô‰áÁ•É¥µ•¹Ğˆ•áÁ•Ñ•‘AÉ½‰•½Õ¹Ğõí‘É…™Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹±•¹Ñ¡ôÕÉÉ•¹Ñ¥±•9…µ”õí•‘¥Ñ¥¹…Í•%€ü…Í•Ì¹™¥¹ ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€ôôô•‘¥Ñ¥¹…Í•%¤ü¹Ñ•ÍÑM¥¹…±ÍlÁtü¹¹…µ”¹ÍÁ±¥Ğ ˆƒ
+Ü€ˆ¥lÁt€èÕ¹‘•™¥¹•‘ô½¹5…ÁÁ•õíÍ•ÑQ•ÍÑA•¹‘¥¹ô€¼ùô(€€€€€€€€€ì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€˜˜€ñAÉ•ÍÍÕÉ•¥±•5…ÁÁ•È­•äõí™´‘í•‘¥Ñ¥¹…Í•%€üü€‰¹•Ü‰ô´‘í‘É…™Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹±•¹Ñ¡ô´‘í‘É…™ÑI•±…Ñ¥½¹Í¡¥Àü¹É•™•É•¹•…Í•%€üü€‰ÍÑ…¹‘…±½¹”‰õô­¥¹ô‰ˆ•áÁ•Ñ•‘AÉ½‰•½Õ¹Ğõí‘É…™Ğ¹ÁÉ½‰•A½Í¥Ñ¥½¹Í•œ¹±•¹Ñ¡ôÕÉÉ•¹Ñ¥±•9…µ”õí•‘¥Ñ¥¹…Í•%€ü…Í•Ì¹™¥¹ ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€ôôô•‘¥Ñ¥¹…Í•%¤ü¹™‘M¥¹…±ÍlÁtü¹¹…µ”¹ÍÁ±¥Ğ ˆƒ
+Ü€ˆ¥lÁt€èÕ¹‘•™¥¹•‘ô½¹5…ÁÁ•õíÍ•Ñ™‘A•¹‘¥¹ô€¼ùô(€€€€€€€€ğ½‘¥Øø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÉ¥Ñİ¼µ•…ÍÕÉ•µ•¹Ğµ¡…¥¸ˆøñ±…‰•°øñÍÁ…¸ùáÁ•É¥µ•¹ĞÍ•¹Í½È‰…¹‘İ¥‘Ñ €¡­!è¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰•áÁ•É¥µ•¹ÑM•¹Í½É	…¹‘İ¥‘Ñ¡-!èˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹•áÁ•É¥µ•¹ÑM•¹Í½É	…¹‘İ¥‘Ñ¡-!è¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰•áÁ•É¥µ•¹ÑM•¹Í½É	…¹‘İ¥‘Ñ¡-!èˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùáÁ•É¥µ•¹Ğ±½ÜµÁ…ÍÌ€¼…¹Ñ¤µ…±¥…ÌÕÑ½™˜€¡­!è¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰•áÁ•É¥µ•¹Ñ¥±Ñ•ÉÕÑ½™™-!èˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹•áÁ•É¥µ•¹Ñ¥±Ñ•ÉÕÑ½™™-!è¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰•áÁ•É¥µ•¹Ñ¥±Ñ•ÉÕÑ½™™-!èˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øğ½‘¥Øø(€€€€€€ğ½‘¥Øø((€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆøñ Ìù=Á•É…Ñ¥¹œÁ½¥¹Ğğ½ ÌøñÀ±…ÍÍ9…µ”ô‰™½É´µ¡•±Àˆùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰¹Ñ•ÈÑ¡”Á¡åÍ¥…°Ñ•ÍĞ½¹‘¥Ñ¥½¸¸Q¡•Í”Ù…±Õ•Ì‘•™¥¹”½¹”µ…É­•È¥¸Ñ¡”µ•…ÍÕÉ••¹Ù•±½Á”¸ˆ€è€‰Q¡¥ÌÁ¡åÍ¥…°½¹‘¥Ñ¥½¸¥Ì¥¹¡•É¥Ñ•™É½´Ñ¡”µ•…ÍÕÉ•½Á•É…Ñ¥¹œÁ½¥¹Ğ…¹…¹¹½Ğ‰”¡…¹•‰ä„ÉÕ¸¸‰ôğ½Àøñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÉ¥™¥Ù”ˆøñ±…‰•°øñÍÁ…¸ù%¹±•Ğ€¼Á±•¹Õ´ÁÉ•ÍÍÕÉ”€¡‰…È¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰¥¹±•ÑAÉ•ÍÍÕÉ•	…Èˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹¥¹±•ÑAÉ•ÍÍÕÉ•	…È¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰¥¹±•ÑAÉ•ÍÍÕÉ•	…Èˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù5…ÍÌ™±½Ü€¡­œ½Ì¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰µ…ÍÍ±½İ-Lˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹µ…ÍÍ±½İ-L¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰µ…ÍÍ±½İ-Lˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùÅÕ¥Ù…±•¹”É…Ñ¥¼ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰•ÅÕ¥Ù…±•¹•I…Ñ¥¼ˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹•ÅÕ¥Ù…±•¹•I…Ñ¥¼¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰•ÅÕ¥Ù…±•¹•I…Ñ¥¼ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù	…¬ÁÉ•ÍÍÕÉ”€¡‰…È¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰‰…­AÉ•ÍÍÕÉ•	…Èˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹‰…­AÉ•ÍÍÕÉ•	…È¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰‰…­AÉ•ÍÍÕÉ•	…Èˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù%¹±•ĞÑ•µÁ•É…ÑÕÉ”€¡,¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰¥¹±•ÑQ•µÁ•É…ÑÕÉ•,ˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹¥¹±•ÑQ•µÁ•É…ÑÕÉ•,¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰¥¹±•ÑQ•µÁ•É…ÑÕÉ•,ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øğ½‘¥Øøğ½‘¥Øø((€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆøñ Ìùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰=ÁÑ¥½¹…°•¹¥¹”µÁ¡åÍ¥Ìµ•…ÍÕÉ•µ•¹ÑÌˆ€è€‰=ÁÑ¥½¹…°•¹¥¹”µÁ¡åÍ¥Ì½µÁ…É¥Í½¸‰ôğ½ ÌøñÀ±…ÍÍ9…µ”ô‰™½É´µ¡•±Àˆù‘½¹±ä‘½Õµ•¹Ñ•µ•…ÍÕÉ•µ•¹ÑÌ½È‘¥É•Ñ±ä…±Õ±…Ñ•Í½±Ù•È½ÕÑÁÕÑÌ¸5¥ÍÍ¥¹œÙ…±Õ•ÌÉ•µ…¥¸Õ¹…Ù…¥±…‰±”…¹‘¼¹½Ğ±½İ•ÈÑ¡”ÁÉ•ÍÍÕÉ”µ…¹µİ…Ù”É•ÍÕ±Ğ¸ğ½Àøñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÉ¥™½ÕÈˆùíA!eM%M}5MUI59Q}%9%Q%=9L¹™±…Ñ5…À ¡¥Ñ•´¤€ôøì(€€€€€€€½¹ÍĞ•áÁ•É¥µ•¹Ñ¥•±€ô€ñ±…‰•°­•äõí•áÁ•É¥µ•¹Ğ´‘í¥Ñ•´¹­•åõôøñÍÁ…¸ùáÁ•É¥µ•¹Ğí¥Ñ•´¹±…‰•°¹Ñ½1½İ•É…Í” ¥õí¥Ñ•´¹Õ¹¥Ğ€ü€€ ‘í¥Ñ•´¹Õ¹¥Ñô¥€€è€ˆ‰ôƒ
+Ü½ÁÑ¥½¹…°ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­•¡¥Ñ•´¹•áÁ•É¥µ•¹Ñ-•ä¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•Àô‰…¹äˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ñm¥Ñ•´¹•áÁ•É¥µ•¹Ñ-•åt…Ì¹Õµ‰•ÈğÕ¹‘•™¥¹•¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È¡¥Ñ•´¹•áÁ•É¥µ•¹Ñ-•ä°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øì(€€€€€€€¥˜€¡µ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ¤É•ÑÕÉ¸m•áÁ•É¥µ•¹Ñ¥•±‘tì(€€€€€€€½¹ÍĞ™‘¥•±€ô€ñ±…‰•°­•äõí™´‘í¥Ñ•´¹­•åõôøñÍÁ…¸ùí¥Ñ•´¹±…‰•°¹Ñ½1½İ•É…Í” ¥õí¥Ñ•´¹Õ¹¥Ğ€ü€€ ‘í¥Ñ•´¹Õ¹¥Ñô¥€€è€ˆ‰ôƒ
+Ü½ÁÑ¥½¹…°ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­•¡¥Ñ•´¹™‘-•ä¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•Àô‰…¹äˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ñm¥Ñ•´¹™‘-•åt…Ì¹Õµ‰•ÈğÕ¹‘•™¥¹•¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È¡¥Ñ•´¹™‘-•ä°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øì(€€€€€€€É•ÑÕÉ¸m•áÁ•É¥µ•¹Ñ¥•±°™‘¥•±‘tì(€€€€€ô¥ôğ½‘¥Øøğ½‘¥Øø((€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆøñ Ìù=ÁÑ¥½¹…°ÍÁ…Ñ¥…°İ…±°•Ù¥‘•¹”ğ½ ÌøñÀ±…ÍÍ9…µ”ô‰™½É´µ¡•±ÀˆùUÁ±½……á¥…°Á½Í¥Ñ¥½¸…¹¥ÉÕµ™•É•¹Ñ¥…°…¹±”İ¥Ñ İ…±°¡•…Ğ™±Õà°İ…±°Ñ•µÁ•É…ÑÕÉ”°½È‰½Ñ ¸-åÑ¡É½ÌÁ±½ÑÌ½¹±äµ…ÁÁ•Í…µÁ±•Ì…¹‘½•Ì¹½ĞÑÕÉ¸„Í…±…ÈÁ•…¬¥¹Ñ¼„™¥•±¸ğ½Àøñ‘¥Ø±…ÍÍ9…µ”õí™¥±”µµ…ÁÁ•ÈµÉ¥€‘íµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰Í¥¹±”ˆ€è€ˆ‰õôø(€€€€€€€íµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ(€€€€€€€€€€ü€ñMÁ…Ñ¥…±¥•±‘5…ÁÁ•È­¥¹ô‰áÁ•É¥µ•¹ĞˆÕÉÉ•¹Ñ¥±•9…µ”õí‘É…™Ñ9•İ=Á•É…Ñ¥¹A½¥¹Ğü¹•áÁ•É¥µ•¹Ğü¹İ…±±¥•±ü¹™¥±•9…µ•ô½¹5…ÁÁ•õíÍ•ÑQ•ÍÑ]…±±A•¹‘¥¹ô¼ø(€€€€€€€€€€è€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰¥¹¡•É¥Ñ•µ•áÁ•É¥µ•¹Ğˆøñ‘¥ØøñÍÁ…¸ùaAI%59P]10%1ğ½ÍÁ…¸øñÍÑÉ½¹œùí‘É…™Ñ=Á•É…Ñ¥¹A½¥¹Ğü¹•áÁ•É¥µ•¹Ğü¹İ…±±¥•±ü¹™¥±•9…µ”€üü…Ñ¥Ù•…Í”ü¹İ…±±¥•±‘Ìü¹•áÁ•É¥µ•¹Ğü¹™¥±•9…µ”€üü€‰9¼ÍÁ…Ñ¥…°•áÁ•É¥µ•¹Ğ™¥•±‰ôğ½ÍÑÉ½¹œøğ½‘¥ØøñÀùí‘É…™Ñ=Á•É…Ñ¥¹A½¥¹Ğü¹•áÁ•É¥µ•¹Ğü¹İ…±±¥•±ñğ…Ñ¥Ù•…Í”ü¹İ…±±¥•±‘Ìü¹•áÁ•É¥µ•¹Ğ€ü€‰%¹¡•É¥Ñ•™É½´Ñ¡”µ•…ÍÕÉ•½Á•É…Ñ¥¹œÁ½¥¹Ğ¸ˆ€è€‰9¼•áÁ•É¥µ•¹Ñ…°İ…±°µ…À¥Ì…Ù…¥±…‰±”ìÍ…±…È•Ù¥‘•¹”É•µ…¥¹ÌÍ•Á…É…Ñ”¸‰ôğ½Àøğ½Í•Ñ¥½¸ùô(€€€€€€€ì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€˜˜€ñMÁ…Ñ¥…±¥•±‘5…ÁÁ•È­¥¹ô‰ˆÕÉÉ•¹Ñ¥±•9…µ”õí•‘¥Ñ¥¹…Í•%€ü…Ñ¥Ù•…Í”ü¹İ…±±¥•±‘Ìü¹™ü¹™¥±•9…µ”€èÕ¹‘•™¥¹•‘ô½¹5…ÁÁ•õíÍ•Ñ™‘]…±±A•¹‘¥¹ô¼ùô€(€€€€€€ğ½‘¥Øøğ½‘¥Øø((€€€€€ì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆøñ ÌùM½±Ù•È€¬¹Õµ•É¥…°Í¡•µ•Ìğ½ Ìùì…½¹ÑÉ½±±•‘I•ÉÕ¹É…™Ğ€˜˜€…•‘¥Ñ¥¹…Í•%€˜˜€ñM½±Ù•É5…¹¥™•ÍÑ%µÁ½ÉÑ•Èµ•Ñ…‘…Ñ„õí‘É…™Ñô½¹ÁÁ±äõì¡Ù…±Õ•Ì¤€ôøÍ•ÑÉ…™Ğ ¡ÕÉÉ•¹Ğ¤€ôø€¡ì€¸¸¹ÕÉÉ•¹Ğ°€¸¸¹Ù…±Õ•Ìô¤¥ô€¼ùôñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÉ¥™½ÕÈˆøñ±…‰•°øñÍÁ…¸ùM½±Ù•Èğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰Í½±Ù•Èˆ¥ôÙ…±Õ”õí‘É…™Ğ¹Í½±Ù•Éô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰Í½±Ù•Èˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùY•ÉÍ¥½¸ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰Í½±Ù•ÉY•ÉÍ¥½¸ˆ¥ôÙ…±Õ”õí‘É…™Ğ¹Í½±Ù•ÉY•ÉÍ¥½¹ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰Í½±Ù•ÉY•ÉÍ¥½¸ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù¥µ•¹Í¥½¹…±¥Ñäğ½ÍÁ…¸øñÍ•±•Ğ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰‘¥µ•¹Í¥½¹…±¥Ñäˆ¥ôÙ…±Õ”õí‘É…™Ğ¹‘¥µ•¹Í¥½¹…±¥Ñåô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•ÑÉ…™Ğ ¡ÕÉÉ•¹Ğ¤€ôø€¡ì€¸¸¹ÕÉÉ•¹Ğ°‘¥µ•¹Í¥½¹…±¥Ñäè•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”…Ì¥µ•¹Í¥½¹…±¥Ñäô¤¥ôøñ½ÁÑ¥½¸Ù…±Õ”ôˆˆùM•±•Ğğ½½ÁÑ¥½¸øñ½ÁÑ¥½¸Ù…±Õ”ôˆÉˆøÉğ½½ÁÑ¥½¸øñ½ÁÑ¥½¸Ù…±Õ”ôˆÍˆøÍğ½½ÁÑ¥½¸øğ½Í•±•Ğøğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùIÕ¹Ñ¥µ”€¡¡½ÕÉÌ¤ƒ
+Ü½ÁÑ¥½¹…°ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰Í½±Ù•ÉIÕ¹Ñ¥µ•!½ÕÉÌˆ¥ôÑåÁ”ô‰¹Õµ‰•Èˆµ¥¸ôˆÀˆÍÑ•ÀôˆÀ¸ÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹Í½±Ù•ÉIÕ¹Ñ¥µ•!½ÕÉÌ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰Í½±Ù•ÉIÕ¹Ñ¥µ•!½ÕÉÌˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùMÁ…Ñ¥…°Í¡•µ”ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰ÍÁ…Ñ¥…±M¡•µ”ˆ¥ôÙ…±Õ”õí‘É…™Ğ¹ÍÁ…Ñ¥…±M¡•µ•ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰ÍÁ…Ñ¥…±M¡•µ”ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùMÁ…Ñ¥…°½É‘•Èğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰ÍÁ…Ñ¥…±=É‘•Èˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹ÍÁ…Ñ¥…±=É‘•È¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰ÍÁ…Ñ¥…±=É‘•Èˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù9Õµ•É¥…°™±Õàğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰¹Õµ•É¥…±±Õàˆ¥ôÙ…±Õ”õí‘É…™Ğ¹¹Õµ•É¥…±±Õáô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰¹Õµ•É¥…±±Õàˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù1¥µ¥Ñ•È€¼™¥±Ñ•È€¼‘¥ÍÍ¥Á…Ñ¥½¸ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰±¥µ¥Ñ•É¥±Ñ•Èˆ¥ôÁ±…•¡½±‘•Èô‰¹Ñ•È9½¹”¥˜Õ¹ÕÍ•ˆÙ…±Õ”õí‘É…™Ğ¹±¥µ¥Ñ•É¥±Ñ•Éô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰±¥µ¥Ñ•É¥±Ñ•Èˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùQ•µÁ½É…°Í¡•µ”ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰Ñ•µÁ½É…±M¡•µ”ˆ¥ôÙ…±Õ”õí‘É…™Ğ¹Ñ•µÁ½É…±M¡•µ•ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰Ñ•µÁ½É…±M¡•µ”ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùQ•µÁ½É…°½É‘•Èğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰Ñ•µÁ½É…±=É‘•Èˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹Ñ•µÁ½É…±=É‘•È¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰Ñ•µÁ½É…±=É‘•Èˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùQ¥µ”ÍÑ•À€£
+ÕÌ¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰Ñ¥µ•MÑ•ÁUÌˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹Ñ¥µ•MÑ•ÁUÌ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰Ñ¥µ•MÑ•ÁUÌˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù0ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰™°ˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹™°¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰™°ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øğ½‘¥Øøğ½‘¥Øùô((€€€€€ì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆøñ ÌùI•Í½±ÕÑ¥½¸€¬½¹Ù•É•¹”ğ½ Ìøñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÉ¥™½ÕÈˆøñ±…‰•°øñÍÁ…¸ùQ½Ñ…°µ•Í •±±Ìğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰µ•Í¡•±±Ìˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹µ•Í¡•±±Ì¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰µ•Í¡•±±Ìˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù5¥¹¥µÕ´™É½¹Ğ•±°€¡µ´¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰µ¥¹¥µÕµ•±±M¥é•5´ˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹µ¥¹¥µÕµ•±±M¥é•5´¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰µ¥¹¥µÕµ•±±M¥é•5´ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù•±±Ì€¼¥¹‘ÕÑ¥½¸±•¹Ñ ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰•±±ÍA•É%¹‘ÕÑ¥½¹1•¹Ñ ˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹•±±ÍA•É%¹‘ÕÑ¥½¹1•¹Ñ ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰•±±ÍA•É%¹‘ÕÑ¥½¹1•¹Ñ ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù9•…Èµİ…±°•±°€¡µ´¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰¹•…É]…±±•±±M¥é•5´ˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹¹•…É]…±±•±±M¥é•5´¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰¹•…É]…±±•±±M¥é•5´ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù½Õµ•¹Ñ•µ•Í µÍÑÕ‘ä¡…¹”€ ”¤ƒ
+Ü½ÁÑ¥½¹…°ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰µ•Í¡½¹Ù•É•¹•AĞˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹µ•Í¡½¹Ù•É•¹•AĞ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰µ•Í¡½¹Ù•É•¹•AĞˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù½Õµ•¹Ñ•Ñ¥µ”µÍÑ•ÀµÍÑÕ‘ä¡…¹”€ ”¤ƒ
+Ü½ÁÑ¥½¹…°ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰Ñ¥µ•MÑ•Á½¹Ù•É•¹•AĞˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹Ñ¥µ•MÑ•Á½¹Ù•É•¹•AĞ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰Ñ¥µ•MÑ•Á½¹Ù•É•¹•AĞˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øğ½‘¥Øøğ½‘¥Øùô((€€€€€ì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆøñ ÌùA¡åÍ¥Ì€¬‰½Õ¹‘…É¥•Ìğ½ Ìøñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÉ¥™½ÕÈˆøñ±…‰•°øñÍÁ…¸ù¡•µ¥…°µ•¡…¹¥Í´ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰¡•µ¥ÍÑÉå5½‘•°ˆ¥ôÙ…±Õ”õí‘É…™Ğ¹¡•µ¥ÍÑÉå5½‘•±ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰¡•µ¥ÍÑÉå5½‘•°ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùMÁ•¥•Ìğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰¡•µ¥ÍÑÉåMÁ•¥•Ìˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹¡•µ¥ÍÑÉåMÁ•¥•Ì¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰¡•µ¥ÍÑÉåMÁ•¥•Ìˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùI•…Ñ¥½¹Ìğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰¡•µ¥ÍÑÉåI•…Ñ¥½¹Ìˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹¡•µ¥ÍÑÉåI•…Ñ¥½¹Ì¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰¡•µ¥ÍÑÉåI•…Ñ¥½¹Ìˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù¡•µ¥ÍÑÉä¥¹Ñ•É…Ñ¥½¸ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰¡•µ¥ÍÑÉå%¹Ñ•É…Ñ½Èˆ¥ôÙ…±Õ”õí‘É…™Ğ¹¡•µ¥ÍÑÉå%¹Ñ•É…Ñ½Éô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰¡•µ¥ÍÑÉå%¹Ñ•É…Ñ½Èˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùQÕÉ‰Õ±•¹”µ½‘•°ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰ÑÕÉ‰Õ±•¹•5½‘•°ˆ¥ôÁ±…•¡½±‘•Èô‰¹Ñ•È9½¹”¥˜Õ¹ÕÍ•ˆÙ…±Õ”õí‘É…™Ğ¹ÑÕÉ‰Õ±•¹•5½‘•±ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰ÑÕÉ‰Õ±•¹•5½‘•°ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù½µ‰ÕÍÑ¥½¸µ½‘•°ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰½µ‰ÕÍÑ¥½¹5½‘•°ˆ¥ôÁ±…•¡½±‘•Èô‰¹Ñ•È9½¹”¥˜Õ¹ÕÍ•ˆÙ…±Õ”õí‘É…™Ğ¹½µ‰ÕÍÑ¥½¹5½‘•±ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰½µ‰ÕÍÑ¥½¹5½‘•°ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù]…±°Ñ¡•Éµ…°½¹‘¥Ñ¥½¸ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰İ…±±	½Õ¹‘…Éå½¹‘¥Ñ¥½¸ˆ¥ôÙ…±Õ”õí‘É…™Ğ¹İ…±±	½Õ¹‘…Éå½¹‘¥Ñ¥½¹ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰İ…±±	½Õ¹‘…Éå½¹‘¥Ñ¥½¸ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù%¹±•ĞÑÉ•…Ñµ•¹Ğğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰¥¹±•Ñ	½Õ¹‘…Éå½¹‘¥Ñ¥½¸ˆ¥ôÙ…±Õ”õí‘É…™Ğ¹¥¹±•Ñ	½Õ¹‘…Éå½¹‘¥Ñ¥½¹ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰¥¹±•Ñ	½Õ¹‘…Éå½¹‘¥Ñ¥½¸ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù%¹±•Ğ™½É¥¹œµ•Ñ¡½ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰¥¹±•Ñ½É¥¹5•Ñ¡½ˆ¥ôÙ…±Õ”õí‘É…™Ğ¹¥¹±•Ñ½É¥¹5•Ñ¡½‘ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰¥¹±•Ñ½É¥¹5•Ñ¡½ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ôÁ±…•¡½±‘•Èô‰9½¹”°Íå¹Ñ¡•Ñ¥Œ°½Èµ•…ÍÕÉ•¡¥ÍÑ½Éäˆ€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù=ÕÑ±•ĞÑÉ•…Ñµ•¹Ğğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰½ÕÑ±•Ñ	½Õ¹‘…Éå½¹‘¥Ñ¥½¸ˆ¥ôÙ…±Õ”õí‘É…™Ğ¹½ÕÑ±•Ñ	½Õ¹‘…Éå½¹‘¥Ñ¥½¹ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰½ÕÑ±•Ñ	½Õ¹‘…Éå½¹‘¥Ñ¥½¸ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ù%¹¥Ñ¥½¸€¼¥¹¥Ñ¥…±¥é…Ñ¥½¸ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰¥¹¥Ñ¥…±¥é…Ñ¥½¹5•Ñ¡½ˆ¥ôÙ…±Õ”õí‘É…™Ğ¹¥¹¥Ñ¥…±¥é…Ñ¥½¹5•Ñ¡½‘ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•Q•áĞ ‰¥¹¥Ñ¥…±¥é…Ñ¥½¹5•Ñ¡½ˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øğ½‘¥Øøğ½‘¥Øùô((€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÍ•Ñ¥½¸ˆøñ Ìùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰áÁ•É¥µ•¹ĞÕ¹•ÉÑ…¥¹Ñäˆ€è€‰áÁ•É¥µ•¹Ğ€¬Õ¹•ÉÑ…¥¹Ñä‰ôğ½ Ìøñ‘¥Ø±…ÍÍ9…µ”ô‰™½É´µÉ¥™½ÕÈˆøñ±…‰•°øñÍÁ…¸ùáÁ•É¥µ•¹ĞÁÉ•ÍÍÕÉ”Õ¹•ÉÑ…¥¹Ñä€ ”¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰ÁÉ•ÍÍÕÉ•U¹•ÉÑ…¥¹ÑåAĞˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹ÁÉ•ÍÍÕÉ•U¹•ÉÑ…¥¹ÑåAĞ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰ÁÉ•ÍÍÕÉ•U¹•ÉÑ…¥¹ÑåAĞˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùáÁ•É¥µ•¹ĞÑ¥µ¥¹œÕ¹•ÉÑ…¥¹Ñä€£
+ÕÌ¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™ĞñğÉ•ÉÕ¹¥•±‘1½­• ‰Ñ¥µ¥¹U¹•ÉÑ…¥¹ÑåUÌˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹Ñ¥µ¥¹U¹•ÉÑ…¥¹ÑåUÌ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰Ñ¥µ¥¹U¹•ÉÑ…¥¹ÑåUÌˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°ùì…µ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€˜˜€ğøñ±…‰•°øñÍÁ…¸ùÁÉ•ÍÍÕÉ”Õ¹•ÉÑ…¥¹Ñä€ ”¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰™‘AÉ•ÍÍÕÉ•U¹•ÉÑ…¥¹ÑåAĞˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹™‘AÉ•ÍÍÕÉ•U¹•ÉÑ…¥¹ÑåAĞ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰™‘AÉ•ÍÍÕÉ•U¹•ÉÑ…¥¹ÑåAĞˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øñ±…‰•°øñÍÁ…¸ùÑ¥µ¥¹œÕ¹•ÉÑ…¥¹Ñä€£
+ÕÌ¤ğ½ÍÁ…¸øñ¥¹ÁÕĞ‘¥Í…‰±•õíÉ•ÉÕ¹¥•±‘1½­• ‰™‘Q¥µ¥¹U¹•ÉÑ…¥¹ÑåUÌˆ¥ôÑåÁ”ô‰¹Õµ‰•ÈˆÍÑ•ÀôˆÀ¸ÀÄˆÙ…±Õ”õí¹Õµ‰•ÉY…±Õ”¡‘É…™Ğ¹™‘Q¥µ¥¹U¹•ÉÑ…¥¹ÑåUÌ¥ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÕÁ‘…Ñ•9Õµ‰•È ‰™‘Q¥µ¥¹U¹•ÉÑ…¥¹ÑåUÌˆ°•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øğ½±…‰•°øğ¼ùôğ½‘¥Øøğ½‘¥Øø((€€€€€í•ÉÉ½È€˜˜€ñÀ±…ÍÍ9…µ”ô‰•ÉÉ½Èµµ•ÍÍ…”ˆùí•ÉÉ½Éôğ½Àùôñ‘¥Ø±…ÍÍ9…µ”ô‰µ½‘…°µ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸Í•½¹‘…Éäˆ½¹±¥¬õì ¤€ôøÍ•ÑM¡½İ1½…‘•È¡™…±Í”¥ôù…¹•°ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸ÁÉ¥µ…Éäˆ½¹±¥¬õíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü…ÁÁ±å5•…ÍÕÉ•‘=Á•É…Ñ¥¹A½¥¹Ğ€è½¹ÑÉ½±±•‘I•ÉÕ¹É…™Ğ€üÉ•Ù¥•İI•ÉÕ¸€è…ÁÁ±å…Í•ôùíµ•…ÍÕÉ•‘A½¥¹ÑÉ…™Ğ€ü€‰‘µ•…ÍÕÉ•½Á•É…Ñ¥¹œÁ½¥¹ĞƒŠHˆ€è½¹ÑÉ½±±•‘I•ÉÕ¹É…™Ğ€ü€‰I•Ù¥•ÜÉ•ÉÕ¸ƒŠHˆ€è‘É…™ÑI•±…Ñ¥½¹Í¡¥À€ü€‰¹…±åé”É•ÉÕ¸ƒŠHˆ€è€‰¹…±åé”‰…Í•±¥¹”ƒŠH‰ôğ½‰ÕÑÑ½¸øğ½‘¥Øø(€€€€€€ğ¼ùô(€€€€ğ½Í•Ñ¥½¸øğ½‘¥Øùô((€€€íÍ¡½İ!•±À€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰µ½‘…°µ‰…­‘É½À¡•±Àµ‰…­‘É½ÀˆÉ½±”ô‰ÁÉ•Í•¹Ñ…Ñ¥½¸ˆ½¹5½ÕÍ•½İ¸õì ¤€ôøÍ•ÑM¡½İ!•±À¡™…±Í”¥ôøñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰¡•±Àµµ½‘…°ˆÉ½±”ô‰‘¥…±½œˆ…É¥„µµ½‘…°ô‰ÑÉÕ”ˆ…É¥„µ±…‰•±±•‘‰äô‰¡•±ÀµÑ¥Ñ±”ˆ½¹5½ÕÍ•½İ¸õì¡•Ù•¹Ğ¤€ôø•Ù•¹Ğ¹ÍÑ½ÁAÉ½Á……Ñ¥½¸ ¥ôø(€€€€€€ñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰±½Í”µ‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÍ•ÑM¡½İ!•±À¡™…±Í”¥ô…É¥„µ±…‰•°ô‰±½Í”-åÑ¡É½ÌÕ¥‘”ˆû\ğ½‰ÕÑÑ½¸øñÍÁ…¸±…ÍÍ9…µ”ô‰µ½‘…°µ­¥­•Èˆù-eQ!I=L]=I-1=\U%ğ½ÍÁ…¸øñ È¥ô‰¡•±ÀµÑ¥Ñ±”ˆù]¡…Ğ-åÑ¡É½Ì‘½•Ìğ½ ÈøñÀù-åÑ¡É½Ì½¹¹•ÑÌ…¸I‘•™¥¹¥Ñ¥½¸Ñ¼=Á•¹=4ÉÕ¹¹¥¹œ½¸Ñ¡”Í…µ”½µÁÕÑ•È°…¹…±åé•ÌÉ•ÑÕÉ¹•Í½±Ù•È½ÕÑÁÕÑÌ°…¹ÁÉ•Í•ÉÙ•Ì•… ½¹ÑÉ½±±•¥Ñ•É…Ñ¥½¸¸áÁ•É¥µ•¹Ñ…°‘…Ñ„…É”½ÁÑ¥½¹…°Õ¹Ñ¥°Á¡åÍ¥…°Ù…±¥‘…Ñ¥½¸¸ğ½Àø(€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡•±Àµİ½É­™±½Üˆ…É¥„µ±…‰•°ô‰-åÑ¡É½Ìİ½É­™±½Üˆøñ…ÉÑ¥±”øñˆøÄğ½ˆøñÍÑÉ½¹œù•Í¥¸ğ½ÍÑÉ½¹œøñÍÁ…¸ù•™¥¹”Ñ¡”•¹¥¹”…¹½Á•É…Ñ¥¹œÉ…¹”¸ğ½ÍÁ…¸øğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñˆøÈğ½ˆøñÍÑÉ½¹œùM•ĞÕÀ€Éğ½ÍÑÉ½¹œøñÍÁ…¸ù¡½½Í”„ÍÁ••ÁÉ•Í•Ğ…¹Á•É¥½‘¥Œ…Í”¸ğ½ÍÁ…¸øğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñˆøÌğ½ˆøñÍÑÉ½¹œùIÕ¸±½…±±äğ½ÍÑÉ½¹œøñÍÁ…¸ùá•ÕÑ”=Á•¹=4Ñ¡É½Õ Ñ¡”±½…±¡½ÍĞÉÕ¹¹•È¸ğ½ÍÁ…¸øğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñˆøĞğ½ˆøñÍÑÉ½¹œù¹…±åé”É•ÍÕ±Ğğ½ÍÑÉ½¹œøñÍÁ…¸ùI•ÑÕÉ¸½¹Ù•É•¹”°İ…Ù”°™••°…¹Ñ¡•Éµ…°½ÕÑÁÕÑÌ¸ğ½ÍÁ…¸øğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñˆøÔğ½ˆøñÍÑÉ½¹œù%µÁÉ½Ù”ğ½ÍÑÉ½¹œøñÍÁ…¸ùI•Ù¥•ÜÑ¡”•¹¥¹”¡…¹”…¹¹•áĞÍ¥µÕ±…Ñ¥½¸¸ğ½ÍÁ…¸øğ½…ÉÑ¥±”øğ½‘¥Øø(€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡•±Àµ‰½Õ¹‘…Éäˆøñ…ÉÑ¥±”øñÍÁ…¸ù-eQ!I=L=Lğ½ÍÁ…¸øñÍÑÉ½¹œùAÉ•Á…É”°•á•ÕÑ”°…¹ÑÉ…”ğ½ÍÑÉ½¹œøñÀù%Ğ•¹•É…Ñ•ÌÑ¡”…Í”°…±±ÌÑ¡”±½…°ÉÕ¹¹•È°‘¥ÍÁ±…åÌÉ•…°Í½±Ù•ÈÍÑ…ÑÕÌ…¹±½Ì°¥µÁ½ÉÑÌÑ¡”É•ÍÕ±Ğ°…¹™É••é•ÌÑ¡”¹•áĞ½¹ÑÉ½±±•¡…¹”¸ğ½Àøğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñÍÁ…¸ù=A9=4=Lğ½ÍÁ…¸øñÍÑÉ½¹œù…±Õ±…Ñ”½¸±½…°¡…É‘İ…É”ğ½ÍÑÉ½¹œøñÀùQ¡”½Á•¸µÍ½ÕÉ”Í½±Ù•ÈÕÍ•ÌÑ¡”½µÁÕÑ•ÈÉÕ¹¹¥¹œÑ¡”½µÁ…¹¥½¸Í•ÉÙ¥”°Í¼-åÑ¡É½Ì‘½•Ì¹½ĞÉ•ÅÕ¥É”„±½Õ½µÁÕÑ”…½Õ¹Ğ¸ğ½Àøğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñÍÁ…¸ù9%9HAAI=YLğ½ÍÁ…¸øñÍÑÉ½¹œùQ¡”Á¡åÍ¥…°Iµ½‘•°ğ½ÍÑÉ½¹œøñÀùÉ•…Ñ¥¹œÉÕ¸ÍÑ…åÌ‘¥Í…‰±•Õ¹Ñ¥°„É•Ù¥•İ•…Í”Ñ•µÁ±…Ñ”°Í½±Ù•È°…¹É•ÍÕ±Ğ…‘…ÁÑ•È•á¥ÍĞ¸á•ÕÑ¥½¸¥Ì¹½ĞÁÉ½½˜½˜Á¡åÍ¥…°…ÕÉ…ä¸ğ½Àøğ½…ÉÑ¥±”øğ½‘¥Øø(€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰¡•±Àµİ½É­ÍÁ…•Ìˆøñ Ìù¡½½Í”Ñ¡”İ½É­ÍÁ…”ğ½ Ìøñ‘¥Øøñ…ÉÑ¥±”øñÍÑÉ½¹œù•Í¥¸ğ½ÍÑÉ½¹œøñÀùÉ•…Ñ”½ÈÉ•Ù¥Í”Ñ¡”Á¡åÍ¥…°•¹¥¹”¸ğ½Àøğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñÍÑÉ½¹œøÉM¥µÕ±…Ñ¥½¸ğ½ÍÑÉ½¹œøñÀù¡½½Í”„ÁÉ•Í•Ğ°ÉÕ¸±½…±±ä½È•áÁ½ÉĞ°…¹…±åé”Ñ¡”É•ÍÕ±Ğ°…¹É••¥Ù”•¹¥¹”…¹…Ñ¥½¹Ì¸ğ½Àøğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñÍÑÉ½¹œù¹Ù•±½Á”ğ½ÍÑÉ½¹œøñÀùQÉ…¬Á±…¹¹•°µ½¹±ä°…¹µ•…ÍÕÉ•½¹‘¥Ñ¥½¹Ì¸ğ½Àøğ½…ÉÑ¥±”øñ…ÉÑ¥±”øñÍÑÉ½¹œùáÁ•É¥µ•¹ĞY…±¥‘…Ñ¥½¸ğ½ÍÑÉ½¹œøñÀù=ÁÑ¥½¹…±±ä½µÁ…É”İ¥Ñ ¡½Ğµ™¥É”‘…Ñ„İ¡•¸‰½Ñ •á¥ÍĞ¸ğ½Àøğ½…ÉÑ¥±”øğ½‘¥Øøğ½Í•Ñ¥½¸ø(€€€€€€ñ‘•Ñ…¥±Ì±…ÍÍ9…µ”ô‰¡•±Àµ¥¹ÁÕĞµÉ•™•É•¹”ˆ½Á•¸õíÍ¡½İ1½…‘•ÉôøñÍÕµµ…Éäù•Ñ…¥±•½Á•É…Ñ¥¹œµÁ½¥¹Ğ…¹¥¹ÁÕĞÉ•™•É•¹”ğ½ÍÕµµ…ÉäøñÀùUÍ”‘½Õµ•¹Ñ•Ù…±Õ•Ì¸-åÑ¡É½Ì±•…Ù•Ìµ¥ÍÍ¥¹œÍ•ÑÑ¥¹Ì…¹Õ¹•ÉÑ…¥¹ÑäÕ¹…Ù…¥±…‰±”É…Ñ¡•ÈÑ¡…¸¥¹™•ÉÉ¥¹œÑ¡•´¸ğ½Àøñ‘¥Ø±…ÍÍ9…µ”ô‰¡•±ÀµÉ½ÕÁÌˆùíM}%9AUQ}!1@¹µ…À ¡É½ÕÀ¤€ôø€ñÍ•Ñ¥½¸­•äõíÉ½ÕÀ¹Ñ¥Ñ±•ô±…ÍÍ9…µ”ô‰¡•±ÀµÉ½ÕÀˆøñ‘¥Øøñ ÌùíÉ½ÕÀ¹Ñ¥Ñ±•ôğ½ ÌøñÀùíÉ½ÕÀ¹‘•ÍÉ¥ÁÑ¥½¹ôğ½Àøğ½‘¥Øøñ‘°ùíÉ½ÕÀ¹¥Ñ•µÌ¹µ…À ¡¥Ñ•´¤€ôø€ñ‘¥Ø­•äõí¥Ñ•´¹­•åô±…ÍÍ9…µ”ô‰¡•±Àµ¥Ñ•´ˆøñ‘Ğùí¥Ñ•´¹±…‰•±ôñÍÁ…¸±…ÍÍ9…µ”õíÉ•ÅÕ¥É•µ•¹ĞµÑ…œ€‘í¥Ñ•´¹É•ÅÕ¥É•µ•¹Ğ¹Ñ½1½İ•É…Í” ¥õôùí¥Ñ•´¹É•ÅÕ¥É•µ•¹Ñôğ½ÍÁ…¸øğ½‘Ğøñ‘øñÀùí¥Ñ•´¹‘•™¥¹¥Ñ¥½¹ôğ½Àøñ‘¥Ø±…ÍÍ9…µ”ô‰¡•±Àµ‘•Ñ…¥±ÌˆøñÍÁ…¸øñˆù½Éµ…Ğ€¼Õ¹¥ÑÌğ½ˆùí¥Ñ•´¹™½Éµ…Ñôğ½ÍÁ…¸øñÍÁ…¸øñˆù]¡•É”Ñ¼™¥¹¥Ğğ½ˆùí¥Ñ•´¹½‰Ñ…¥¹É½µôğ½ÍÁ…¸øñÍÁ…¸øñˆùUÍ•™½Èğ½ˆùí¥Ñ•´¹ÕÍ•‘½Éôğ½ÍÁ…¸øñÍÁ…¸øñˆù%˜µ¥ÍÍ¥¹œğ½ˆùí¥Ñ•´¹µ¥ÍÍ¥¹™™•Ñôğ½ÍÁ…¸øğ½‘¥Øøğ½‘øğ½‘¥Øø¥ôğ½‘°øğ½Í•Ñ¥½¸ø¥ôğ½‘¥Øøğ½‘•Ñ…¥±Ìø(€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡•±Àµ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰‰ÕÑÑ½¸ÁÉ¥µ…Éäˆ½¹±¥¬õì ¤€ôøÍ•ÑM¡½İ!•±À¡™…±Í”¥ôùíÍ¡½İ1½…‘•È€ü€‰	…¬Ñ¼¥¹ÁÕÑÌˆ€è€‰±½Í”Õ¥‘”‰ôğ½‰ÕÑÑ½¸øğ½‘¥Øø(€€€€ğ½Í•Ñ¥½¸øğ½‘¥Øùô(€€ğ½µ…¥¸øì)ô

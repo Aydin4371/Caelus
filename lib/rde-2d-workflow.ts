@@ -203,6 +203,44 @@ ${points}
 `;
 }
 
+function meshControlDict() {
+  return `/* Kythros mesh-verification control dictionary.
+ * The local runner copies this file to system/controlDict only for blockMesh/checkMesh.
+ * A reacting-flow template must supply and review its own complete controlDict. */
+FoamFile
+{
+    format ascii;
+    class dictionary;
+    object controlDict;
+}
+application foamRun;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+purgeWrite 0;
+writeFormat ascii;
+writePrecision 10;
+writeCompression off;
+timeFormat general;
+timePrecision 10;
+runTimeModifiable true;
+`;
+}
+
+function kythrosRunControl(settings: Rde2dSettings) {
+  const deltaTSeconds = settings.timeStepNs * 1e-9;
+  const endTimeSeconds = settings.endTimeMs * 1e-3;
+  return `// Generated Kythros run-control values.
+// A reviewed reacting-flow controlDict may include this file explicitly.
+deltaT ${deltaTSeconds.toExponential(12)};
+endTime ${endTimeSeconds.toExponential(12)};
+`;
+}
+
 function resultTemplate(design: EngineDesign, condition: Rde2dCondition, settings: Rde2dSettings): Rde2dResultSummary {
   return {
     schema: "kythros-rde-2d-result",
@@ -261,6 +299,8 @@ export function buildRde2dPackage(design: EngineDesign, condition: Rde2dConditio
       { path: "README.md", purpose: "Scope, geometry, and mandatory review boundary", content: readme },
       { path: "kythros-case.json", purpose: "Traceable engine, operating-condition, and setup record", content: conditionJson },
       { path: "system/blockMeshDict", purpose: "Periodic 2D unwrapped mesh template", content: blockMeshDict(circumferenceMm * 1e-3, design.chamberLengthMm * 1e-3, nx, ny) },
+      { path: "system/controlDict.mesh", purpose: "Minimal control dictionary used only for local mesh verification", content: meshControlDict() },
+      { path: "system/kythrosRunControl", purpose: "Generated time-step and end-time values for an explicitly reviewed solver controlDict", content: kythrosRunControl(settings) },
       { path: "system/probes.template", purpose: "Circumferential pressure-probe template", content: probeFile(circumferenceMm * 1e-3, design.chamberLengthMm * 1e-3, probes) },
       { path: "kythros-result.template.json", purpose: "Solver-result summary to return to Kythros", content: JSON.stringify(resultTemplate(design, condition, settings), null, 2) },
     ],

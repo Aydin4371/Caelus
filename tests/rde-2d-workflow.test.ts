@@ -32,6 +32,8 @@ test("2D package unwraps the mean annulus and creates periodic mesh patches", ()
   assert.match(mesh, /type cyclic/);
   assert.match(mesh, /frontAndBack \{ type empty/);
   assert.match(mesh, /\(720 240 1\)/);
+  assert.ok(pkg.files.some((file) => file.path === "system/controlDict.mesh"));
+  assert.match(pkg.files.find((file) => file.path === "system/kythrosRunControl")?.content ?? "", /deltaT 5\.000000000000e-9/);
   assert.ok(pkg.files.some((file) => file.path === "kythros-result.template.json"));
 });
 

@@ -1,7 +1,16 @@
 "use client";
 
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import type { EngineDesign, OperatingPoint } from "@/lib/design-workspace";
+import {
+  cancelLocalRunnerJob,
+  createLocalRunnerJob,
+  getLocalRunnerHealth,
+  getLocalRunnerJob,
+  LOCAL_RUNNER_URL,
+  type LocalRunnerHealth,
+  type LocalRunnerJob,
+} from "@/lib/local-openfoam-runner";
 import {
   analyzeRde2dResult,
   buildRde2dPackage,
@@ -48,11 +57,16 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const [exported, setExported] = useState(false);
   const [result, setResult] = useState<Rde2dResultSummary | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
+  const [runnerHealth, setRunnerHealth] = useState<LocalRunnerHealth | null>(null);
+  const [runnerChecking, setRunnerChecking] = useState(false);
+  const [runnerError, setRunnerError] = useState<string | null>(null);
+  const [localJob, setLocalJob] = useState<LocalRunnerJob | null>(null);
   const condition = activeDesign ? points.find((point) => point.id === selectedPointId) ?? midpointCondition(activeDesign) : null;
   const packageData = activeDesign && condition ? buildRde2dPackage(activeDesign, condition, settings) : null;
   const recommendation = activeDesign && condition && result ? analyzeRde2dResult(activeDesign, condition, result) : null;
+  const jobActive = localJob?.status === "queued" || localJob?.status === "running";
 
-  const resetResult = () => { setResult(null); setResultError(null); setExported(false); };
+  const resetResult = () => { setResult(null); setResultError(null); setExported(false); setLocalJob(null); };
   const setDiscrete = (patch: Partial<Rde2dSettings>) => { setPresetId("custom"); setSettings((current) => ({ ...current, ...patch })); resetResult(); };
   const choosePreset = (id: Rde2dPresetId) => {
     setPresetId(id);
@@ -72,6 +86,41 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       event.target.value = "";
     }
   };
+  const refreshRunner = async () => {
+    setRunnerChecking(true);
+    try {
+      setRunnerHealth(await getLocalRunnerHealth());
+      setRunnerError(null);
+    } catch (error) {
+      setRunnerHealth(null);
+      setRunnerError(error instanceof Error ? error.message : "Kythros could not connect to the local runner.");
+    } finally {
+      setRunnerChecking(false);
+    }
+  };
+  const localJobId = localJob?.id;
+  const localJobStatus = localJob?.status;
+  useEffect(() => {
+    if (!localJobId || !localJobStatus || !["queued", "running"].includes(localJobStatus)) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await getLocalRunnerJob(localJobId);
+        setLocalJob(next);
+        setRunnerError(null);
+        if (next.status === "completed" && next.result) {
+          try {
+            setResult(parseRde2dResult(JSON.stringify(next.result)));
+            setResultError(null);
+          } catch (error) {
+            setResultError(error instanceof Error ? error.message : "The local result summary could not be analyzed.");
+          }
+        }
+      } catch (error) {
+        setRunnerError(error instanceof Error ? error.message : "Kythros lost contact with the local runner.");
+      }
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [localJobId, localJobStatus]);
 
   if (!activeDesign) return <section className="empty-workspace simulation-empty">
     <span className="empty-kicker">2D RDE DEVELOPMENT</span><h1>Define an engine before preparing CFD</h1>
@@ -85,22 +134,39 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const ratio = Math.min(5, Math.max(1.6, width / Math.max(height, 1)));
   const work = relativeRde2dWork(settings);
   const resultTemplate = pkg.files.find((file) => file.path === "kythros-result.template.json");
+  const startLocalJob = async (mode: LocalRunnerJob["mode"]) => {
+    setRunnerError(null);
+    setResultError(null);
+    try {
+      setLocalJob(await createLocalRunnerJob(mode, pkg));
+    } catch (error) {
+      setRunnerError(error instanceof Error ? error.message : "The local OpenFOAM job could not be started.");
+    }
+  };
+  const cancelLocalJob = async () => {
+    if (!localJob) return;
+    try {
+      setLocalJob(await cancelLocalRunnerJob(localJob.id));
+    } catch (error) {
+      setRunnerError(error instanceof Error ? error.message : "The local job could not be cancelled.");
+    }
+  };
 
   return <section className="simulation-workspace" aria-labelledby="simulation-title">
     <header className="simulation-heading">
-      <div><span className="workspace-label">2D RDE DEVELOPMENT</span><h1 id="simulation-title">Set up, run, and improve</h1><p>Use a fast preset, export the periodic chamber to your CFD solver, then return the solver summary. Kythros separates the next simulation change from the next engine-design change.</p></div>
-      <div className="simulation-stage"><span>1 · Design</span><strong>2 · Simulate</strong><span>3 · Import</span><span>4 · Improve</span></div>
+      <div><span className="workspace-label">2D RDE DEVELOPMENT</span><h1 id="simulation-title">Set up, run locally, and improve</h1><p>Use a fast preset, connect to OpenFOAM on this computer, and execute a traceable job. A completed result is analyzed into separate simulation and engine-design actions.</p></div>
+      <div className="simulation-stage"><span>1 · Design</span><strong>2 · Set up</strong><span>3 · Run</span><span>4 · Results</span><span>5 · Improve</span></div>
     </header>
 
     <div className="simulation-context-bar">
-      <label><span>Engine revision</span><select value={activeDesign.id} onChange={(event) => { onSelectDesign(event.target.value); setSelectedPointId("midpoint"); resetResult(); }}>{designs.map((design) => <option key={design.id} value={design.id}>{design.name}{design.revision ? ` · r${design.revision.number}` : ""}</option>)}</select></label>
-      <label><span>Operating condition</span><select value={selectedPointId} onChange={(event) => { setSelectedPointId(event.target.value); resetResult(); }}><option value="midpoint">Design-range midpoint</option>{points.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}</select></label>
+      <label><span>Engine revision</span><select disabled={jobActive} value={activeDesign.id} onChange={(event) => { onSelectDesign(event.target.value); setSelectedPointId("midpoint"); resetResult(); }}>{designs.map((design) => <option key={design.id} value={design.id}>{design.name}{design.revision ? ` · r${design.revision.number}` : ""}</option>)}</select></label>
+      <label><span>Operating condition</span><select disabled={jobActive} value={selectedPointId} onChange={(event) => { setSelectedPointId(event.target.value); resetResult(); }}><option value="midpoint">Design-range midpoint</option>{points.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}</select></label>
       <div><span>Condition</span><strong>ϕ {condition!.equivalenceRatio.toFixed(3)} · {condition!.massFlowKgS.toFixed(3)} kg/s · {condition!.inletPressureBar.toFixed(2)} bar</strong></div>
     </div>
 
     <section className="simulation-preset-card">
       <div><span>RUN PRESET</span><h2>Choose speed before editing details</h2><p>Presets change mesh, time step, duration, and probes together. The cost indicator is relative numerical work—not a wall-clock promise.</p></div>
-      <label><span>Simulation preset</span><select value={presetId} onChange={(event) => choosePreset(event.target.value as Rde2dPresetId)}>{RDE_2D_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.purpose}</option>)}<option value="custom">Custom settings</option></select></label>
+      <label><span>Simulation preset</span><select disabled={jobActive} value={presetId} onChange={(event) => choosePreset(event.target.value as Rde2dPresetId)}>{RDE_2D_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.purpose}</option>)}<option value="custom">Custom settings</option></select></label>
       <div className="simulation-cost"><span>RELATIVE WORK</span><strong>{Number.isFinite(work) ? `${work.toFixed(work < 0.1 ? 3 : 1)}×` : "—"}</strong><small>Refined preset = 1.0×</small></div>
     </section>
 
@@ -121,12 +187,12 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       <section className="simulation-setup-card">
         <div className="card-heading"><div><span>CASE SETUP</span><h2>Dropdowns for fast, repeatable setup</h2></div></div>
         <div className="simulation-form-grid">
-          <label className="wide"><span>Mesh level</span><select value={`${settings.circumferentialCells}x${settings.axialCells}`} onChange={(event) => { const [circumferentialCells, axialCells] = event.target.value.split("x").map(Number); setDiscrete({ circumferentialCells, axialCells }); }}><option value="180x60">Quick · 180 × 60</option><option value="360x120">Balanced · 360 × 120</option><option value="720x240">Refined · 720 × 240</option><option value="1080x360">Extra refined · 1080 × 360</option></select><small>{pkg.discretization.circumferentialCellSizeMm.toFixed(4)} × {pkg.discretization.axialCellSizeMm.toFixed(4)} mm nominal spacing</small></label>
-          <label><span>Time step</span><select value={settings.timeStepNs} onChange={(event) => setDiscrete({ timeStepNs: Number(event.target.value) })}><option value="20">20 ns · quick</option><option value="10">10 ns · balanced</option><option value="5">5 ns · refined</option><option value="2.5">2.5 ns · extra refined</option></select></label>
-          <label><span>Simulated duration</span><select value={settings.endTimeMs} onChange={(event) => setDiscrete({ endTimeMs: Number(event.target.value) })}><option value="0.25">0.25 ms · setup check</option><option value="0.5">0.50 ms · short development</option><option value="1">1.00 ms · standard</option><option value="2">2.00 ms · extended</option></select></label>
-          <label><span>Pressure probes</span><select value={settings.probeCount} onChange={(event) => setDiscrete({ probeCount: Number(event.target.value) })}><option value="4">4 · quick</option><option value="8">8 · standard</option><option value="12">12 · refined</option><option value="16">16 · dense</option></select></label>
-          <label><span>Solver handoff</span><select value={settings.solver} onChange={(event) => setDiscrete({ solver: event.target.value })}><option>OpenFOAM custom reacting-flow solver</option><option>Ansys Fluent</option><option>Simcenter STAR-CCM+</option><option>Other compressible reacting-flow solver</option></select></label>
-          <label className="wide"><span>Chemistry reference</span><select value={settings.chemistryMechanism} onChange={(event) => setDiscrete({ chemistryMechanism: event.target.value })}><option>Not supplied</option><option>Hydrogen-air mechanism · reference required</option><option>Hydrogen-oxygen mechanism · reference required</option><option>Methane-oxygen mechanism · reference required</option><option>Custom mechanism · document in solver</option></select></label>
+          <label className="wide"><span>Mesh level</span><select disabled={jobActive} value={`${settings.circumferentialCells}x${settings.axialCells}`} onChange={(event) => { const [circumferentialCells, axialCells] = event.target.value.split("x").map(Number); setDiscrete({ circumferentialCells, axialCells }); }}><option value="180x60">Quick · 180 × 60</option><option value="360x120">Balanced · 360 × 120</option><option value="720x240">Refined · 720 × 240</option><option value="1080x360">Extra refined · 1080 × 360</option></select><small>{pkg.discretization.circumferentialCellSizeMm.toFixed(4)} × {pkg.discretization.axialCellSizeMm.toFixed(4)} mm nominal spacing</small></label>
+          <label><span>Time step</span><select disabled={jobActive} value={settings.timeStepNs} onChange={(event) => setDiscrete({ timeStepNs: Number(event.target.value) })}><option value="20">20 ns · quick</option><option value="10">10 ns · balanced</option><option value="5">5 ns · refined</option><option value="2.5">2.5 ns · extra refined</option></select></label>
+          <label><span>Simulated duration</span><select disabled={jobActive} value={settings.endTimeMs} onChange={(event) => setDiscrete({ endTimeMs: Number(event.target.value) })}><option value="0.25">0.25 ms · setup check</option><option value="0.5">0.50 ms · short development</option><option value="1">1.00 ms · standard</option><option value="2">2.00 ms · extended</option></select></label>
+          <label><span>Pressure probes</span><select disabled={jobActive} value={settings.probeCount} onChange={(event) => setDiscrete({ probeCount: Number(event.target.value) })}><option value="4">4 · quick</option><option value="8">8 · standard</option><option value="12">12 · refined</option><option value="16">16 · dense</option></select></label>
+          <label><span>Solver</span><select disabled={jobActive} value={settings.solver} onChange={(event) => setDiscrete({ solver: event.target.value })}><option>OpenFOAM custom reacting-flow solver</option><option>Ansys Fluent · export only</option><option>Simcenter STAR-CCM+ · export only</option><option>Other compressible reacting-flow solver · export only</option></select></label>
+          <label className="wide"><span>Chemistry reference</span><select disabled={jobActive} value={settings.chemistryMechanism} onChange={(event) => setDiscrete({ chemistryMechanism: event.target.value })}><option>Not supplied</option><option>Hydrogen-air mechanism · reference required</option><option>Hydrogen-oxygen mechanism · reference required</option><option>Methane-oxygen mechanism · reference required</option><option>Custom mechanism · document in solver</option></select></label>
         </div>
       </section>
     </div>
@@ -138,10 +204,32 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       {exported && <div className="simulation-next-step"><span>NEXT STEP</span><strong>Run the case in the selected CFD solver.</strong><p>Complete the result template with solver-derived values, then import it directly below. Experimental data are not required for this design-iteration screen.</p></div>}
     </section>
 
+    <section className="local-runner-card" aria-labelledby="local-runner-title">
+      <div className="local-runner-heading">
+        <div><span>LOCAL EXECUTION</span><h2 id="local-runner-title">OpenFOAM on this computer</h2><p>Kythros sends this exact case to a runner bound to localhost. The runner launches real OpenFOAM commands; it never substitutes generated CFD values.</p></div>
+        <div className={`runner-badge ${runnerHealth?.status ?? "offline"}`}><i />{runnerChecking ? "Checking…" : runnerHealth?.status === "ready" ? "Reacting CFD ready" : runnerHealth?.status === "partial" ? "Mesh check ready" : "Runner offline"}</div>
+      </div>
+      <div className="local-runner-grid">
+        <div className="runner-connection">
+          <span>RUNNER ADDRESS</span><strong>{LOCAL_RUNNER_URL}</strong>
+          <p>{runnerHealth?.message ?? "Start the local companion inside an initialized OpenFOAM shell, then check again."}</p>
+          <div className="runner-command"><code>npm run runner:check</code><code>npm run runner:start</code></div>
+          <div className="simulation-actions"><button className="button secondary" onClick={() => void refreshRunner()} disabled={runnerChecking || jobActive}>{runnerChecking ? "Checking…" : "Check connection"}</button><button className="button secondary" disabled={!pkg.readiness.exportReady || !runnerHealth?.capabilities.meshVerification || jobActive} onClick={() => void startLocalJob("mesh-verification")}>Verify mesh locally</button><button className="button primary" disabled={!pkg.readiness.exportReady || !runnerHealth?.capabilities.reactingCfd || jobActive || !settings.solver.startsWith("OpenFOAM")} onClick={() => void startLocalJob("reacting-cfd")}>Run reacting CFD locally</button>{jobActive && <button className="button danger" onClick={() => void cancelLocalJob()}>Cancel run</button>}</div>
+          {runnerError && <p className="runner-error" role="alert">{runnerError}</p>}
+        </div>
+        <div className="runner-boundary">
+          <span>READINESS BOUNDARY</span>
+          <dl><div><dt>Generated mesh</dt><dd>{runnerHealth?.capabilities.meshVerification ? "OpenFOAM can generate and check it" : "OpenFOAM commands not detected"}</dd></div><div><dt>Reacting solver</dt><dd>{runnerHealth?.openfoam.solverConfigured ? runnerHealth.openfoam.solverName : "Not configured"}</dd></div><div><dt>Reviewed RDE template</dt><dd>{runnerHealth?.openfoam.templateConfigured ? "Configured" : "Not configured"}</dd></div><div><dt>Result adapter</dt><dd>{runnerHealth?.openfoam.postprocessorConfigured ? "Configured" : "Not configured"}</dd></div></dl>
+          <p>Reacting CFD stays disabled until all four checks pass. Passing them proves the software pipeline executes; it does not validate the physical RDE model.</p>
+        </div>
+      </div>
+      {localJob && <div className={`runner-job ${localJob.status}`} aria-live="polite"><div><span>LOCAL JOB · {localJob.mode.replace("-", " ")}</span><strong>{localJob.stage.replaceAll("-", " ")}</strong><p>{localJob.message}</p></div><small>{localJob.id}</small>{localJob.logs.length > 0 && <details><summary>Open solver log ({localJob.logs.length} lines retained)</summary><pre>{localJob.logs.map((entry) => `[${entry.source}] ${entry.line}`).join("\n")}</pre></details>}</div>}
+    </section>
+
     <section className="simulation-results-card" aria-labelledby="simulation-results-title">
-      <div className="simulation-results-heading"><div><span>2D RESULT</span><h2 id="simulation-results-title">Import the solver result and decide what changes next</h2><p>This is the result stage for 2D development. Experiment Validation is a separate, optional check against hot-fire data.</p></div><label className="result-upload button primary">Import 2D result JSON<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
+      <div className="simulation-results-heading"><div><span>2D RESULT</span><h2 id="simulation-results-title">Review the computed result and decide what changes next</h2><p>A configured local run returns its result automatically. Manual JSON import remains available for another solver or computer.</p></div><label className="result-upload button secondary">Import result manually<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
       {resultError && <div className="simulation-result-error" role="alert">{resultError}</div>}
-      {!result || !recommendation ? <div className="simulation-result-empty"><strong>No 2D solver result imported</strong><p>Kythros will not recommend an engine change from geometry alone. Import a result containing convergence, mesh/time-step checks, propagation mode, injector backflow, and thermal outputs.</p><div><span>1 · Export case</span><span>2 · Run externally</span><span>3 · Import result</span><span>4 · Review engine change</span></div></div> : <>
+      {!result || !recommendation ? <div className="simulation-result-empty"><strong>No reacting-flow result yet</strong><p>A mesh verification does not contain engine physics. Run a configured reacting case locally or import a solver summary containing convergence, mesh/time-step checks, propagation mode, injector backflow, and thermal outputs.</p><div><span>1 · Connect runner</span><span>2 · Execute OpenFOAM</span><span>3 · Analyze result</span><span>4 · Review engine change</span></div></div> : <>
         <div className="simulation-result-kpis"><span><small>Solver</small><strong>{result.solverName}</strong></span><span><small>Mode</small><strong>{result.propagationMode.replace("-", " ")}</strong></span><span><small>Frequency</small><strong>{formatMetric(result.dominantFrequencyKHz, " kHz")}</strong></span><span><small>Backflow</small><strong>{formatMetric(result.injectorBackflowPct, "%")}</strong></span><span><small>Wall heat flux</small><strong>{formatMetric(result.peakWallHeatFluxMWm2, " MW/m²")}</strong></span></div>
         <div className={`simulation-result-status ${recommendation.resultUsable ? "usable" : "blocked"}`}><strong>{recommendation.resultUsable ? "Numerical gates passed" : "Engine recommendation blocked"}</strong><p>{recommendation.resultUsable ? "Kythros can use this solver summary for a provisional design decision. Physical validation still requires experiment." : recommendation.pairingIssues[0] ?? recommendation.numericalIssues[0]}</p></div>
         <div className="simulation-recommendation-grid">
