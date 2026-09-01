@@ -60,6 +60,7 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const [runnerHealth, setRunnerHealth] = useState<LocalRunnerHealth | null>(null);
   const [runnerChecking, setRunnerChecking] = useState(false);
   const [runnerError, setRunnerError] = useState<string | null>(null);
+  const [runnerSetupOpen, setRunnerSetupOpen] = useState(false);
   const [localJob, setLocalJob] = useState<LocalRunnerJob | null>(null);
   const condition = activeDesign ? points.find((point) => point.id === selectedPointId) ?? midpointCondition(activeDesign) : null;
   const packageData = activeDesign && condition ? buildRde2dPackage(activeDesign, condition, settings) : null;
@@ -89,11 +90,14 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const refreshRunner = async () => {
     setRunnerChecking(true);
     try {
-      setRunnerHealth(await getLocalRunnerHealth());
+      const health = await getLocalRunnerHealth();
+      setRunnerHealth(health);
       setRunnerError(null);
+      return health;
     } catch (error) {
       setRunnerHealth(null);
       setRunnerError(error instanceof Error ? error.message : "Kythros could not connect to the local runner.");
+      return null;
     } finally {
       setRunnerChecking(false);
     }
@@ -143,6 +147,20 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       setRunnerError(error instanceof Error ? error.message : "The local OpenFOAM job could not be started.");
     }
   };
+  const runReactingCfd = async () => {
+    setRunnerError(null);
+    setRunnerSetupOpen(false);
+    if (!pkg.readiness.exportReady || !settings.solver.startsWith("OpenFOAM")) {
+      setRunnerSetupOpen(true);
+      return;
+    }
+    const health = await refreshRunner();
+    if (!health?.capabilities.reactingCfd) {
+      setRunnerSetupOpen(true);
+      return;
+    }
+    await startLocalJob("reacting-cfd");
+  };
   const cancelLocalJob = async () => {
     if (!localJob) return;
     try {
@@ -151,6 +169,15 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       setRunnerError(error instanceof Error ? error.message : "The local job could not be cancelled.");
     }
   };
+  const runnerSetupItems = [
+    { label: "2D case package is ready", ready: pkg.readiness.exportReady, detail: pkg.readiness.exportReady ? "Geometry and run settings are complete" : pkg.readiness.blockingIssues[0] },
+    { label: "OpenFOAM is the selected solver", ready: settings.solver.startsWith("OpenFOAM"), detail: settings.solver.startsWith("OpenFOAM") ? settings.solver : "Choose OpenFOAM in Case setup" },
+    { label: "Local runner is reachable", ready: runnerHealth !== null, detail: runnerHealth ? LOCAL_RUNNER_URL : "Start the local companion, then check again" },
+    { label: "Mesh commands are available", ready: Boolean(runnerHealth?.openfoam.blockMesh && runnerHealth?.openfoam.checkMesh), detail: "blockMesh and checkMesh" },
+    { label: "Reviewed RDE template is configured", ready: Boolean(runnerHealth?.openfoam.templateConfigured), detail: "Set KYTHROS_OPENFOAM_TEMPLATE" },
+    { label: "Reacting solver is configured", ready: Boolean(runnerHealth?.openfoam.solverConfigured), detail: runnerHealth?.openfoam.solverName ?? "Set KYTHROS_OPENFOAM_SOLVER" },
+    { label: "Result adapter is configured", ready: Boolean(runnerHealth?.openfoam.postprocessorConfigured), detail: "Set KYTHROS_OPENFOAM_POSTPROCESSOR" },
+  ];
 
   return <section className="simulation-workspace" aria-labelledby="simulation-title">
     <header className="simulation-heading">
@@ -214,15 +241,19 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
           <span>RUNNER ADDRESS</span><strong>{LOCAL_RUNNER_URL}</strong>
           <p>{runnerHealth?.message ?? "Start the local companion inside an initialized OpenFOAM shell, then check again."}</p>
           <div className="runner-command"><code>npm run runner:check</code><code>npm run runner:start</code></div>
-          <div className="simulation-actions"><button className="button secondary" onClick={() => void refreshRunner()} disabled={runnerChecking || jobActive}>{runnerChecking ? "Checking…" : "Check connection"}</button><button className="button secondary" disabled={!pkg.readiness.exportReady || !runnerHealth?.capabilities.meshVerification || jobActive} onClick={() => void startLocalJob("mesh-verification")}>Verify mesh locally</button><button className="button primary" disabled={!pkg.readiness.exportReady || !runnerHealth?.capabilities.reactingCfd || jobActive || !settings.solver.startsWith("OpenFOAM")} onClick={() => void startLocalJob("reacting-cfd")}>Run reacting CFD locally</button>{jobActive && <button className="button danger" onClick={() => void cancelLocalJob()}>Cancel run</button>}</div>
+          <div className="simulation-actions"><button className="button secondary" onClick={() => void refreshRunner()} disabled={runnerChecking || jobActive}>{runnerChecking ? "Checking…" : "Check connection"}</button><button className="button secondary" disabled={!pkg.readiness.exportReady || !runnerHealth?.capabilities.meshVerification || jobActive} onClick={() => void startLocalJob("mesh-verification")}>Verify mesh locally</button><button className="button primary" disabled={runnerChecking || jobActive} aria-expanded={runnerSetupOpen} aria-controls="local-runner-setup" onClick={() => void runReactingCfd()}>{runnerChecking ? "Checking local setup…" : "Run reacting CFD locally"}</button>{jobActive && <button className="button danger" onClick={() => void cancelLocalJob()}>Cancel run</button>}</div>
           {runnerError && <p className="runner-error" role="alert">{runnerError}</p>}
         </div>
         <div className="runner-boundary">
           <span>READINESS BOUNDARY</span>
           <dl><div><dt>Generated mesh</dt><dd>{runnerHealth?.capabilities.meshVerification ? "OpenFOAM can generate and check it" : "OpenFOAM commands not detected"}</dd></div><div><dt>Reacting solver</dt><dd>{runnerHealth?.openfoam.solverConfigured ? runnerHealth.openfoam.solverName : "Not configured"}</dd></div><div><dt>Reviewed RDE template</dt><dd>{runnerHealth?.openfoam.templateConfigured ? "Configured" : "Not configured"}</dd></div><div><dt>Result adapter</dt><dd>{runnerHealth?.openfoam.postprocessorConfigured ? "Configured" : "Not configured"}</dd></div></dl>
-          <p>Reacting CFD stays disabled until all four checks pass. Passing them proves the software pipeline executes; it does not validate the physical RDE model.</p>
+          <p>The Run button checks these requirements every time. Execution begins as soon as they pass; otherwise Kythros shows the exact missing setup.</p>
         </div>
       </div>
+      {runnerSetupOpen && <section id="local-runner-setup" className="runner-setup" aria-live="polite">
+        <div className="runner-setup-heading"><div><span>LOCAL SETUP</span><h3>Finish these items, then run</h3><p>Kythros will start the real OpenFOAM job automatically after every required item passes.</p></div><button className="button secondary" disabled={runnerChecking || jobActive} onClick={() => void runReactingCfd()}>{runnerChecking ? "Checking…" : "Check again and run"}</button></div>
+        <ul>{runnerSetupItems.map((item) => <li key={item.label} className={item.ready ? "ready" : "missing"}><i aria-hidden="true">{item.ready ? "✓" : "•"}</i><span><strong>{item.label}</strong><small>{item.detail}</small></span></li>)}</ul>
+      </section>}
       {localJob && <div className={`runner-job ${localJob.status}`} aria-live="polite"><div><span>LOCAL JOB · {localJob.mode.replace("-", " ")}</span><strong>{localJob.stage.replaceAll("-", " ")}</strong><p>{localJob.message}</p></div><small>{localJob.id}</small>{localJob.logs.length > 0 && <details><summary>Open solver log ({localJob.logs.length} lines retained)</summary><pre>{localJob.logs.map((entry) => `[${entry.source}] ${entry.line}`).join("\n")}</pre></details>}</div>}
     </section>
 

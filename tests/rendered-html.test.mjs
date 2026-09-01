@@ -91,6 +91,10 @@ test("connects design, 2D simulation, operating envelopes, and validation", asyn
   assert.match(page, /Detailed operating-point and CFD input reference/);
   assert.match(page, /Experiment Validation/);
   assert.match(simulation, /Run reacting CFD locally/);
+  assert.match(simulation, /runReactingCfd/);
+  assert.match(simulation, /Finish these items, then run/);
+  assert.match(simulation, /Check again and run/);
+  assert.doesNotMatch(simulation, /disabled=\{!pkg\.readiness\.exportReady \|\| !runnerHealth\?\.capabilities\.reactingCfd/);
   assert.match(simulation, /Verify mesh locally/);
   assert.match(simulation, /never substitutes generated CFD values/);
   assert.match(simulationLogic, /system\/controlDict\.mesh/);
