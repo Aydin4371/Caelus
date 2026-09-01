@@ -15,9 +15,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "validate:artifact": "bash scripts/validate-artifact.sh",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
-    "runner:start": "node runner/server.mjs",
-    "runner:check": "node runner/check-runtime.mjs"
+    "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

@@ -3,14 +3,14 @@
 import { ChangeEvent, useEffect, useState } from "react";
 import type { EngineDesign, OperatingPoint } from "@/lib/design-workspace";
 import {
-  cancelLocalRunnerJob,
-  createLocalRunnerJob,
-  getLocalRunnerHealth,
-  getLocalRunnerJob,
-  LOCAL_RUNNER_URL,
-  type LocalRunnerHealth,
-  type LocalRunnerJob,
-} from "@/lib/local-openfoam-runner";
+  cancelCloudRunnerJob,
+  createCloudRunnerJob,
+  getCloudRunnerHealth,
+  getCloudRunnerJob,
+  type CloudComputeTier,
+  type CloudRunnerHealth,
+  type CloudRunnerJob,
+} from "@/lib/cloud-openfoam-runner";
 import {
   analyzeRde2dResult,
   buildRde2dPackage,
@@ -48,6 +48,12 @@ function formatMetric(value: number | null, unit = "") {
   return value === null || !Number.isFinite(value) ? "Not reported" : `${value.toFixed(Math.abs(value) >= 100 ? 1 : 2)}${unit}`;
 }
 
+const CLOUD_TIER_OPTIONS: Array<Pick<CloudComputeTier, "id" | "label" | "vcpu" | "memoryGiB">> = [
+  { id: "quick", label: "Quick", vcpu: 2, memoryGiB: 8 },
+  { id: "balanced", label: "Balanced", vcpu: 4, memoryGiB: 16 },
+  { id: "refined", label: "Refined", vcpu: 8, memoryGiB: 32 },
+];
+
 export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSelectDesign, onOpenDesign, onOpenEnvelope, onOpenValidation }: Props) {
   const activeDesign = designs.find((item) => item.id === activeDesignId) ?? designs.at(-1) ?? null;
   const points = activeDesign ? operatingPoints.filter((point) => point.designId === activeDesign.id) : [];
@@ -57,17 +63,17 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const [exported, setExported] = useState(false);
   const [result, setResult] = useState<Rde2dResultSummary | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
-  const [runnerHealth, setRunnerHealth] = useState<LocalRunnerHealth | null>(null);
-  const [runnerChecking, setRunnerChecking] = useState(false);
-  const [runnerError, setRunnerError] = useState<string | null>(null);
-  const [runnerSetupOpen, setRunnerSetupOpen] = useState(false);
-  const [localJob, setLocalJob] = useState<LocalRunnerJob | null>(null);
+  const [cloudTier, setCloudTier] = useState<CloudComputeTier["id"]>("balanced");
+  const [cloudHealth, setCloudHealth] = useState<CloudRunnerHealth | null>(null);
+  const [cloudChecking, setCloudChecking] = useState(false);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const [cloudJob, setCloudJob] = useState<CloudRunnerJob | null>(null);
   const condition = activeDesign ? points.find((point) => point.id === selectedPointId) ?? midpointCondition(activeDesign) : null;
   const packageData = activeDesign && condition ? buildRde2dPackage(activeDesign, condition, settings) : null;
   const recommendation = activeDesign && condition && result ? analyzeRde2dResult(activeDesign, condition, result) : null;
-  const jobActive = localJob?.status === "queued" || localJob?.status === "running";
+  const jobActive = cloudJob?.status === "queued" || cloudJob?.status === "running" || cloudJob?.status === "cancelling";
 
-  const resetResult = () => { setResult(null); setResultError(null); setExported(false); setLocalJob(null); };
+  const resetResult = () => { setResult(null); setResultError(null); setExported(false); setCloudJob(null); };
   const setDiscrete = (patch: Partial<Rde2dSettings>) => { setPresetId("custom"); setSettings((current) => ({ ...current, ...patch })); resetResult(); };
   const choosePreset = (id: Rde2dPresetId) => {
     setPresetId(id);
@@ -87,44 +93,44 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       event.target.value = "";
     }
   };
-  const refreshRunner = async () => {
-    setRunnerChecking(true);
+  const refreshCloud = async () => {
+    setCloudChecking(true);
     try {
-      const health = await getLocalRunnerHealth();
-      setRunnerHealth(health);
-      setRunnerError(null);
+      const health = await getCloudRunnerHealth();
+      setCloudHealth(health);
+      setCloudError(null);
       return health;
     } catch (error) {
-      setRunnerHealth(null);
-      setRunnerError(error instanceof Error ? error.message : "Kythros could not connect to the local runner.");
+      setCloudHealth(null);
+      setCloudError(error instanceof Error ? error.message : "Kythros could not connect to cloud execution.");
       return null;
     } finally {
-      setRunnerChecking(false);
+      setCloudChecking(false);
     }
   };
-  const localJobId = localJob?.id;
-  const localJobStatus = localJob?.status;
+  const cloudJobId = cloudJob?.id;
+  const cloudJobStatus = cloudJob?.status;
   useEffect(() => {
-    if (!localJobId || !localJobStatus || !["queued", "running"].includes(localJobStatus)) return;
+    if (!cloudJobId || !cloudJobStatus || !["queued", "running", "cancelling"].includes(cloudJobStatus)) return;
     const timer = window.setInterval(async () => {
       try {
-        const next = await getLocalRunnerJob(localJobId);
-        setLocalJob(next);
-        setRunnerError(null);
+        const next = await getCloudRunnerJob(cloudJobId);
+        setCloudJob(next);
+        setCloudError(null);
         if (next.status === "completed" && next.result) {
           try {
             setResult(parseRde2dResult(JSON.stringify(next.result)));
             setResultError(null);
           } catch (error) {
-            setResultError(error instanceof Error ? error.message : "The local result summary could not be analyzed.");
+            setResultError(error instanceof Error ? error.message : "The cloud result summary could not be analyzed.");
           }
         }
       } catch (error) {
-        setRunnerError(error instanceof Error ? error.message : "Kythros lost contact with the local runner.");
+        setCloudError(error instanceof Error ? error.message : "Kythros lost contact with the cloud job.");
       }
-    }, 1200);
+    }, 2500);
     return () => window.clearInterval(timer);
-  }, [localJobId, localJobStatus]);
+  }, [cloudJobId, cloudJobStatus]);
 
   if (!activeDesign) return <section className="empty-workspace simulation-empty">
     <span className="empty-kicker">2D RDE DEVELOPMENT</span><h1>Define an engine before preparing CFD</h1>
@@ -138,50 +144,34 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const ratio = Math.min(5, Math.max(1.6, width / Math.max(height, 1)));
   const work = relativeRde2dWork(settings);
   const resultTemplate = pkg.files.find((file) => file.path === "kythros-result.template.json");
-  const startLocalJob = async (mode: LocalRunnerJob["mode"]) => {
-    setRunnerError(null);
+  const runCloudCfd = async () => {
+    setCloudError(null);
     setResultError(null);
     try {
-      setLocalJob(await createLocalRunnerJob(mode, pkg));
+      if (!pkg.readiness.exportReady) throw new Error(pkg.readiness.blockingIssues[0] ?? "Complete the 2D case setup before running.");
+      if (!settings.solver.startsWith("OpenFOAM")) throw new Error("Choose OpenFOAM in Case setup before starting a managed cloud job.");
+      const health = await refreshCloud();
+      const selected = health?.tiers.find((tier) => tier.id === cloudTier);
+      if (!health || health.status !== "ready") throw new Error(health?.message ?? "Cloud execution is not available.");
+      if (!selected?.available) throw new Error(`${selected?.label ?? cloudTier} cloud compute is not available.`);
+      setCloudJob(await createCloudRunnerJob(cloudTier, pkg));
     } catch (error) {
-      setRunnerError(error instanceof Error ? error.message : "The local OpenFOAM job could not be started.");
+      setCloudError(error instanceof Error ? error.message : "The Google Cloud OpenFOAM job could not be started.");
     }
   };
-  const runReactingCfd = async () => {
-    setRunnerError(null);
-    setRunnerSetupOpen(false);
-    if (!pkg.readiness.exportReady || !settings.solver.startsWith("OpenFOAM")) {
-      setRunnerSetupOpen(true);
-      return;
-    }
-    const health = await refreshRunner();
-    if (!health?.capabilities.reactingCfd) {
-      setRunnerSetupOpen(true);
-      return;
-    }
-    await startLocalJob("reacting-cfd");
-  };
-  const cancelLocalJob = async () => {
-    if (!localJob) return;
+  const cancelCloudJob = async () => {
+    if (!cloudJob) return;
     try {
-      setLocalJob(await cancelLocalRunnerJob(localJob.id));
+      setCloudJob(await cancelCloudRunnerJob(cloudJob.id));
     } catch (error) {
-      setRunnerError(error instanceof Error ? error.message : "The local job could not be cancelled.");
+      setCloudError(error instanceof Error ? error.message : "The cloud job could not be cancelled.");
     }
   };
-  const runnerSetupItems = [
-    { label: "2D case package is ready", ready: pkg.readiness.exportReady, detail: pkg.readiness.exportReady ? "Geometry and run settings are complete" : pkg.readiness.blockingIssues[0] },
-    { label: "OpenFOAM is the selected solver", ready: settings.solver.startsWith("OpenFOAM"), detail: settings.solver.startsWith("OpenFOAM") ? settings.solver : "Choose OpenFOAM in Case setup" },
-    { label: "Local runner is reachable", ready: runnerHealth !== null, detail: runnerHealth ? LOCAL_RUNNER_URL : "Start the local companion, then check again" },
-    { label: "Mesh commands are available", ready: Boolean(runnerHealth?.openfoam.blockMesh && runnerHealth?.openfoam.checkMesh), detail: "blockMesh and checkMesh" },
-    { label: "Reviewed RDE template is configured", ready: Boolean(runnerHealth?.openfoam.templateConfigured), detail: "Set KYTHROS_OPENFOAM_TEMPLATE" },
-    { label: "Reacting solver is configured", ready: Boolean(runnerHealth?.openfoam.solverConfigured), detail: runnerHealth?.openfoam.solverName ?? "Set KYTHROS_OPENFOAM_SOLVER" },
-    { label: "Result adapter is configured", ready: Boolean(runnerHealth?.openfoam.postprocessorConfigured), detail: "Set KYTHROS_OPENFOAM_POSTPROCESSOR" },
-  ];
+  const selectedCloudTier = cloudHealth?.tiers.find((tier) => tier.id === cloudTier) ?? null;
 
   return <section className="simulation-workspace" aria-labelledby="simulation-title">
     <header className="simulation-heading">
-      <div><span className="workspace-label">2D RDE DEVELOPMENT</span><h1 id="simulation-title">Set up, run locally, and improve</h1><p>Use a fast preset, connect to OpenFOAM on this computer, and execute a traceable job. A completed result is analyzed into separate simulation and engine-design actions.</p></div>
+      <div><span className="workspace-label">2D RDE DEVELOPMENT</span><h1 id="simulation-title">Set up, run in cloud, and improve</h1><p>Choose a fast preset and submit a traceable OpenFOAM job. Kythros returns the result as separate simulation and engine-design actions.</p></div>
       <div className="simulation-stage"><span>1 · Design</span><strong>2 · Set up</strong><span>3 · Run</span><span>4 · Results</span><span>5 · Improve</span></div>
     </header>
 
@@ -231,36 +221,32 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       {exported && <div className="simulation-next-step"><span>NEXT STEP</span><strong>Run the case in the selected CFD solver.</strong><p>Complete the result template with solver-derived values, then import it directly below. Experimental data are not required for this design-iteration screen.</p></div>}
     </section>
 
-    <section className="local-runner-card" aria-labelledby="local-runner-title">
-      <div className="local-runner-heading">
-        <div><span>LOCAL EXECUTION</span><h2 id="local-runner-title">OpenFOAM on this computer</h2><p>Kythros sends this exact case to a runner bound to localhost. The runner launches real OpenFOAM commands; it never substitutes generated CFD values.</p></div>
-        <div className={`runner-badge ${runnerHealth?.status ?? "offline"}`}><i />{runnerChecking ? "Checking…" : runnerHealth?.status === "ready" ? "Reacting CFD ready" : runnerHealth?.status === "partial" ? "Mesh check ready" : "Runner offline"}</div>
+    <section className="cloud-runner-card" aria-labelledby="cloud-runner-title">
+      <div className="cloud-runner-heading">
+        <div><span>CLOUD EXECUTION</span><h2 id="cloud-runner-title">Run OpenFOAM without local setup</h2><p>Kythros sends this exact case to an isolated Google Cloud job, follows its progress, and returns the computed result automatically.</p></div>
+        <div className={`runner-badge ${cloudHealth?.status ?? "unchecked"}`}><i />{cloudChecking ? "Checking…" : cloudHealth?.status === "ready" ? "Cloud compute ready" : cloudHealth?.status === "unavailable" ? "Cloud unavailable" : "Checked when you run"}</div>
       </div>
-      <div className="local-runner-grid">
+      <div className="cloud-runner-grid">
         <div className="runner-connection">
-          <span>RUNNER ADDRESS</span><strong>{LOCAL_RUNNER_URL}</strong>
-          <p>{runnerHealth?.message ?? "Start the local companion inside an initialized OpenFOAM shell, then check again."}</p>
-          <div className="runner-command"><code>npm run runner:check</code><code>npm run runner:start</code></div>
-          <div className="simulation-actions"><button className="button secondary" onClick={() => void refreshRunner()} disabled={runnerChecking || jobActive}>{runnerChecking ? "Checking…" : "Check connection"}</button><button className="button secondary" disabled={!pkg.readiness.exportReady || !runnerHealth?.capabilities.meshVerification || jobActive} onClick={() => void startLocalJob("mesh-verification")}>Verify mesh locally</button><button className="button primary" disabled={runnerChecking || jobActive} aria-expanded={runnerSetupOpen} aria-controls="local-runner-setup" onClick={() => void runReactingCfd()}>{runnerChecking ? "Checking local setup…" : "Run reacting CFD locally"}</button>{jobActive && <button className="button danger" onClick={() => void cancelLocalJob()}>Cancel run</button>}</div>
-          {runnerError && <p className="runner-error" role="alert">{runnerError}</p>}
+          <span>COMPUTE SIZE</span>
+          <label className="cloud-tier-select"><select disabled={jobActive} value={cloudTier} onChange={(event) => setCloudTier(event.target.value as CloudComputeTier["id"])}>{CLOUD_TIER_OPTIONS.map((tier) => <option key={tier.id} value={tier.id}>{tier.label} · {tier.vcpu} vCPU · {tier.memoryGiB} GiB</option>)}</select></label>
+          <p>{cloudHealth?.message ?? "Kythros checks cloud availability when you press Run. Nothing needs to be installed on this computer."}</p>
+          <div className="simulation-actions"><button className="button primary" disabled={cloudChecking || jobActive} onClick={() => void runCloudCfd()}>{cloudChecking ? "Checking cloud…" : "Run 2D CFD in cloud"}</button><button className="button secondary" onClick={() => void refreshCloud()} disabled={cloudChecking || jobActive}>Check cloud status</button>{jobActive && <button className="button danger" onClick={() => void cancelCloudJob()}>Cancel run</button>}</div>
+          {cloudError && <p className="runner-error" role="alert">{cloudError}</p>}
         </div>
         <div className="runner-boundary">
-          <span>READINESS BOUNDARY</span>
-          <dl><div><dt>Generated mesh</dt><dd>{runnerHealth?.capabilities.meshVerification ? "OpenFOAM can generate and check it" : "OpenFOAM commands not detected"}</dd></div><div><dt>Reacting solver</dt><dd>{runnerHealth?.openfoam.solverConfigured ? runnerHealth.openfoam.solverName : "Not configured"}</dd></div><div><dt>Reviewed RDE template</dt><dd>{runnerHealth?.openfoam.templateConfigured ? "Configured" : "Not configured"}</dd></div><div><dt>Result adapter</dt><dd>{runnerHealth?.openfoam.postprocessorConfigured ? "Configured" : "Not configured"}</dd></div></dl>
-          <p>The Run button checks these requirements every time. Execution begins as soon as they pass; otherwise Kythros shows the exact missing setup.</p>
+          <span>WHAT HAPPENS</span>
+          <dl><div><dt>Case transfer</dt><dd>Encrypted server-to-server</dd></div><div><dt>Solver</dt><dd>Managed OpenFOAM image</dd></div><div><dt>Selected compute</dt><dd>{selectedCloudTier ? `${selectedCloudTier.vcpu} vCPU · ${selectedCloudTier.memoryGiB} GiB` : `${CLOUD_TIER_OPTIONS.find((tier) => tier.id === cloudTier)?.vcpu} vCPU · ${CLOUD_TIER_OPTIONS.find((tier) => tier.id === cloudTier)?.memoryGiB} GiB`}</dd></div><div><dt>Estimated charge</dt><dd>{selectedCloudTier?.estimatedUsdPerHour !== null && selectedCloudTier?.estimatedUsdPerHour !== undefined ? `$${selectedCloudTier.estimatedUsdPerHour.toFixed(2)} / active hour` : "Shown when configured"}</dd></div></dl>
+          <p>Charges accrue only while the cloud job runs. Kythros still blocks engine recommendations unless the returned numerical checks pass.</p>
         </div>
       </div>
-      {runnerSetupOpen && <section id="local-runner-setup" className="runner-setup" aria-live="polite">
-        <div className="runner-setup-heading"><div><span>LOCAL SETUP</span><h3>Finish these items, then run</h3><p>Kythros will start the real OpenFOAM job automatically after every required item passes.</p></div><button className="button secondary" disabled={runnerChecking || jobActive} onClick={() => void runReactingCfd()}>{runnerChecking ? "Checking…" : "Check again and run"}</button></div>
-        <ul>{runnerSetupItems.map((item) => <li key={item.label} className={item.ready ? "ready" : "missing"}><i aria-hidden="true">{item.ready ? "✓" : "•"}</i><span><strong>{item.label}</strong><small>{item.detail}</small></span></li>)}</ul>
-      </section>}
-      {localJob && <div className={`runner-job ${localJob.status}`} aria-live="polite"><div><span>LOCAL JOB · {localJob.mode.replace("-", " ")}</span><strong>{localJob.stage.replaceAll("-", " ")}</strong><p>{localJob.message}</p></div><small>{localJob.id}</small>{localJob.logs.length > 0 && <details><summary>Open solver log ({localJob.logs.length} lines retained)</summary><pre>{localJob.logs.map((entry) => `[${entry.source}] ${entry.line}`).join("\n")}</pre></details>}</div>}
+      {cloudJob && <div className={`runner-job ${cloudJob.status}`} aria-live="polite"><div><span>GOOGLE CLOUD JOB · {cloudJob.tier}</span><strong>{cloudJob.stage.replaceAll("-", " ")}</strong><p>{cloudJob.message}</p></div><small>{cloudJob.id}</small>{cloudJob.usage && <small>{Math.ceil(cloudJob.usage.elapsedSeconds / 60)} min{cloudJob.usage.estimatedUsd !== null ? ` · $${cloudJob.usage.estimatedUsd.toFixed(2)}` : ""}</small>}{cloudJob.logs.length > 0 && <details><summary>Solver log ({cloudJob.logs.length} lines retained)</summary><pre>{cloudJob.logs.map((entry) => `[${entry.source}] ${entry.line}`).join("\n")}</pre></details>}</div>}
     </section>
 
     <section className="simulation-results-card" aria-labelledby="simulation-results-title">
-      <div className="simulation-results-heading"><div><span>2D RESULT</span><h2 id="simulation-results-title">Review the computed result and decide what changes next</h2><p>A configured local run returns its result automatically. Manual JSON import remains available for another solver or computer.</p></div><label className="result-upload button secondary">Import result manually<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
+      <div className="simulation-results-heading"><div><span>2D RESULT</span><h2 id="simulation-results-title">Review the computed result and decide what changes next</h2><p>A cloud run returns its result automatically. Manual JSON import remains available for another solver or prior run.</p></div><label className="result-upload button secondary">Import result manually<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
       {resultError && <div className="simulation-result-error" role="alert">{resultError}</div>}
-      {!result || !recommendation ? <div className="simulation-result-empty"><strong>No reacting-flow result yet</strong><p>A mesh verification does not contain engine physics. Run a configured reacting case locally or import a solver summary containing convergence, mesh/time-step checks, propagation mode, injector backflow, and thermal outputs.</p><div><span>1 · Connect runner</span><span>2 · Execute OpenFOAM</span><span>3 · Analyze result</span><span>4 · Review engine change</span></div></div> : <>
+      {!result || !recommendation ? <div className="simulation-result-empty"><strong>No reacting-flow result yet</strong><p>Run the prepared case in Google Cloud or import a solver summary containing convergence, mesh/time-step checks, propagation mode, injector backflow, and thermal outputs.</p><div><span>1 · Submit cloud job</span><span>2 · Execute OpenFOAM</span><span>3 · Analyze result</span><span>4 · Review engine change</span></div></div> : <>
         <div className="simulation-result-kpis"><span><small>Solver</small><strong>{result.solverName}</strong></span><span><small>Mode</small><strong>{result.propagationMode.replace("-", " ")}</strong></span><span><small>Frequency</small><strong>{formatMetric(result.dominantFrequencyKHz, " kHz")}</strong></span><span><small>Backflow</small><strong>{formatMetric(result.injectorBackflowPct, "%")}</strong></span><span><small>Wall heat flux</small><strong>{formatMetric(result.peakWallHeatFluxMWm2, " MW/m²")}</strong></span></div>
         <div className={`simulation-result-status ${recommendation.resultUsable ? "usable" : "blocked"}`}><strong>{recommendation.resultUsable ? "Numerical gates passed" : "Engine recommendation blocked"}</strong><p>{recommendation.resultUsable ? "Kythros can use this solver summary for a provisional design decision. Physical validation still requires experiment." : recommendation.pairingIssues[0] ?? recommendation.numericalIssues[0]}</p></div>
         <div className="simulation-recommendation-grid">

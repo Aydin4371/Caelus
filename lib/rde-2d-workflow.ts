@@ -205,7 +205,7 @@ ${points}
 
 function meshControlDict() {
   return `/* Kythros mesh-verification control dictionary.
- * The local runner copies this file to system/controlDict only for blockMesh/checkMesh.
+ * The managed runner copies this file to system/controlDict only for blockMesh/checkMesh.
  * A reacting-flow template must supply and review its own complete controlDict. */
 FoamFile
 {

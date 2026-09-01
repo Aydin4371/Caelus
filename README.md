@@ -31,11 +31,12 @@ the engine and pairing fingerprints with the case. These controls improve
 reproducibility but do not replace external matched experiment and CFD data.
 
 The application starts as an empty workspace and accepts multiple operating
-points. Its optional localhost companion can run OpenFOAM mesh checks and a
-separately reviewed reacting-flow case on the user's own hardware. The browser
-cannot invent solver output: reacting execution remains disabled until the
-runner detects OpenFOAM, a complete case template, a solver executable, and a
-result adapter. See `runner/README.md`. Work remains in memory until the user
+points. Its managed Google Cloud path submits a versioned case to an isolated
+OpenFOAM job, returns durable status and solver logs, supports cancellation, and
+imports the completed result automatically. The browser never receives cloud
+credentials and cannot invent solver output. The managed solver image still
+requires a reviewed case template, chemistry, solver command, and result adapter.
+See `cloud-run/README.md`. Work remains in memory until the user
 downloads a versioned workspace file; refreshing the page does not provide
 durable browser storage.
 

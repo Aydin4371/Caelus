@@ -1,8 +1,9 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { handleCloudCfdProxy, type CloudCfdProxyEnv } from "../lib/cloud-cfd-proxy";
 
-interface Env {
+interface Env extends CloudCfdProxyEnv {
   ASSETS: Fetcher;
   DB: D1Database;
   IMAGES: {
@@ -38,6 +39,10 @@ const worker = {
           return result.response();
         },
       }, allowedWidths);
+    }
+
+    if (url.pathname.startsWith("/api/cloud-cfd")) {
+      return handleCloudCfdProxy(request, env);
     }
 
     return handler.fetch(request, env, ctx);
