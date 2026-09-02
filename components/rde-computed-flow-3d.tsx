@@ -182,6 +182,39 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
     const fieldSurface = new THREE.Mesh(fieldGeometry, new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.52, metalness: 0.02 }));
     scene.add(fieldSurface);
 
+    const circumferentialVelocity = result.field.circumferentialVelocityMps ?? result.field.velocityMps.map(() => 0);
+    const axialVelocity = result.field.axialVelocityMps ?? result.field.velocityMps;
+    const velocityScale = Math.max(1, ...result.field.velocityMps.map((value) => Math.abs(value)));
+    const streamlineGroup = new THREE.Group();
+    const streamlineCount = 14;
+    const radialLayers = 3;
+    for (let radialLayer = 0; radialLayer < radialLayers; radialLayer += 1) {
+      const radius = innerRadius + (radialLayer + 1) / (radialLayers + 1) * (outerRadius - innerRadius);
+      for (let seed = 0; seed < streamlineCount; seed += 1) {
+        let theta = seed / streamlineCount * Math.PI * 2 + radialLayer * 0.08;
+        let axialFraction = 0;
+        const points: THREE.Vector3[] = [];
+        for (let sample = 0; sample < 86; sample += 1) {
+          const sourceX = (Math.floor(((theta % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * sourceNx) + sourceNx) % sourceNx;
+          const sourceY = Math.min(sourceNy - 1, Math.max(0, Math.floor(axialFraction * sourceNy)));
+          const sourceIndex = sourceY * sourceNx + sourceX;
+          const uTheta = circumferentialVelocity[sourceIndex] ?? 0;
+          const uAxial = axialVelocity[sourceIndex] ?? 0;
+          const localRadius = radius + 0.018 * Math.sin(sample * 0.24 + seed);
+          points.push(new THREE.Vector3(inletX + axialFraction * chamberLength, Math.cos(theta) * localRadius, Math.sin(theta) * localRadius));
+          theta += 0.045 * uTheta / velocityScale;
+          axialFraction += 0.009 + 0.009 * Math.max(0.12, uAxial / velocityScale);
+          if (axialFraction > 1) break;
+        }
+        if (points.length < 3) continue;
+        const streamlineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+        const streamlineMaterial = new THREE.LineBasicMaterial({ color: radialLayer === 1 ? 0xffffff : 0xbdebf0, transparent: true, opacity: radialLayer === 1 ? 0.72 : 0.48, depthWrite: false });
+        streamlineGroup.add(new THREE.Line(streamlineGeometry, streamlineMaterial));
+      }
+    }
+    streamlineGroup.visible = tracers;
+    scene.add(streamlineGroup);
+
     const tracerCount = 220;
     const tracerPositions = new Float32Array(tracerCount * 3);
     const tracerPhase = new Float32Array(tracerCount);
@@ -252,11 +285,11 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
 
   return <section className="computed-flow-3d" aria-labelledby="computed-flow-title">
     <div className="computed-flow-heading">
-      <div><span>3D FLOW VIEW</span><h3 id="computed-flow-title">Calculated flow through this engine</h3><p>The solved circumferential–axial field is wrapped onto the engine annulus so the wave and downstream flow can be inspected in physical context.</p></div>
+      <div><span>OUTPUT</span><h3 id="computed-flow-title">3D flow through the engine</h3><p>Rotate the engine and follow the calculated streamlines from the injector to the exhaust.</p></div>
       <label><span>Display field</span><select value={metric} onChange={(event) => onMetricChange(event.target.value as ComputedFlowMetric)}><option value="pressure">Pressure</option><option value="temperature">Temperature</option><option value="reaction">Reaction progress</option><option value="velocity">Velocity magnitude</option></select></label>
     </div>
     <div className="computed-flow-toolbar" aria-label="3D flow controls">
-      <div><button className={playing ? "active" : ""} onClick={() => setPlaying((current) => !current)}>{playing ? "Pause" : "Play"}</button><button className={tracers ? "active" : ""} onClick={() => setTracers((current) => !current)}>Flow tracers</button><button className={cutaway ? "active" : ""} onClick={() => setCutaway((current) => !current)}>{cutaway ? "Cutaway" : "Full annulus"}</button></div>
+      <div><button className={playing ? "active" : ""} onClick={() => setPlaying((current) => !current)}>{playing ? "Pause" : "Play"}</button><button className={tracers ? "active" : ""} onClick={() => setTracers((current) => !current)}>Streamlines</button><button className={cutaway ? "active" : ""} onClick={() => setCutaway((current) => !current)}>{cutaway ? "Cutaway" : "Full annulus"}</button></div>
       <div><button className={view === "isometric" ? "active" : ""} onClick={() => setView("isometric")}>Isometric</button><button className={view === "side" ? "active" : ""} onClick={() => setView("side")}>Side</button><button className={view === "head-end" ? "active" : ""} onClick={() => setView("head-end")}>Head-end</button></div>
     </div>
     <div className="computed-flow-stage">
@@ -264,6 +297,6 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
       <span className="computed-flow-inlet">INJECTOR</span><span className="computed-flow-outlet">EXHAUST</span>
     </div>
     <div className="computed-flow-legend"><span>{minimum.toFixed(metric === "reaction" ? 2 : 1)} {fieldUnit(metric)}</span><i/><span>{maximum.toFixed(metric === "reaction" ? 2 : 1)} {fieldUnit(metric)}</span></div>
-    <p className="computed-flow-scope">3D visualization of the calculated periodic 2D solution. Radial structures, discrete injector jets, turbulence, and full three-dimensional modes require the Full 3D fidelity workflow.</p>
+    <p className="computed-flow-scope">The current solver calculates circumferential and axial velocity; radial full-3D solver fidelity remains in development.</p>
   </section>;
 }
