@@ -358,7 +358,7 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
       const elapsedSeconds = Math.min(0.05, Math.max(0, time - previousTime) / 1000);
       previousTime = time;
       if (playingRef.current && !reduceMotion) playbackPhase += elapsedSeconds * Math.min(2.4, Math.max(0.25, waveRotationsPerSecond / 800)) * Math.PI * 2;
-      fieldSurface.rotation.x = playbackPhase;
+      fieldSurface.rotation.x = cutaway ? 0 : playbackPhase;
       detonationGroup.rotation.x = playbackPhase;
       const positionsAttribute = tracerGeometry.getAttribute("position") as THREE.BufferAttribute;
       for (let index = 0; index < tracerCount; index += 1) {
