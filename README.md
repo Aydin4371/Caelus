@@ -1,23 +1,19 @@
 # Kythros by Caelus
 
-Kythros is a browser-based RDE evidence and simulation-to-test research
-application. Its Operating Envelope records experiment-only operating points
-and keeps published summaries visibly separate from uploaded raw signals. Its
-Comparison module pairs three or more synchronized experimental pressure
-traces with matching CFD virtual probes, determines whether differences are
-resolved beyond the stated uncertainty, orders traceable diagnostic hypotheses
-by evidence state, and recommends one controlled next simulation. When a
-related rerun is added, Kythros classifies the calculated response as
-supporting, converged, unsupported, or inconclusive and updates the next
-recommendation. It also aggregates comparable controlled reruns already
-analyzed in the workspace, showing observed outcome counts, metric-error
-improvement, and runtime multiplier without inventing precedent.
-The interface leads with the engineering conclusion and keeps the underlying
-case counts available as a disclosure rather than presenting unexplained raw
-statistics.
-Diagnosis, next action, expected result, comparable-case history, and input
-provenance now appear in one engineering-decision card. Technical ranking and
-conditional branches remain available under disclosures.
+Kythros is a browser-based RDE design and simulation research application. An
+engine revision supplies geometry, injectors, propellants, materials, cooling,
+and operating limits to a built-in fast 2D reacting-flow solver. The calculated
+field is displayed directly in the product and converted into one controlled
+engine or operating-condition change plus one next-simulation action. All
+primary calculation runs on the user's device without OpenFOAM or paid cloud
+compute.
+
+The Operating Envelope records planned, simulation-only, and measured points.
+Experiment Validation remains a separate optional workflow: it pairs three or
+more synchronized hot-fire pressure traces with matching higher-fidelity CFD
+virtual probes, checks whether differences exceed uncertainty, and recommends
+one controlled rerun. Diagnosis, next action, evidence, and provenance stay
+traceable without making experimental comparison the only product.
 
 The pre-validation workflow is executable rather than only descriptive. Every
 controlled rerun names one atomic CFD parameter, locks unrelated model-card
@@ -31,13 +27,22 @@ the engine and pairing fingerprints with the case. These controls improve
 reproducibility but do not replace external matched experiment and CFD data.
 
 The application starts as an empty workspace and accepts multiple operating
-points. Its optional localhost companion can run OpenFOAM mesh checks and a
-separately reviewed reacting-flow case on the user's own hardware. The browser
-cannot invent solver output: reacting execution remains disabled until the
-runner detects OpenFOAM, a complete case template, a solver executable, and a
-result adapter. See `runner/README.md`. Work remains in memory until the user
-downloads a versioned workspace file; refreshing the page does not provide
-durable browser storage.
+points. Its built-in Kythros Fast 2D solver advances a reduced compressible
+reacting-flow model directly in the browser. The finite-volume calculation uses
+periodic circumferential boundaries, injector inflow, a pressure outlet, an
+ignition kernel, simplified one-step heat release, a Rusanov flux, and an
+adaptive CFL-limited time step. It returns the calculated pressure,
+temperature, reaction-progress, and velocity fields plus wave, pressure-gain,
+backflow, and approximate performance indicators. No OpenFOAM installation,
+cloud account, credential, or per-run charge is required.
+
+This browser calculation is deliberately a screening model. It omits detailed
+chemical kinetics, turbulence, resolved injector jets, viscous wall heating,
+cooling and component life, and three-dimensional flow. Its outputs are not a
+replacement for reviewed high-fidelity CFD or experiment. A traceable case
+package remains available for engineers who want to continue a design in an
+external solver. Work remains in memory until the user downloads a versioned
+workspace file; refreshing the page does not provide durable browser storage.
 
 The header Help guide defines every case-loader input. Pressure, spectrum,
 residual, propagation-phase, and cycle-stability graphs remain absent until a

@@ -25,15 +25,15 @@ const design = {
 test("2D package unwraps the mean annulus and creates periodic mesh patches", () => {
   const pkg = buildRde2dPackage(design, midpointCondition(design), DEFAULT_RDE_2D_SETTINGS, "2026-08-30T00:00:00.000Z");
   assert.equal(pkg.readiness.exportReady, true);
-  assert.equal(pkg.readiness.solverReady, false);
-  assert.equal(pkg.discretization.totalCells, 172800);
+  assert.equal(pkg.readiness.solverReady, true);
+  assert.equal(pkg.discretization.totalCells, 12288);
   assert.ok(Math.abs(pkg.geometry.circumferenceMm - Math.PI * 90) < 1e-9);
   const mesh = pkg.files.find((file) => file.path === "system/blockMeshDict")?.content ?? "";
   assert.match(mesh, /type cyclic/);
   assert.match(mesh, /frontAndBack \{ type empty/);
-  assert.match(mesh, /\(720 240 1\)/);
+  assert.match(mesh, /\(192 64 1\)/);
   assert.ok(pkg.files.some((file) => file.path === "system/controlDict.mesh"));
-  assert.match(pkg.files.find((file) => file.path === "system/kythrosRunControl")?.content ?? "", /deltaT 5\.000000000000e-9/);
+  assert.match(pkg.files.find((file) => file.path === "system/kythrosRunControl")?.content ?? "", /deltaT 2\.500000000000e-7/);
   assert.ok(pkg.files.some((file) => file.path === "kythros-result.template.json"));
 });
 
