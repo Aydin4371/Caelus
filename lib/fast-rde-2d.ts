@@ -8,6 +8,8 @@ export type FastRde2dField = {
   temperatureK: number[];
   reactionProgress: number[];
   velocityMps: number[];
+  circumferentialVelocityMps: number[];
+  axialVelocityMps: number[];
   pressureRangeBar: [number, number];
   temperatureRangeK: [number, number];
 };
@@ -379,6 +381,8 @@ export async function runFastRde2d(
   const finalTemperature = new Float64Array(cellCount);
   const finalProgress = new Float64Array(cellCount);
   const finalVelocity = new Float64Array(cellCount);
+  const finalCircumferentialVelocity = new Float64Array(cellCount);
+  const finalAxialVelocity = new Float64Array(cellCount);
   let peakPressurePa = 0;
   let peakTemperatureK = 0;
   let maximumMach = 0;
@@ -394,6 +398,8 @@ export async function runFastRde2d(
     finalTemperature[index] = t;
     finalProgress[index] = Math.max(0, Math.min(1, 1 - rhoFuel[index] / density));
     finalVelocity[index] = velocity;
+    finalCircumferentialVelocity[index] = u;
+    finalAxialVelocity[index] = v;
     peakPressurePa = Math.max(peakPressurePa, p);
     peakTemperatureK = Math.max(peakTemperatureK, t);
     maximumMach = Math.max(maximumMach, velocity / Math.sqrt(GAMMA * p / density));
@@ -470,6 +476,8 @@ export async function runFastRde2d(
       temperatureK: Array.from(finalTemperature),
       reactionProgress: Array.from(finalProgress),
       velocityMps: Array.from(finalVelocity),
+      circumferentialVelocityMps: Array.from(finalCircumferentialVelocity),
+      axialVelocityMps: Array.from(finalAxialVelocity),
       pressureRangeBar,
       temperatureRangeK,
     },
