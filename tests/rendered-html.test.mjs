@@ -99,10 +99,10 @@ test("connects design, the CFD suite, operating envelopes, and validation", asyn
   assert.match(simulation, /Detailed 2D/);
   assert.match(simulation, /Full 3D/);
   assert.match(simulation, /Resolved discrete injectors/);
-  assert.match(computedFlow, /3D flow through the engine/);
+  assert.match(computedFlow, /Flow through the RDRE/);
   assert.match(computedFlow, /Interactive three-dimensional/);
   assert.match(computedFlow, /Streamlines/);
-  assert.match(computedFlow, /radial full-3D solver fidelity remains in development/i);
+  assert.match(computedFlow, /Screening CFD shown inside the entered annular engine geometry/i);
   assert.doesNotMatch(simulation, /127\.0\.0\.1:8788/);
   assert.doesNotMatch(simulation, /runCloudCfd|Google Cloud job/);
   assert.match(simulationLogic, /system\/controlDict\.mesh/);
