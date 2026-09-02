@@ -3,6 +3,7 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import type { EngineDesign, OperatingPoint } from "@/lib/design-workspace";
 import { runFastRde2d, type FastRde2dProgress, type FastRde2dResult } from "@/lib/fast-rde-2d";
+import { RdeComputedFlow3d, type ComputedFlowMetric } from "@/components/rde-computed-flow-3d";
 import {
   analyzeRde2dResult,
   buildRde2dPackage,
@@ -27,7 +28,14 @@ type Props = {
   onOpenValidation: () => void;
 };
 
-type FieldMetric = "pressure" | "temperature" | "reaction" | "velocity";
+type FieldMetric = ComputedFlowMetric;
+type CfdFidelity = "rapid-2d" | "detailed-2d" | "full-3d";
+
+const CFD_LEVELS: Array<{ id: CfdFidelity; label: string; status: string; purpose: string }> = [
+  { id: "rapid-2d", label: "Rapid 2D", status: "Runs now", purpose: "Screen geometry, wave development, pressure, velocity, and engine changes." },
+  { id: "detailed-2d", label: "Detailed 2D", status: "Solver workflow", purpose: "Prepare finite-rate chemistry, turbulence, wall, and convergence work." },
+  { id: "full-3d", label: "Full 3D", status: "Solver workflow", purpose: "Prepare resolved injectors, radial structure, cooling, and nozzle flow." },
+];
 
 function download(content: string, name: string) {
   const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
@@ -94,6 +102,11 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const [selectedPointId, setSelectedPointId] = useState("midpoint");
   const [presetId, setPresetId] = useState<Rde2dPresetId>("balanced");
   const [settings, setSettings] = useState<Rde2dSettings>(() => settingsForPreset("balanced"));
+  const [fidelity, setFidelity] = useState<CfdFidelity>("rapid-2d");
+  const [externalSolver, setExternalSolver] = useState("OpenFOAM");
+  const [turbulenceModel, setTurbulenceModel] = useState("Inviscid screening");
+  const [wallModel, setWallModel] = useState("Adiabatic wall");
+  const [injectorTreatment, setInjectorTreatment] = useState("Distributed inlet boundary");
   const [exported, setExported] = useState(false);
   const [result, setResult] = useState<Rde2dResultSummary | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
@@ -104,12 +117,21 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const condition = activeDesign ? points.find((point) => point.id === selectedPointId) ?? midpointCondition(activeDesign) : null;
   const packageData = activeDesign && condition ? buildRde2dPackage(activeDesign, condition, settings) : null;
   const recommendation = activeDesign && condition && result ? analyzeRde2dResult(activeDesign, condition, result) : null;
+  const selectedLevel = CFD_LEVELS.find((level) => level.id === fidelity)!;
 
   const resetResult = () => { setResult(null); setResultError(null); setExported(false); setProgress(null); };
   const setDiscrete = (patch: Partial<Rde2dSettings>) => { setPresetId("custom"); setSettings((current) => ({ ...current, ...patch })); resetResult(); };
   const choosePreset = (id: Rde2dPresetId) => {
     setPresetId(id);
     if (id !== "custom") setSettings((current) => settingsForPreset(id, current));
+    resetResult();
+  };
+  const chooseFidelity = (next: CfdFidelity) => {
+    setFidelity(next);
+    setTurbulenceModel(next === "rapid-2d" ? "Inviscid screening" : next === "detailed-2d" ? "RANS" : "LES");
+    setWallModel(next === "rapid-2d" ? "Adiabatic wall" : "Conjugate heat transfer");
+    setInjectorTreatment(next === "full-3d" ? "Resolved discrete injectors" : "Distributed inlet boundary");
+    if (next === "rapid-2d") setSettings((current) => ({ ...current, solver: "Kythros Fast 2D browser solver", chemistryMechanism: "Simplified one-step heat release" }));
     resetResult();
   };
   const importResult = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -127,8 +149,8 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   };
 
   if (!activeDesign) return <section className="empty-workspace simulation-empty">
-    <span className="empty-kicker">2D RDE DEVELOPMENT</span><h1>Define an engine before running the model</h1>
-    <p>The browser solver inherits its annulus, chamber, propellants, injectors, and operating range from an immutable Kythros engine revision.</p>
+    <span className="empty-kicker">RDE CFD SUITE</span><h1>Define an engine before running CFD</h1>
+    <p>Every simulation inherits its annulus, chamber, propellants, injectors, cooling, and operating range from an immutable Kythros engine revision.</p>
     <div className="empty-actions"><button className="button primary" onClick={onOpenDesign}>Build an RDE →</button></div>
   </section>;
 
@@ -142,8 +164,8 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const runBrowserSolver = async () => {
     setResultError(null);
     if (!pkg.readiness.exportReady) { setResultError(pkg.readiness.blockingIssues[0] ?? "Complete the 2D setup before running."); return; }
-    if (settings.solver !== "Kythros Fast 2D browser solver") { setResultError("Choose Kythros Fast 2D in Solver to run inside the browser."); return; }
-    if (settings.chemistryMechanism !== "Simplified one-step heat release") { setResultError("Choose Simplified one-step heat release to run inside the browser."); return; }
+    if (settings.solver !== "Kythros Fast 2D browser solver") { setResultError("Choose Rapid 2D to run the built-in calculation."); return; }
+    if (settings.chemistryMechanism !== "Simplified one-step heat release") { setResultError("Rapid 2D requires the simplified one-step heat-release model."); return; }
     const controller = new AbortController();
     abortController.current = controller;
     setRunning(true);
@@ -153,17 +175,42 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       const computed = await runFastRde2d(activeDesign, condition!, settings, { signal: controller.signal, onProgress: setProgress });
       setResult(computed);
     } catch (error) {
-      setResultError(error instanceof DOMException && error.name === "AbortError" ? "The browser simulation was cancelled." : error instanceof Error ? error.message : "Kythros Fast 2D could not complete this run.");
+      setResultError(error instanceof DOMException && error.name === "AbortError" ? "The simulation was cancelled." : error instanceof Error ? error.message : "Kythros Rapid 2D could not complete this run.");
     } finally {
       abortController.current = null;
       setRunning(false);
     }
   };
+  const downloadSuitePlan = () => {
+    const plan = {
+      schema: "kythros-cfd-suite-plan",
+      formatVersion: 1,
+      generatedAt: new Date().toISOString(),
+      designId: activeDesign.id,
+      designFingerprint: activeDesign.revision?.fingerprint ?? null,
+      operatingCondition: condition,
+      fidelity,
+      solver: fidelity === "rapid-2d" ? "Kythros Rapid 2D" : externalSolver,
+      models: {
+        flow: fidelity === "rapid-2d" ? "Compressible reactive Euler" : fidelity === "detailed-2d" ? "Compressible reacting RANS or LES" : "Compressible reacting 3D RANS or LES",
+        chemistry: settings.chemistryMechanism,
+        turbulence: turbulenceModel,
+        wall: wallModel,
+        injector: injectorTreatment,
+      },
+      mesh: pkg.discretization,
+      requiredOutputs: ["pressure", "temperature", "velocity", "reaction progress", "pressure probes", "mass balance", "thrust"],
+      traceability: "Every result must retain this design ID, fingerprint, operating-condition ID, solver version, mesh, time step, and model selection.",
+      limitation: fidelity === "full-3d" ? "This is a solver-neutral full-3D work specification, not a computed 3D result or validated solver case." : "This is a solver-neutral detailed-2D work specification, not a completed external-solver result.",
+    };
+    download(JSON.stringify(plan, null, 2), `kythros-${fidelity}-${activeDesign.id}.json`);
+    setExported(true);
+  };
 
   return <section className="simulation-workspace" aria-labelledby="simulation-title">
     <header className="simulation-heading">
-      <div><span className="workspace-label">KYTHROS FAST 2D</span><h1 id="simulation-title">Run an RDE screening model in your browser</h1><p>Choose a preset, calculate the reactive flow on this computer, then review the field and one engine change to test. No cloud account or solver installation is required.</p></div>
-      <div className="simulation-stage"><span>1 · Design</span><strong>2 · Set up</strong><span>3 · Run</span><span>4 · Results</span><span>5 · Improve</span></div>
+      <div><span className="workspace-label">RDE CFD SUITE</span><h1 id="simulation-title">Design, simulate, inspect, and improve the engine</h1><p>Use one engine definition across rapid 2D screening, detailed 2D studies, and full 3D CFD. Every result returns to the same 3D flow view, diagnosis, and next design action.</p></div>
+      <div className="simulation-stage"><span>1 · Design</span><strong>2 · Simulate</strong><span>3 · Inspect 3D</span><span>4 · Improve</span><span>5 · Validate</span></div>
     </header>
 
     <div className="simulation-context-bar">
@@ -172,11 +219,13 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       <div><span>Condition</span><strong>ϕ {condition!.equivalenceRatio.toFixed(3)} · {condition!.massFlowKgS.toFixed(3)} kg/s · {condition!.inletPressureBar.toFixed(2)} bar</strong></div>
     </div>
 
-    <section className="simulation-preset-card">
-      <div><span>RUN PRESET</span><h2>Choose speed</h2><p>Each preset changes the grid, maximum time step, and simulated duration together.</p></div>
-      <label><span>Simulation preset</span><select disabled={running} value={presetId} onChange={(event) => choosePreset(event.target.value as Rde2dPresetId)}>{RDE_2D_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.purpose}</option>)}<option value="custom">Custom settings</option></select></label>
-      <div className="simulation-cost"><span>RELATIVE WORK</span><strong>{Number.isFinite(work) ? `${work.toFixed(work < 0.1 ? 2 : 1)}×` : "—"}</strong><small>Refined preset = 1.0×</small></div>
+    <section className="simulation-preset-card cfd-level-card">
+      <div><span>SOLVER FIDELITY</span><h2>Choose what this run must resolve</h2><p>Start fast, then increase fidelity only when the decision requires it.</p></div>
+      <label><span>CFD level</span><select disabled={running} value={fidelity} onChange={(event) => chooseFidelity(event.target.value as CfdFidelity)}><option value="rapid-2d">Rapid 2D · runs now</option><option value="detailed-2d">Detailed 2D · solver workflow</option><option value="full-3d">Full 3D · solver workflow</option></select></label>
+      <div className="simulation-cost"><span>{selectedLevel.status}</span><strong>{fidelity === "rapid-2d" && Number.isFinite(work) ? `${work.toFixed(work < 0.1 ? 2 : 1)}×` : fidelity === "detailed-2d" ? "2D+" : "3D"}</strong><small>{selectedLevel.purpose}</small></div>
     </section>
+
+    <div className="cfd-fidelity-strip" aria-label="CFD fidelity levels">{CFD_LEVELS.map((level, index) => <button key={level.id} className={fidelity === level.id ? "active" : ""} onClick={() => chooseFidelity(level.id)} disabled={running}><b>{index + 1}</b><span><strong>{level.label}</strong><small>{level.status}</small></span></button>)}</div>
 
     <div className="simulation-primary-grid">
       <section className="simulation-domain-card">
@@ -193,41 +242,45 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       </section>
 
       <section className="simulation-setup-card">
-        <div className="card-heading"><div><span>MODEL SETUP</span><h2>Fast screening controls</h2></div></div>
+        <div className="card-heading"><div><span>MODEL SETUP</span><h2>{fidelity === "rapid-2d" ? "Rapid screening controls" : `${selectedLevel.label} model controls`}</h2></div></div>
         <div className="simulation-form-grid">
+          <label className="wide"><span>Run preset</span><select disabled={running} value={presetId} onChange={(event) => choosePreset(event.target.value as Rde2dPresetId)}>{RDE_2D_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.purpose}</option>)}<option value="custom">Custom settings</option></select></label>
           <label className="wide"><span>Grid</span><select disabled={running} value={`${settings.circumferentialCells}x${settings.axialCells}`} onChange={(event) => { const [circumferentialCells, axialCells] = event.target.value.split("x").map(Number); setDiscrete({ circumferentialCells, axialCells }); }}><option value="96x32">Quick · 96 × 32</option><option value="144x48">Balanced · 144 × 48</option><option value="192x64">Refined · 192 × 64</option><option value="256x80">Extra refined · 256 × 80</option></select><small>{pkg.discretization.circumferentialCellSizeMm.toFixed(3)} × {pkg.discretization.axialCellSizeMm.toFixed(3)} mm</small></label>
           <label><span>Maximum time step</span><select disabled={running} value={settings.timeStepNs} onChange={(event) => setDiscrete({ timeStepNs: Number(event.target.value) })}><option value="1000">1,000 ns · quick</option><option value="500">500 ns · balanced</option><option value="250">250 ns · refined</option><option value="125">125 ns · extra refined</option></select></label>
           <label><span>Simulated duration</span><select disabled={running} value={settings.endTimeMs} onChange={(event) => setDiscrete({ endTimeMs: Number(event.target.value) })}><option value="0.15">0.15 ms · quick</option><option value="0.3">0.30 ms · balanced</option><option value="0.45">0.45 ms · refined</option><option value="0.6">0.60 ms · extended</option></select></label>
           <label><span>Pressure probes</span><select disabled={running} value={settings.probeCount} onChange={(event) => setDiscrete({ probeCount: Number(event.target.value) })}><option value="4">4 · quick</option><option value="8">8 · standard</option><option value="12">12 · dense</option></select></label>
-          <label className="wide"><span>Solver</span><select disabled={running} value={settings.solver} onChange={(event) => setDiscrete({ solver: event.target.value })}><option>Kythros Fast 2D browser solver</option><option>OpenFOAM · export only</option><option>Ansys Fluent · export only</option><option>Simcenter STAR-CCM+ · export only</option></select></label>
-          <label className="wide"><span>Reaction model</span><select disabled={running} value={settings.chemistryMechanism} onChange={(event) => setDiscrete({ chemistryMechanism: event.target.value })}><option>Simplified one-step heat release</option><option>External detailed chemistry · export only</option></select></label>
+          {fidelity !== "rapid-2d" && <label className="wide"><span>Solver</span><select disabled={running} value={externalSolver} onChange={(event) => { setExternalSolver(event.target.value); resetResult(); }}><option>OpenFOAM</option><option>Ansys Fluent</option><option>Simcenter STAR-CCM+</option><option>Solver-neutral</option></select></label>}
+          <label className="wide"><span>Chemistry</span><select disabled={running} value={settings.chemistryMechanism} onChange={(event) => setDiscrete({ chemistryMechanism: event.target.value })}><option>Simplified one-step heat release</option>{fidelity !== "rapid-2d" && <><option>Reduced finite-rate chemistry</option><option>Detailed finite-rate chemistry</option><option>Flamelet chemistry</option></>}</select></label>
+          <label><span>Turbulence</span><select disabled={running || fidelity === "rapid-2d"} value={turbulenceModel} onChange={(event) => { setTurbulenceModel(event.target.value); resetResult(); }}><option>Inviscid screening</option><option>RANS</option><option>URANS</option><option>LES</option></select></label>
+          <label><span>Wall and cooling</span><select disabled={running || fidelity === "rapid-2d"} value={wallModel} onChange={(event) => { setWallModel(event.target.value); resetResult(); }}><option>Adiabatic wall</option><option>Isothermal wall</option><option>Conjugate heat transfer</option><option>Resolved cooling channels</option></select></label>
+          <label className="wide"><span>Injector treatment</span><select disabled={running || fidelity === "rapid-2d"} value={injectorTreatment} onChange={(event) => { setInjectorTreatment(event.target.value); resetResult(); }}><option>Distributed inlet boundary</option><option>Porous injector face</option><option>Resolved discrete injectors</option></select></label>
         </div>
       </section>
     </div>
 
     <section className="browser-solver-card" aria-labelledby="browser-solver-title">
-      <div className="browser-solver-heading"><div><span>NO-CLOUD EXECUTION</span><h2 id="browser-solver-title">Calculate the 2D flow now</h2><p>Your browser solves the reduced reactive-flow equations on this computer. Kythros does not upload the engine or use paid cloud compute.</p></div><div className="runner-badge ready"><i />Free · device CPU</div></div>
+      <div className="browser-solver-heading"><div><span>RUN</span><h2 id="browser-solver-title">{fidelity === "rapid-2d" ? "Calculate the flow now" : `Prepare the ${selectedLevel.label} simulation`}</h2><p>{fidelity === "rapid-2d" ? "Kythros calculates the reduced reacting-flow field and sends it directly to the 3D engine viewer and design advisor." : `Kythros packages the same engine revision, operating condition, ${externalSolver} selection, model choices, and required outputs for the higher-fidelity run.`}</p></div><div className={`runner-badge ${fidelity === "rapid-2d" ? "ready" : "review"}`}><i />{selectedLevel.status}</div></div>
       <div className="browser-solver-body">
-        <div><span>THIS MODEL INCLUDES</span><strong>Compressible flow, shocks, periodic propagation, injection, ignition, and simplified heat release</strong><p>It does not include turbulence, detailed chemistry, resolved injector jets, viscous wall heat flux, cooling life, or 3D modes.</p></div>
-        <div className="simulation-actions"><button className="button primary" disabled={running} onClick={() => void runBrowserSolver()}>{running ? "Calculating…" : "Run Kythros Fast 2D"}</button>{running && <button className="button danger" onClick={() => abortController.current?.abort()}>Cancel</button>}</div>
+        <div><span>{fidelity === "rapid-2d" ? "THIS RUN INCLUDES" : "CASE SPECIFICATION INCLUDES"}</span><strong>{fidelity === "rapid-2d" ? "Compressible flow, shocks, periodic propagation, injection, ignition, and simplified heat release" : `${turbulenceModel}, ${settings.chemistryMechanism}, ${wallModel}, and ${injectorTreatment}`}</strong><p>{fidelity === "rapid-2d" ? "Use Detailed 2D or Full 3D when the design decision requires turbulence, detailed chemistry, wall heating, discrete injectors, radial structure, or cooling flow." : "Review the generated mesh and numerical setup in the selected solver before execution, then return the result to this workspace."}</p></div>
+        <div className="simulation-actions"><button className="button primary" disabled={running} onClick={() => fidelity === "rapid-2d" ? void runBrowserSolver() : downloadSuitePlan()}>{running ? "Calculating…" : fidelity === "rapid-2d" ? "Run simulation" : `Download ${selectedLevel.label} specification`}</button>{running && <button className="button danger" onClick={() => abortController.current?.abort()}>Cancel</button>}</div>
       </div>
       {progress && <div className="browser-solver-progress" aria-live="polite"><div><span>{progress.stage === "solving" ? `Solving step ${progress.step.toLocaleString()}` : progress.stage === "analyzing" ? "Analyzing the computed field" : "Initializing the flow field"}</span><strong>{Math.round(progress.fraction * 100)}%</strong></div><progress max="1" value={progress.fraction}/><small>{progress.simulatedTimeMs.toFixed(3)} ms simulated</small></div>}
       {resultError && <p className="runner-error" role="alert">{resultError}</p>}
     </section>
 
     <section className="simulation-results-card" aria-labelledby="simulation-results-title">
-      <div className="simulation-results-heading"><div><span>COMPUTED RESULT</span><h2 id="simulation-results-title">Flow field and next engine change</h2><p>The browser result appears here automatically. Import remains available for an external solver.</p></div><label className="result-upload button secondary">Import external result<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
-      {!result || !recommendation ? <div className="simulation-result-empty"><strong>No computed field yet</strong><p>Select a preset and run Kythros Fast 2D. The calculation stays on this computer.</p><div><span>1 · Solve flow</span><span>2 · Inspect field</span><span>3 · Review recommendation</span></div></div> : <>
+      <div className="simulation-results-heading"><div><span>RESULTS AND DESIGN ADVICE</span><h2 id="simulation-results-title">See the flow, then change the engine</h2><p>Completed and imported results use the same field viewer, diagnostics, and next-action format.</p></div><label className="result-upload button secondary">Import CFD result<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
+      {!result || !recommendation ? <div className="simulation-result-empty"><strong>No computed field yet</strong><p>Run Rapid 2D now, or import a completed Detailed 2D or Full 3D result.</p><div><span>1 · Solve flow</span><span>2 · Inspect in 3D</span><span>3 · Change the engine</span></div></div> : <>
         {fastResult && <section className="fast-field-panel">
-          <div className="fast-field-heading"><div><span>FINAL FIELD · {fastResult.field.nx} × {fastResult.field.ny}</span><strong>Calculated—not an illustration</strong></div><label><span>Display</span><select value={fieldMetric} onChange={(event) => setFieldMetric(event.target.value as FieldMetric)}><option value="pressure">Pressure</option><option value="temperature">Temperature</option><option value="reaction">Reaction progress</option><option value="velocity">Velocity</option></select></label></div>
-          <FastRdeFieldCanvas result={fastResult} metric={fieldMetric}/>
+          <RdeComputedFlow3d design={activeDesign} result={fastResult} metric={fieldMetric} onMetricChange={setFieldMetric}/>
+          <details className="flat-field-details"><summary>Inspect the unwrapped 2D calculation</summary><div className="fast-field-heading"><div><span>FINAL FIELD · {fastResult.field.nx} × {fastResult.field.ny}</span><strong>Periodic circumferential–axial solution</strong></div></div><FastRdeFieldCanvas result={fastResult} metric={fieldMetric}/></details>
           <div className="fast-field-metrics"><span><small>Peak pressure</small><strong>{fastResult.screeningDiagnostics.peakPressureBar.toFixed(2)} bar</strong></span><span><small>Peak temperature</small><strong>{fastResult.screeningDiagnostics.peakTemperatureK.toFixed(0)} K</strong></span><span><small>Wave speed</small><strong>{formatMetric(fastResult.screeningDiagnostics.estimatedWaveSpeedMps, " m/s")}</strong></span><span><small>Estimated thrust</small><strong>{fastResult.screeningDiagnostics.estimatedThrustN.toFixed(1)} N</strong></span><span><small>Device runtime</small><strong>{(fastResult.screeningDiagnostics.elapsedMs / 1000).toFixed(1)} s</strong></span></div>
         </section>}
         <div className="simulation-result-kpis"><span><small>Solver</small><strong>{result.solverName}</strong></span><span><small>Mode</small><strong>{result.propagationMode.replace("-", " ")}</strong></span><span><small>Frequency</small><strong>{formatMetric(result.dominantFrequencyKHz, " kHz")}</strong></span><span><small>Backflow</small><strong>{formatMetric(result.injectorBackflowPct, "%")}</strong></span><span><small>Wall heat flux</small><strong>{formatMetric(result.peakWallHeatFluxMWm2, " MW/m²")}</strong></span></div>
         <div className={`simulation-result-status ${recommendation.resultUsable ? "usable" : "blocked"}`}><strong>{recommendation.resultUsable ? result.evidenceClass === "browser-screening" ? "Screening result ready" : "Numerical gates passed" : "Engine advice withheld"}</strong><p>{recommendation.resultUsable ? result.evidenceClass === "browser-screening" ? "Use this result to choose the next screening change. Confirm important decisions with higher-fidelity CFD and experiment." : "Kythros can use this solver summary for a provisional design decision." : recommendation.pairingIssues[0] ?? recommendation.numericalIssues[0]}</p></div>
         <div className="simulation-recommendation-grid">
           <article className="engine-recommendation"><span>ENGINE CHANGE TO TEST</span><h3>{recommendation.engine.title}</h3><p>{recommendation.engine.action}</p><small>Why: {recommendation.engine.reason}</small>{recommendation.engine.target !== "none" && <button className="button secondary" onClick={recommendation.engine.target === "operating-condition" ? onOpenEnvelope : onOpenDesign}>{recommendation.engine.target === "operating-condition" ? "Choose operating condition →" : "Open engine design →"}</button>}</article>
-          <article className="solver-recommendation"><span>NEXT 2D SIMULATION</span><h3>{recommendation.simulation.title}</h3><p>{recommendation.simulation.action}</p><small>Why: {recommendation.simulation.reason}</small></article>
+          <article className="solver-recommendation"><span>NEXT SIMULATION</span><h3>{recommendation.simulation.title}</h3><p>{recommendation.simulation.action}</p><small>Why: {recommendation.simulation.reason}</small></article>
         </div>
         {fastResult && <div className="fast-result-actions"><button className="button secondary" onClick={() => download(JSON.stringify(fastResult, null, 2), `kythros-fast-2d-${activeDesign.id}.json`)}>Download calculated result</button><details><summary>Numerical integrity</summary><p>{fastResult.screeningDiagnostics.steps.toLocaleString()} CFL-controlled steps · mass conservation error {fastResult.screeningDiagnostics.massConservationErrorPct.toFixed(4)}% · positivity repairs {fastResult.screeningDiagnostics.positivityRepairPct.toFixed(4)}%.</p><p>{fastResult.limitation}</p></details></div>}
       </>}
@@ -235,7 +288,7 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     </section>
 
     <section className="simulation-readiness-card external-export-card">
-      <details><summary>Export this design to another CFD solver</summary><div className="simulation-readiness-summary"><div><span>CASE PACKAGE</span><strong className={pkg.readiness.exportReady ? "ready" : "blocked"}>{pkg.readiness.exportReady ? "Ready" : "Incomplete"}</strong><p>{pkg.readiness.exportReady ? "Periodic geometry, run settings, probe template, and traceability record." : pkg.readiness.blockingIssues[0]}</p></div><div><span>EXTERNAL SOLVER</span><strong className="review">Engineer review required</strong><p>Detailed chemistry, turbulence, walls, ignition, and convergence remain external-solver responsibilities.</p></div></div><div className="simulation-actions"><button className="button secondary" disabled={!pkg.readiness.exportReady} onClick={() => { download(JSON.stringify(pkg, null, 2), rde2dPackageFileName(activeDesign)); setExported(true); }}>Download 2D case package</button>{resultTemplate && <button className="button secondary" onClick={() => download(resultTemplate.content, "kythros-result.template.json")}>Download result template</button>}<button className="button secondary" onClick={onOpenEnvelope}>Choose another condition</button></div>{exported && <p className="simulation-next-step">Package downloaded. Complete and review the selected external solver before execution.</p>}</details>
+      <details><summary>Solver handoff and traceability files</summary><div className="simulation-readiness-summary"><div><span>CASE PACKAGE</span><strong className={pkg.readiness.exportReady ? "ready" : "blocked"}>{pkg.readiness.exportReady ? "Ready" : "Incomplete"}</strong><p>{pkg.readiness.exportReady ? "Periodic geometry, run settings, probe template, and traceability record." : pkg.readiness.blockingIssues[0]}</p></div><div><span>HIGHER FIDELITY</span><strong className="review">Model review required</strong><p>Detailed chemistry, turbulence, walls, injectors, ignition, and convergence must be reviewed for the selected solver.</p></div></div><div className="simulation-actions"><button className="button secondary" disabled={!pkg.readiness.exportReady} onClick={() => { download(JSON.stringify(pkg, null, 2), rde2dPackageFileName(activeDesign)); setExported(true); }}>Download periodic 2D case</button><button className="button secondary" onClick={downloadSuitePlan}>Download current CFD specification</button>{resultTemplate && <button className="button secondary" onClick={() => download(resultTemplate.content, "kythros-result.template.json")}>Download result template</button>}<button className="button secondary" onClick={onOpenEnvelope}>Choose another condition</button></div>{exported && <p className="simulation-next-step">Files downloaded. The design ID and operating condition are preserved for result import and validation.</p>}</details>
     </section>
   </section>;
 }
