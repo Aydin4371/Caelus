@@ -2069,3 +2069,42 @@ body { font-size: 14px; line-height: 1.5; }
   .simulation-workspace .computed-flow-stage,
   .simulation-workspace .computed-flow-host { min-height: 430px; }
 }
+
+
+/* RDRE-specific computed-flow annotations */
+.computed-flow-wave-label {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 2;
+  max-width: 220px;
+  padding: 9px 11px 9px 30px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid rgba(215, 65, 79, .45);
+  border-radius: 6px;
+  background: rgba(255, 247, 243, .92);
+  color: #8e2633;
+  pointer-events: none;
+  box-shadow: 0 8px 22px rgba(84, 48, 44, .08);
+}
+.computed-flow-wave-label::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  position: absolute;
+  top: 13px;
+  left: 11px;
+  border-radius: 50%;
+  background: #ef334b;
+  box-shadow: 0 0 0 5px rgba(239, 51, 75, .13);
+}
+.computed-flow-wave-label strong {
+  font-size: 9px;
+  line-height: 1.2;
+  letter-spacing: .08em;
+}
+.computed-flow-wave-label small {
+  color: #8b6164;
+  font-size: 10px;
+}
