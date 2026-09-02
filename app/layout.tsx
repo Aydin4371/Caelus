@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Kythros by Caelus",
-  description: "Design an RDE, run a fast 2D reacting-flow calculation in the browser, and receive a traceable next-design recommendation.",
+  description: "Design an RDE, move from rapid 2D screening to full 3D CFD, inspect calculated flow, and receive a traceable next-design recommendation.",
   applicationName: "Kythros",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
