@@ -88,7 +88,7 @@ test("connects design, the CFD suite, operating envelopes, and validation", asyn
   assert.match(page, /<Rde2dWorkspace designs=\{designs\}/);
   assert.match(page, /<OperatingEnvelope designs=\{designs\}/);
   assert.match(page, /One RDE workflow, from geometry to evidence/);
-  assert.match(page, /Simulation is not validation/);
+  assert.match(page, /Check it against hardware/);
   assert.match(page, /Detailed operating-point and CFD input reference/);
   assert.match(page, /Experiment Validation/);
   assert.match(simulation, /Input\. Run\. See the flow\./);
