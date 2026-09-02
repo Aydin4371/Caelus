@@ -45,6 +45,10 @@ test("Kythros Fast 2D calculates finite fields and a traceable screening result"
   assert.ok(result.field.pressureBar.every((value) => Number.isFinite(value) && value > 0));
   assert.ok(result.field.temperatureK.every((value) => Number.isFinite(value) && value > 0));
   assert.ok(result.field.reactionProgress.every((value) => value >= 0 && value <= 1));
+  assert.equal(result.field.circumferentialVelocityMps.length, 640);
+  assert.equal(result.field.axialVelocityMps.length, 640);
+  assert.ok(result.field.circumferentialVelocityMps.every((value) => Number.isFinite(value)));
+  assert.ok(result.field.axialVelocityMps.every((value) => Number.isFinite(value)));
   assert.ok(result.screeningDiagnostics.steps > 0);
   assert.ok(result.screeningDiagnostics.massConservationErrorPct < 1);
   assert.equal(result.solverConverged, true);
