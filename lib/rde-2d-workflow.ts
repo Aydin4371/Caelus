@@ -36,6 +36,7 @@ export type Rde2dResultSummary = {
   injectorBackflowPct: number | null;
   peakWallHeatFluxMWm2: number | null;
   peakWallTemperatureK: number | null;
+  evidenceClass?: "external-cfd" | "browser-screening";
 };
 
 export type Rde2dRecommendation = {
@@ -78,7 +79,7 @@ export type Rde2dPackage = {
   };
   readiness: {
     exportReady: boolean;
-    solverReady: false;
+    solverReady: boolean;
     blockingIssues: string[];
     engineerReview: string[];
   };
@@ -87,12 +88,12 @@ export type Rde2dPackage = {
 };
 
 export const DEFAULT_RDE_2D_SETTINGS: Rde2dSettings = {
-  circumferentialCells: 720,
-  axialCells: 240,
-  timeStepNs: 5,
-  endTimeMs: 1,
-  solver: "OpenFOAM custom reacting-flow solver",
-  chemistryMechanism: "Not supplied",
+  circumferentialCells: 192,
+  axialCells: 64,
+  timeStepNs: 250,
+  endTimeMs: 0.45,
+  solver: "Kythros Fast 2D browser solver",
+  chemistryMechanism: "Simplified one-step heat release",
   probeCount: 8,
 };
 
@@ -101,19 +102,19 @@ export const RDE_2D_PRESETS: Rde2dPreset[] = [
     id: "quick",
     label: "Quick screening",
     purpose: "Fast setup check and early wave-development inspection",
-    settings: { circumferentialCells: 180, axialCells: 60, timeStepNs: 20, endTimeMs: 0.25, probeCount: 4 },
+    settings: { circumferentialCells: 96, axialCells: 32, timeStepNs: 1000, endTimeMs: 0.15, probeCount: 4 },
   },
   {
     id: "balanced",
     label: "Balanced development",
     purpose: "Normal design iteration before a refinement study",
-    settings: { circumferentialCells: 360, axialCells: 120, timeStepNs: 10, endTimeMs: 0.5, probeCount: 8 },
+    settings: { circumferentialCells: 144, axialCells: 48, timeStepNs: 500, endTimeMs: 0.3, probeCount: 8 },
   },
   {
     id: "refined",
     label: "Refined evidence",
     purpose: "Higher-cost case for an adjacent mesh or time-step check",
-    settings: { circumferentialCells: 720, axialCells: 240, timeStepNs: 5, endTimeMs: 1, probeCount: 8 },
+    settings: { circumferentialCells: 192, axialCells: 64, timeStepNs: 250, endTimeMs: 0.45, probeCount: 8 },
   },
 ];
 
@@ -204,8 +205,8 @@ ${points}
 }
 
 function meshControlDict() {
-  return `/* Kythros mesh-verification control dictionary.
- * The local runner copies this file to system/controlDict only for blockMesh/checkMesh.
+  return `/* Kythros external-solver mesh-verification control dictionary.
+ * Copy this file to system/controlDict only for blockMesh/checkMesh.
  * A reacting-flow template must supply and review its own complete controlDict. */
 FoamFile
 {
@@ -294,12 +295,12 @@ export function buildRde2dPackage(design: EngineDesign, condition: Rde2dConditio
     operatingCondition: condition,
     geometry: { coordinateSystem: "x: circumferential distance; y: axial distance; z: empty thickness", meanDiameterMm, circumferenceMm, chamberLengthMm: design.chamberLengthMm, annulusGapMm },
     discretization: { ...settings, circumferentialCells: nx, axialCells: ny, probeCount: probes, circumferentialCellSizeMm: dx, axialCellSizeMm: dy, totalCells: nx * ny },
-    readiness: { exportReady: blockingIssues.length === 0, solverReady: false, blockingIssues, engineerReview },
+    readiness: { exportReady: blockingIssues.length === 0, solverReady: blockingIssues.length === 0 && settings.solver === "Kythros Fast 2D browser solver" && settings.chemistryMechanism === "Simplified one-step heat release", blockingIssues, engineerReview },
     files: [
       { path: "README.md", purpose: "Scope, geometry, and mandatory review boundary", content: readme },
       { path: "kythros-case.json", purpose: "Traceable engine, operating-condition, and setup record", content: conditionJson },
       { path: "system/blockMeshDict", purpose: "Periodic 2D unwrapped mesh template", content: blockMeshDict(circumferenceMm * 1e-3, design.chamberLengthMm * 1e-3, nx, ny) },
-      { path: "system/controlDict.mesh", purpose: "Minimal control dictionary used only for local mesh verification", content: meshControlDict() },
+      { path: "system/controlDict.mesh", purpose: "Minimal control dictionary used only for external mesh verification", content: meshControlDict() },
       { path: "system/kythrosRunControl", purpose: "Generated time-step and end-time values for an explicitly reviewed solver controlDict", content: kythrosRunControl(settings) },
       { path: "system/probes.template", purpose: "Circumferential pressure-probe template", content: probeFile(circumferenceMm * 1e-3, design.chamberLengthMm * 1e-3, probes) },
       { path: "kythros-result.template.json", purpose: "Solver-result summary to return to Kythros", content: JSON.stringify(resultTemplate(design, condition, settings), null, 2) },
@@ -335,6 +336,7 @@ export function parseRde2dResult(content: string): Rde2dResultSummary {
     injectorBackflowPct: nullableNumber(raw.injectorBackflowPct),
     peakWallHeatFluxMWm2: nullableNumber(raw.peakWallHeatFluxMWm2),
     peakWallTemperatureK: nullableNumber(raw.peakWallTemperatureK),
+    evidenceClass: raw.evidenceClass === "browser-screening" ? "browser-screening" : "external-cfd",
   };
   const invalid = Object.entries(result).find(([key, value]) => key !== "designFingerprint" && typeof value === "number" && !Number.isFinite(value) && value !== null);
   if (invalid) throw new Error(`The result field ${invalid[0]} must contain a number or null.`);
@@ -352,11 +354,13 @@ export function analyzeRde2dResult(design: EngineDesign, condition: Rde2dConditi
   if (result.operatingConditionId !== condition.id) pairingIssues.push("The result belongs to a different operating condition.");
 
   const numericalIssues: string[] = [];
-  if (!result.solverConverged) numericalIssues.push("The solver did not report convergence.");
-  if (!available(result.meshChangePct)) numericalIssues.push("A mesh-refinement change is not reported.");
-  else if (Math.abs(result.meshChangePct!) > 2) numericalIssues.push(`The monitored result still changes ${Math.abs(result.meshChangePct!).toFixed(1)}% with mesh refinement.`);
-  if (!available(result.timeStepChangePct)) numericalIssues.push("A time-step refinement change is not reported.");
-  else if (Math.abs(result.timeStepChangePct!) > 2) numericalIssues.push(`The monitored result still changes ${Math.abs(result.timeStepChangePct!).toFixed(1)}% with time-step refinement.`);
+  if (!result.solverConverged) numericalIssues.push(result.evidenceClass === "browser-screening" ? "The browser screening run did not complete its numerical integrity checks." : "The solver did not report convergence.");
+  if (result.evidenceClass !== "browser-screening") {
+    if (!available(result.meshChangePct)) numericalIssues.push("A mesh-refinement change is not reported.");
+    else if (Math.abs(result.meshChangePct!) > 2) numericalIssues.push(`The monitored result still changes ${Math.abs(result.meshChangePct!).toFixed(1)}% with mesh refinement.`);
+    if (!available(result.timeStepChangePct)) numericalIssues.push("A time-step refinement change is not reported.");
+    else if (Math.abs(result.timeStepChangePct!) > 2) numericalIssues.push(`The monitored result still changes ${Math.abs(result.timeStepChangePct!).toFixed(1)}% with time-step refinement.`);
+  }
 
   if (pairingIssues.length) return {
     resultUsable: false,
@@ -399,13 +403,29 @@ export function analyzeRde2dResult(design: EngineDesign, condition: Rde2dConditi
     };
   }
 
-  if (["intermittent", "deflagration"].includes(result.propagationMode)) return {
+  if (["intermittent", "deflagration", "unclassified"].includes(result.propagationMode)) {
+    const targetPressure = Math.min(design.inletPressureBarMax, Math.max(condition.inletPressureBar + 0.25, condition.inletPressureBar * 1.05));
+    const targetMassFlow = Math.min(design.massFlowKgSMax, Math.max(condition.massFlowKgS + 0.02, condition.massFlowKgS * 1.05));
+    const targetEquivalenceRatio = condition.equivalenceRatio < 0.96
+      ? Math.min(design.equivalenceRatioMax, Math.max(0.96, condition.equivalenceRatio + 0.05))
+      : condition.equivalenceRatio > 1.04
+        ? Math.max(design.equivalenceRatioMin, Math.min(1.04, condition.equivalenceRatio - 0.05))
+        : null;
+    const target = targetEquivalenceRatio !== null && Math.abs(targetEquivalenceRatio - condition.equivalenceRatio) > 0.001
+      ? { title: `Move equivalence ratio to ${targetEquivalenceRatio.toFixed(2)}`, action: `Change only equivalence ratio from ${condition.equivalenceRatio.toFixed(2)} to ${targetEquivalenceRatio.toFixed(2)}; keep pressure, mass flow, geometry, and grid fixed.` }
+      : targetPressure > condition.inletPressureBar + 0.01
+        ? { title: `Raise inlet pressure to ${targetPressure.toFixed(2)} bar`, action: `Change only inlet pressure from ${condition.inletPressureBar.toFixed(2)} to ${targetPressure.toFixed(2)} bar; keep equivalence ratio, mass flow, geometry, and grid fixed.` }
+        : targetMassFlow > condition.massFlowKgS + 0.001
+          ? { title: `Raise mass flow to ${targetMassFlow.toFixed(3)} kg/s`, action: `Change only mass flow from ${condition.massFlowKgS.toFixed(3)} to ${targetMassFlow.toFixed(3)} kg/s; keep pressure, equivalence ratio, geometry, and grid fixed.` }
+          : { title: "Test the nearest saved operating condition", action: "Change one operating variable to the nearest saved value; keep the engine geometry and numerical setup fixed." };
+    return {
     resultUsable: true,
     pairingIssues,
     numericalIssues,
-    engine: { title: "Keep the hardware fixed", action: "Test one adjacent operating condition before changing chamber or injector geometry.", reason: `The numerically screened result is classified as ${result.propagationMode.replace("-", " ")}; one case does not identify a hardware defect.`, target: "operating-condition" },
-    simulation: { title: "Bracket the operating condition", action: "Change only equivalence ratio or mass flow to the next saved condition and rerun.", reason: "This tests whether the mode is an operating-point effect before altering the engine." },
+    engine: { title: target.title, action: target.action, reason: `The numerically screened result is classified as ${result.propagationMode.replace("-", " ")}. Kythros tests one operating control before changing hardware.`, target: "operating-condition" },
+    simulation: { title: "Rerun exactly one operating change", action: target.action, reason: "This tests whether the propagation state responds before chamber or injector geometry is altered." },
   };
+  }
 
   return {
     resultUsable: true,
