@@ -1804,7 +1804,19 @@ body { font-size: 14px; line-height: 1.5; }
 .simulation-preset-card label { display: grid; gap: 6px; }
 .simulation-cost { min-width: 120px; display: grid; gap: 3px; }
 .simulation-cost strong { font-size: 25px; line-height: 1; }
-.simulation-cost small { color: var(--quiet); font-size: 10px; }
+.simulation-cost small { max-width: 270px; color: var(--quiet); font-size: 11px; line-height: 1.35; }
+.cfd-level-card { background: linear-gradient(135deg, #fbfaf4, #f1f8f7); }
+.cfd-fidelity-strip { margin-top: -7px; display: grid; grid-template-columns: repeat(3, 1fr); overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
+.cfd-fidelity-strip button { min-height: 62px; padding: 11px 16px; display: flex; align-items: center; gap: 11px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.cfd-fidelity-strip button:last-child { border-right: 0; }
+.cfd-fidelity-strip button:hover { background: #f2f8f7; }
+.cfd-fidelity-strip button.active { background: #e5f3f3; box-shadow: inset 0 -3px var(--test); }
+.cfd-fidelity-strip button:disabled { cursor: not-allowed; opacity: .65; }
+.cfd-fidelity-strip b { width: 26px; height: 26px; flex: 0 0 auto; display: grid; place-content: center; border-radius: 50%; background: #dce9e8; color: var(--test); font-size: 11px; }
+.cfd-fidelity-strip button.active b { background: var(--test); color: white; }
+.cfd-fidelity-strip span { min-width: 0; display: grid; gap: 2px; }
+.cfd-fidelity-strip strong { font-size: 14px; }
+.cfd-fidelity-strip small { color: var(--quiet); font-size: 11px; }
 .simulation-primary-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; }
 .simulation-domain-card, .simulation-setup-card, .simulation-readiness-card { overflow: hidden; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); }
 .simulation-domain-card > .card-heading, .simulation-setup-card > .card-heading { padding: 18px 20px; border-bottom: 1px solid var(--line); }
@@ -1845,6 +1857,7 @@ body { font-size: 14px; line-height: 1.5; }
 .runner-badge i { width: 8px; height: 8px; border-radius: 50%; background: #9b6725; box-shadow: 0 0 0 3px rgba(155,103,37,.12); }
 .runner-badge.ready { color: #1f6b58; border-color: #a8d1c5; }
 .runner-badge.ready i { background: #23725f; box-shadow: 0 0 0 3px rgba(35,114,95,.12); }
+.runner-badge.review { color: #8c5d24; border-color: #d8bd91; }
 .runner-badge.unavailable { color: #8f3d36; border-color: #dbb0ab; }
 .runner-badge.unavailable i { background: #a54b43; box-shadow: 0 0 0 3px rgba(165,75,67,.12); }
 .runner-badge.unchecked i { background: #7e8f94; box-shadow: 0 0 0 3px rgba(126,143,148,.12); }
@@ -1859,6 +1872,31 @@ body { font-size: 14px; line-height: 1.5; }
 .browser-solver-progress span, .browser-solver-progress small { color: var(--quiet); font-size: 13px; }
 .button.danger { border-color: #b87068; background: #fff3ef; color: #8f3d36; }
 .fast-field-panel { margin: 20px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: #f8faf7; }
+.computed-flow-3d { overflow: hidden; background: #f5f9f7; }
+.computed-flow-heading { padding: 17px 18px; display: flex; align-items: end; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); background: linear-gradient(135deg, #edf7f5, #f7f9f2); }
+.computed-flow-heading > div > span, .computed-flow-heading label > span { color: var(--test); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.computed-flow-heading h3 { margin: 4px 0; font-size: 23px; letter-spacing: -.02em; }
+.computed-flow-heading p { max-width: 760px; margin: 0; color: var(--quiet); font-size: 13px; line-height: 1.45; }
+.computed-flow-heading label { min-width: 205px; display: grid; gap: 6px; }
+.computed-flow-heading select { min-height: 41px; padding: 8px 34px 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; color: var(--text); font-size: 14px; }
+.computed-flow-toolbar { padding: 10px 14px; display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); background: #fffdf8; }
+.computed-flow-toolbar > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.computed-flow-toolbar button { min-height: 32px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 99px; background: white; color: var(--quiet); cursor: pointer; font-size: 11px; font-weight: 720; }
+.computed-flow-toolbar button:hover, .computed-flow-toolbar button.active { border-color: #2588a2; background: #eaf5f6; color: #15596c; }
+.computed-flow-stage { position: relative; min-height: 500px; background: #edf4f1; }
+.computed-flow-host { position: absolute; inset: 0; min-height: 500px; }
+.computed-flow-host canvas { display: block; width: 100%; height: 100%; }
+.computed-flow-inlet, .computed-flow-outlet { position: absolute; bottom: 15px; z-index: 2; padding: 5px 8px; border: 1px solid rgba(43,87,97,.28); border-radius: 4px; background: rgba(255,253,247,.86); color: #285766; font-size: 9px; font-weight: 800; letter-spacing: .08em; pointer-events: none; }
+.computed-flow-inlet { left: 15px; }
+.computed-flow-outlet { right: 15px; }
+.computed-flow-fallback { position: absolute; inset: 20px; z-index: 3; display: grid; place-content: center; text-align: center; }
+.computed-flow-fallback p { color: var(--quiet); }
+.computed-flow-legend { padding: 10px 17px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; border-top: 1px solid var(--line); color: var(--quiet); font-size: 11px; }
+.computed-flow-legend i { height: 9px; border-radius: 99px; background: linear-gradient(90deg, #122d42, #177691, #3eb59c, #f4cf60, #da6935, #7c232f); }
+.computed-flow-scope { margin: 0; padding: 10px 17px 13px; border-top: 1px solid var(--line); color: var(--quiet); font-size: 11px; line-height: 1.45; }
+.flat-field-details { border-top: 1px solid var(--line); }
+.flat-field-details > summary { padding: 13px 17px; cursor: pointer; background: #fffdf8; color: #1c6073; font-size: 13px; font-weight: 760; }
+.flat-field-details .fast-field-heading { background: #f8faf7; }
 .fast-field-heading { padding: 15px 17px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); }
 .fast-field-heading strong { display: block; margin-top: 3px; font-size: 17px; }
 .fast-field-heading label { min-width: 190px; display: grid; gap: 5px; color: var(--test); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
@@ -1956,12 +1994,16 @@ body { font-size: 14px; line-height: 1.5; }
   .home-evidence-boundary article { border-right: 0; border-bottom: 1px solid var(--line); }
   .home-evidence-boundary article:last-child { border-bottom: 0; }
   .simulation-heading { padding: 18px; }
-  .simulation-form-grid, .simulation-readiness-summary, .simulation-recommendation-grid { grid-template-columns: 1fr; }
+  .simulation-form-grid, .simulation-readiness-summary, .simulation-recommendation-grid, .cfd-fidelity-strip { grid-template-columns: 1fr; }
+  .cfd-fidelity-strip button { border-right: 0; border-bottom: 1px solid var(--line); }
+  .cfd-fidelity-strip button:last-child { border-bottom: 0; }
   .simulation-form-grid label.wide { grid-column: auto; }
   .simulation-domain-stats { grid-template-columns: 1fr 1fr; }
   .simulation-domain-stats span:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
   .simulation-domain-stats span:nth-child(4) { border-top: 1px solid var(--line); }
-  .simulation-results-heading, .simulation-validation-link, .experiment-validation-notice, .browser-solver-heading, .fast-field-heading { align-items: stretch; flex-direction: column; }
+  .simulation-results-heading, .simulation-validation-link, .experiment-validation-notice, .browser-solver-heading, .fast-field-heading, .computed-flow-heading, .computed-flow-toolbar { align-items: stretch; flex-direction: column; }
+  .computed-flow-heading label { min-width: 0; }
+  .computed-flow-stage, .computed-flow-host { min-height: 390px; }
   .runner-badge { align-self: flex-start; }
   .result-upload, .simulation-validation-link .button { width: 100%; justify-content: center; }
   .simulation-result-kpis { grid-template-columns: 1fr 1fr; }
