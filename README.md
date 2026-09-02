@@ -1,12 +1,12 @@
 # Kythros by Caelus
 
-Kythros is a browser-based RDE design and simulation research application. An
+Kythros is a connected RDE design and CFD research application. One immutable
 engine revision supplies geometry, injectors, propellants, materials, cooling,
-and operating limits to a built-in fast 2D reacting-flow solver. The calculated
-field is displayed directly in the product and converted into one controlled
-engine or operating-condition change plus one next-simulation action. All
-primary calculation runs on the user's device without OpenFOAM or paid cloud
-compute.
+and operating limits across Rapid 2D, Detailed 2D, and Full 3D workflows. The
+built-in Rapid 2D solver calculates a periodic reacting-flow field, maps that
+field around the physical annulus in an interactive 3D viewer, and converts the
+result into one controlled engine or operating-condition change plus one
+next-simulation action.
 
 The Operating Envelope records planned, simulation-only, and measured points.
 Experiment Validation remains a separate optional workflow: it pairs three or
@@ -27,22 +27,25 @@ the engine and pairing fingerprints with the case. These controls improve
 reproducibility but do not replace external matched experiment and CFD data.
 
 The application starts as an empty workspace and accepts multiple operating
-points. Its built-in Kythros Fast 2D solver advances a reduced compressible
+points. Its built-in Kythros Rapid 2D solver advances a reduced compressible
 reacting-flow model directly in the browser. The finite-volume calculation uses
 periodic circumferential boundaries, injector inflow, a pressure outlet, an
 ignition kernel, simplified one-step heat release, a Rusanov flux, and an
 adaptive CFL-limited time step. It returns the calculated pressure,
 temperature, reaction-progress, and velocity fields plus wave, pressure-gain,
-backflow, and approximate performance indicators. No OpenFOAM installation,
-cloud account, credential, or per-run charge is required.
+backflow, and approximate performance indicators. Detailed 2D and Full 3D use
+the same engine record, operating condition, model controls, required outputs,
+result import, and traceability workflow, while execution remains assigned to a
+reviewed higher-fidelity solver.
 
 This browser calculation is deliberately a screening model. It omits detailed
 chemical kinetics, turbulence, resolved injector jets, viscous wall heating,
-cooling and component life, and three-dimensional flow. Its outputs are not a
-replacement for reviewed high-fidelity CFD or experiment. A traceable case
-package remains available for engineers who want to continue a design in an
-external solver. Work remains in memory until the user downloads a versioned
-workspace file; refreshing the page does not provide durable browser storage.
+cooling and component life, and three-dimensional flow. The 3D viewer wraps the
+calculated circumferential–axial field around the annulus; it does not convert
+the reduced model into a full 3D CFD solve. Traceable Detailed 2D and Full 3D
+specifications remain available for reviewed solver execution and result return.
+Work remains in memory until the user downloads a versioned workspace file;
+refreshing the page does not provide durable browser storage.
 
 The header Help guide defines every case-loader input. Pressure, spectrum,
 residual, propagation-phase, and cycle-stability graphs remain absent until a
