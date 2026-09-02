@@ -209,7 +209,7 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
 
   return <section className="simulation-workspace" aria-labelledby="simulation-title">
     <header className="simulation-heading">
-      <div><span className="workspace-label">RDE CFD SUITE</span><h1 id="simulation-title">Design, simulate, inspect, and improve the engine</h1><p>Use one engine definition across rapid 2D screening, detailed 2D studies, and full 3D CFD. Every result returns to the same 3D flow view, diagnosis, and next design action.</p></div>
+      <div><span className="workspace-label">RDE FLOW SIMULATION</span><h1 id="simulation-title">Input. Run. See the flow.</h1><p>Select the engine, operating condition, and simulation quality. Kythros calculates the flow, shows it in the 3D engine, and tells you what to change.</p></div>
       <div className="simulation-stage"><span>1 · Design</span><strong>2 · Simulate</strong><span>3 · Inspect 3D</span><span>4 · Improve</span><span>5 · Validate</span></div>
     </header>
 
@@ -242,7 +242,7 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
       </section>
 
       <section className="simulation-setup-card">
-        <div className="card-heading"><div><span>MODEL SETUP</span><h2>{fidelity === "rapid-2d" ? "Rapid screening controls" : `${selectedLevel.label} model controls`}</h2></div></div>
+        <div className="card-heading"><div><span>INPUT</span><h2>Simulation quality</h2></div></div>
         <div className="simulation-form-grid">
           <label className="wide"><span>Run preset</span><select disabled={running} value={presetId} onChange={(event) => choosePreset(event.target.value as Rde2dPresetId)}>{RDE_2D_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.purpose}</option>)}<option value="custom">Custom settings</option></select></label>
           <label className="wide"><span>Grid</span><select disabled={running} value={`${settings.circumferentialCells}x${settings.axialCells}`} onChange={(event) => { const [circumferentialCells, axialCells] = event.target.value.split("x").map(Number); setDiscrete({ circumferentialCells, axialCells }); }}><option value="96x32">Quick · 96 × 32</option><option value="144x48">Balanced · 144 × 48</option><option value="192x64">Refined · 192 × 64</option><option value="256x80">Extra refined · 256 × 80</option></select><small>{pkg.discretization.circumferentialCellSizeMm.toFixed(3)} × {pkg.discretization.axialCellSizeMm.toFixed(3)} mm</small></label>
@@ -259,7 +259,7 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     </div>
 
     <section className="browser-solver-card" aria-labelledby="browser-solver-title">
-      <div className="browser-solver-heading"><div><span>RUN</span><h2 id="browser-solver-title">{fidelity === "rapid-2d" ? "Calculate the flow now" : `Prepare the ${selectedLevel.label} simulation`}</h2><p>{fidelity === "rapid-2d" ? "Kythros calculates the reduced reacting-flow field and sends it directly to the 3D engine viewer and design advisor." : `Kythros packages the same engine revision, operating condition, ${externalSolver} selection, model choices, and required outputs for the higher-fidelity run.`}</p></div><div className={`runner-badge ${fidelity === "rapid-2d" ? "ready" : "review"}`}><i />{selectedLevel.status}</div></div>
+      <div className="browser-solver-heading"><div><span>RUN</span><h2 id="browser-solver-title">{fidelity === "rapid-2d" ? "Run the flow simulation" : `Prepare the ${selectedLevel.label} simulation`}</h2><p>{fidelity === "rapid-2d" ? "Kythros calculates the flow, draws the streamlines through the engine, and returns one recommended change." : `Kythros packages the same engine revision, operating condition, ${externalSolver} selection, model choices, and required outputs for the higher-fidelity run.`}</p></div><div className={`runner-badge ${fidelity === "rapid-2d" ? "ready" : "review"}`}><i />{selectedLevel.status}</div></div>
       <div className="browser-solver-body">
         <div><span>{fidelity === "rapid-2d" ? "THIS RUN INCLUDES" : "CASE SPECIFICATION INCLUDES"}</span><strong>{fidelity === "rapid-2d" ? "Compressible flow, shocks, periodic propagation, injection, ignition, and simplified heat release" : `${turbulenceModel}, ${settings.chemistryMechanism}, ${wallModel}, and ${injectorTreatment}`}</strong><p>{fidelity === "rapid-2d" ? "Use Detailed 2D or Full 3D when the design decision requires turbulence, detailed chemistry, wall heating, discrete injectors, radial structure, or cooling flow." : "Review the generated mesh and numerical setup in the selected solver before execution, then return the result to this workspace."}</p></div>
         <div className="simulation-actions"><button className="button primary" disabled={running} onClick={() => fidelity === "rapid-2d" ? void runBrowserSolver() : downloadSuitePlan()}>{running ? "Calculating…" : fidelity === "rapid-2d" ? "Run simulation" : `Download ${selectedLevel.label} specification`}</button>{running && <button className="button danger" onClick={() => abortController.current?.abort()}>Cancel</button>}</div>
@@ -269,8 +269,8 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     </section>
 
     <section className="simulation-results-card" aria-labelledby="simulation-results-title">
-      <div className="simulation-results-heading"><div><span>RESULTS AND DESIGN ADVICE</span><h2 id="simulation-results-title">See the flow, then change the engine</h2><p>Completed and imported results use the same field viewer, diagnostics, and next-action format.</p></div><label className="result-upload button secondary">Import CFD result<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
-      {!result || !recommendation ? <div className="simulation-result-empty"><strong>No computed field yet</strong><p>Run Rapid 2D now, or import a completed Detailed 2D or Full 3D result.</p><div><span>1 · Solve flow</span><span>2 · Inspect in 3D</span><span>3 · Change the engine</span></div></div> : <>
+      <div className="simulation-results-heading"><div><span>OUTPUT</span><h2 id="simulation-results-title">Simulation result</h2><p>Follow the flow through the engine, review the key outputs, then apply the recommended change.</p></div><label className="result-upload button secondary">Import CFD result<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
+      {!result || !recommendation ? <div className="simulation-result-empty"><strong>Your 3D flow result will appear here</strong><p>Choose the simulation quality above and press Run simulation.</p><div><span>Input</span><span>Run</span><span>Output</span></div></div> : <>
         {fastResult && <section className="fast-field-panel">
           <RdeComputedFlow3d design={activeDesign} result={fastResult} metric={fieldMetric} onMetricChange={setFieldMetric}/>
           <details className="flat-field-details"><summary>Inspect the unwrapped 2D calculation</summary><div className="fast-field-heading"><div><span>FINAL FIELD · {fastResult.field.nx} × {fastResult.field.ny}</span><strong>Periodic circumferential–axial solution</strong></div></div><FastRdeFieldCanvas result={fastResult} metric={fieldMetric}/></details>
