@@ -20,6 +20,10 @@ mkdir -p \
   "$staging_directory/opt/kythros/lib/kythros" \
   "$staging_directory/opt/kythros/share/kythros"
 install -m 0755 "$binary" "$staging_directory/opt/kythros/libexec/kythros-pelec-rdre.bin"
+if [[ -d "$(dirname "$binary")/lib" ]]; then
+  mkdir -p "$staging_directory/opt/kythros/libexec/lib"
+  cp -a "$(dirname "$binary")/lib/." "$staging_directory/opt/kythros/libexec/lib/"
+fi
 install -m 0755 "$solver_root/runtime/kythros_pelec_rdre.py" "$staging_directory/opt/kythros/bin/kythros-pelec-rdre"
 install -m 0644 "$solver_root/runtime/kythros_case.py" "$staging_directory/opt/kythros/lib/kythros/kythros_case.py"
 install -m 0644 "$solver_root/runtime/postprocess_volume.py" "$staging_directory/opt/kythros/lib/kythros/postprocess_volume.py"

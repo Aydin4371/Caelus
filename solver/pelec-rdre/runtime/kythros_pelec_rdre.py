@@ -75,6 +75,14 @@ def run(request_path: Path, result_path: Path) -> None:
     log_path = job_directory / "pelec.log"
     environment = os.environ.copy()
     environment.setdefault("OMP_NUM_THREADS", str(max(1, (os.cpu_count() or 2) - 1)))
+    packaged_library_directory = binary.parent / "lib"
+    if packaged_library_directory.is_dir():
+        prior_library_path = environment.get("LD_LIBRARY_PATH")
+        environment["LD_LIBRARY_PATH"] = (
+            f"{packaged_library_directory}:{prior_library_path}"
+            if prior_library_path
+            else str(packaged_library_directory)
+        )
     started = time.monotonic()
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(

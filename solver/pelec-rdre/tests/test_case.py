@@ -114,6 +114,7 @@ class CaseTranslationTests(unittest.TestCase):
         rendered = render_inputs(template, request_to_parameters(request()))
         self.assertNotIn("{{", rendered)
         self.assertIn('eb2.geom_type = "kythros-annulus"', rendered)
+        self.assertIn("ebd.boundary_grad_stencil_type = 1", rendered)
         self.assertIn("prob.injector_count = 120", rendered)
 
     def test_example_request_stays_valid_json(self) -> None:

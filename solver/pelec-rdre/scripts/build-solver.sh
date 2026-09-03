@@ -46,6 +46,10 @@ if [[ -z "$binary" ]]; then
   exit 1
 fi
 install -m 0755 "$binary" "$output_directory/kythros-pelec-rdre.bin"
+mkdir -p "$output_directory/lib"
+while IFS= read -r library; do
+  install -m 0644 "$library" "$output_directory/lib/$(basename "$library")"
+done < <(ldd "$binary" | awk '$2 == "=>" && $3 ~ /^\// && $3 ~ /PeleC/ { print $3 }')
 printf '%s\n' "$pelec_commit" > "$output_directory/pelec-commit.txt"
 printf '%s\n' "$mode" > "$output_directory/accelerator.txt"
 

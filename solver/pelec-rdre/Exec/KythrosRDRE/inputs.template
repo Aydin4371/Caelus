@@ -52,7 +52,7 @@ pelec.plot_massfrac = 1
 
 eb2.geom_type = "kythros-annulus"
 eb2.small_volfrac = 1.e-8
-ebd.boundary_grad_stencil_type = 0
+ebd.boundary_grad_stencil_type = 1
 pelec.eb_isothermal = 0
 pelec.eb_noslip = 1
 

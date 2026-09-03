@@ -41,7 +41,15 @@ jobs:
           chmod +x solver/pelec-rdre/scripts/*.sh
           solver/pelec-rdre/scripts/validate-source.sh
 
+      - name: Restore the pinned solver build
+        id: solver-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/kythros-solver/output
+          key: kythros-pelec-cpu-${{ hashFiles('solver/pelec-rdre/Exec/KythrosRDRE/GNUmakefile', 'solver/pelec-rdre/Exec/KythrosRDRE/Make.package', 'solver/pelec-rdre/Exec/KythrosRDRE/prob.H', 'solver/pelec-rdre/Exec/KythrosRDRE/prob.cpp', 'solver/pelec-rdre/Exec/KythrosRDRE/prob_parm.H', 'solver/pelec-rdre/scripts/build-solver.sh', 'solver/pelec-rdre/upstream-lock.json') }}
+
       - name: Build pinned PeleC RDRE executable
+        if: steps.solver-cache.outputs.cache-hit != 'true'
         run: solver/pelec-rdre/scripts/build-solver.sh cpu "${RUNNER_TEMP}/kythros-solver"
 
       - name: Execute three-dimensional annulus smoke case
