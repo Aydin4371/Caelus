@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
