@@ -6,7 +6,10 @@ and operating limits across Rapid 2D, Detailed 2D, and Full 3D workflows. The
 built-in Rapid 2D solver calculates a periodic reacting-flow field, maps that
 field around the physical annulus in an interactive 3D viewer, and converts the
 result into one controlled engine or operating-condition change plus one
-next-simulation action.
+next-simulation action. The downloadable Tauri desktop shell adds a local Full
+3D execution boundary: it checks the workstation, launches a fixed solver
+runtime, monitors the job, validates a true cylindrical volume result, and
+displays solver-derived three-component streamlines inside the RDE.
 
 The Operating Envelope records planned, simulation-only, and measured points.
 Experiment Validation remains a separate optional workflow: it pairs three or
@@ -35,8 +38,9 @@ adaptive CFL-limited time step. It returns the calculated pressure,
 temperature, reaction-progress, and velocity fields plus wave, pressure-gain,
 backflow, and approximate performance indicators. Detailed 2D and Full 3D use
 the same engine record, operating condition, model controls, required outputs,
-result import, and traceability workflow, while execution remains assigned to a
-reviewed higher-fidelity solver.
+result import, and traceability workflow. Detailed 2D retains a solver-handoff
+path. Full 3D is wired to the installed desktop runtime and will not start
+unless the supported case, hardware, runtime, and solver checks all pass.
 
 This browser calculation is deliberately a screening model. It omits detailed
 chemical kinetics, turbulence, resolved injector jets, viscous wall heating,
@@ -44,6 +48,9 @@ cooling and component life, and three-dimensional flow. The 3D viewer wraps the
 calculated circumferential–axial field around the annulus; it does not convert
 the reduced model into a full 3D CFD solve. Traceable Detailed 2D and Full 3D
 specifications remain available for reviewed solver execution and result return.
+The Full 3D viewer is separate: it accepts only a radial × circumferential ×
+axial result containing axial, radial, and circumferential velocity fields. It
+never promotes the wrapped 2D calculation to Full 3D.
 Work remains in memory until the user downloads a versioned workspace file;
 refreshing the page does not provide durable browser storage.
 
@@ -54,6 +61,22 @@ case rather than embedded examples.
 
 The current release is a research prototype. It does not certify a model or
 prove the cause of a discrepancy.
+
+## Desktop Full 3D execution
+
+- `npm run desktop:dev` opens the existing application inside the Tauri shell.
+- The Rust command layer owns hardware detection, fixed-path solver execution,
+  progress polling, cancellation, per-job storage, and volumetric result return.
+- Windows uses the `KythrosSolver` WSL2 distribution; Linux uses the same
+  runtime at `/opt/kythros/bin/kythros-pelec-rdre`.
+- The initial case contract is intentionally narrow: rocket-fed annular
+  hydrogen/air or hydrogen/oxygen designs using the reviewed PeleC RDRE pack.
+- Full 3D engine advice is withheld until solver completion, mass conservation,
+  and an adjacent mesh or time-step check pass the product's visible screening
+  gates. These gates are not a claim of experimental validation.
+
+See `docs/local-desktop-cfd.md` and `solver/pelec-rdre/README.md` for the
+runtime contract and the remaining solver-pack validation work.
 
 Automated regression tests use public evidence without presenting partial
 checks as complete experiment-CFD validation. Three compact Zenodo pressure

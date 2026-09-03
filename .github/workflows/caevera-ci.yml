@@ -48,3 +48,33 @@ jobs:
 
       - name: Validate production artifact
         run: npm run validate:artifact
+
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out proposed source
+        uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+          cache: npm
+
+      - name: Use stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Build desktop frontend
+        run: npm run desktop:frontend
+
+      - name: Check desktop command layer
+        run: cargo check --manifest-path src-tauri/Cargo.toml

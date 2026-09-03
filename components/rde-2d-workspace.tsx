@@ -4,6 +4,21 @@ import { ChangeEvent, useEffect, useRef, useState } from "react";
 import type { EngineDesign, OperatingPoint } from "@/lib/design-workspace";
 import { runFastRde2d, type FastRde2dProgress, type FastRde2dResult } from "@/lib/fast-rde-2d";
 import { RdeComputedFlow3d, type ComputedFlowMetric } from "@/components/rde-computed-flow-3d";
+import { RdeVolumeFlow3d } from "@/components/rde-volume-flow-3d";
+import { cancelLocalCfd, getLocalCfdJobStatus, getLocalRunnerStatus, startLocalCfd } from "@/lib/desktop-cfd-client";
+import {
+  assessLocalCfdReadiness,
+  createLocalCfdRunRequest,
+  LOCAL_CFD_PRESETS,
+  parseRde3dVolumeResult,
+  recommendLocalRde3dChange,
+  validateRde3dVolumeResult,
+  type LocalCfdJobStatus,
+  type LocalCfdPresetId,
+  type LocalRunnerStatus,
+  type Rde3dFieldName,
+  type Rde3dVolumeResult,
+} from "@/lib/local-cfd";
 import {
   analyzeRde2dResult,
   buildRde2dPackage,
@@ -34,7 +49,7 @@ type CfdFidelity = "rapid-2d" | "detailed-2d" | "full-3d";
 const CFD_LEVELS: Array<{ id: CfdFidelity; label: string; status: string; purpose: string }> = [
   { id: "rapid-2d", label: "Rapid 2D", status: "Runs now", purpose: "Screen geometry, wave development, pressure, velocity, and engine changes." },
   { id: "detailed-2d", label: "Detailed 2D", status: "Solver workflow", purpose: "Prepare finite-rate chemistry, turbulence, wall, and convergence work." },
-  { id: "full-3d", label: "Full 3D", status: "Solver workflow", purpose: "Prepare resolved injectors, radial structure, cooling, and nozzle flow." },
+  { id: "full-3d", label: "Full 3D", status: "Runs in desktop app", purpose: "Calculate radial, circumferential, and axial flow on the local workstation." },
 ];
 
 function download(content: string, name: string) {
@@ -109,6 +124,11 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const [injectorTreatment, setInjectorTreatment] = useState("Distributed inlet boundary");
   const [exported, setExported] = useState(false);
   const [result, setResult] = useState<Rde2dResultSummary | null>(null);
+  const [volumeResult, setVolumeResult] = useState<Rde3dVolumeResult | null>(null);
+  const [volumeField, setVolumeField] = useState<Rde3dFieldName>("pressure");
+  const [localPresetId, setLocalPresetId] = useState<LocalCfdPresetId>("development");
+  const [localStatus, setLocalStatus] = useState<LocalRunnerStatus | null>(null);
+  const [localJob, setLocalJob] = useState<LocalCfdJobStatus | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<FastRde2dProgress | null>(null);
@@ -117,9 +137,58 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const condition = activeDesign ? points.find((point) => point.id === selectedPointId) ?? midpointCondition(activeDesign) : null;
   const packageData = activeDesign && condition ? buildRde2dPackage(activeDesign, condition, settings) : null;
   const recommendation = activeDesign && condition && result ? analyzeRde2dResult(activeDesign, condition, result) : null;
+  const volumeRecommendation = activeDesign && condition && volumeResult ? recommendLocalRde3dChange(activeDesign, condition, volumeResult) : null;
   const selectedLevel = CFD_LEVELS.find((level) => level.id === fidelity)!;
+  const localReadiness = activeDesign && localStatus ? assessLocalCfdReadiness(localStatus, localPresetId, activeDesign) : null;
 
-  const resetResult = () => { setResult(null); setResultError(null); setExported(false); setProgress(null); };
+  const refreshLocalStatus = async () => {
+    try {
+      setLocalStatus(await getLocalRunnerStatus());
+    } catch (error) {
+      setResultError(error instanceof Error ? error.message : "Kythros could not inspect this computer.");
+    }
+  };
+
+  useEffect(() => {
+    if (fidelity !== "full-3d") return;
+    let cancelled = false;
+    getLocalRunnerStatus().then((status) => {
+      if (!cancelled) setLocalStatus(status);
+    }).catch((error: unknown) => {
+      if (!cancelled) setResultError(error instanceof Error ? error.message : "Kythros could not inspect this computer.");
+    });
+    return () => { cancelled = true; };
+  }, [fidelity]);
+
+  useEffect(() => {
+    if (!localJob || !["queued", "preparing", "meshing", "solving", "post-processing"].includes(localJob.state)) return;
+    let stopped = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const next = await getLocalCfdJobStatus(localJob.runId);
+        if (stopped) return;
+        setLocalJob(next);
+        if (next.state === "completed" && next.result) {
+          const issues = validateRde3dVolumeResult(next.result);
+          if (issues.length) throw new Error(issues[0]);
+          setVolumeResult(next.result);
+          setResult(null);
+          setRunning(false);
+        } else if (["failed", "cancelled"].includes(next.state)) {
+          setRunning(false);
+          if (next.error) setResultError(next.error);
+        }
+      } catch (error) {
+        if (!stopped) {
+          setRunning(false);
+          setResultError(error instanceof Error ? error.message : "Kythros could not monitor the Full 3D run.");
+        }
+      }
+    }, 900);
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [localJob]);
+
+  const resetResult = () => { setResult(null); setVolumeResult(null); setResultError(null); setExported(false); setProgress(null); setLocalJob(null); };
   const setDiscrete = (patch: Partial<Rde2dSettings>) => { setPresetId("custom"); setSettings((current) => ({ ...current, ...patch })); resetResult(); };
   const choosePreset = (id: Rde2dPresetId) => {
     setPresetId(id);
@@ -138,7 +207,18 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      setResult(parseRde2dResult(await file.text()));
+      const content = await file.text();
+      const raw = JSON.parse(content) as { schema?: unknown };
+      if (raw.schema === "kythros-rde-3d-volume") {
+        const imported = parseRde3dVolumeResult(content);
+        if (imported.designId !== activeDesign?.id) throw new Error("This Full 3D result belongs to a different engine revision.");
+        if (imported.operatingConditionId !== condition?.id) throw new Error("This Full 3D result belongs to a different operating condition.");
+        setVolumeResult(imported);
+        setResult(null);
+      } else {
+        setResult(parseRde2dResult(content));
+        setVolumeResult(null);
+      }
       setResultError(null);
     } catch (error) {
       setResult(null);
@@ -179,6 +259,31 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     } finally {
       abortController.current = null;
       setRunning(false);
+    }
+  };
+  const runFull3dSolver = async () => {
+    setResultError(null);
+    setVolumeResult(null);
+    try {
+      const status = await getLocalRunnerStatus();
+      setLocalStatus(status);
+      const readiness = assessLocalCfdReadiness(status, localPresetId, activeDesign);
+      if (!readiness.ready) throw new Error(readiness.blockingIssues[0]);
+      const request = createLocalCfdRunRequest(activeDesign, condition!, localPresetId);
+      setRunning(true);
+      setLocalJob(await startLocalCfd(request));
+    } catch (error) {
+      setRunning(false);
+      setResultError(error instanceof Error ? error.message : "Kythros could not start the Full 3D run.");
+    }
+  };
+  const cancelFull3dSolver = async () => {
+    if (!localJob) return;
+    try {
+      setLocalJob(await cancelLocalCfd(localJob.runId));
+      setRunning(false);
+    } catch (error) {
+      setResultError(error instanceof Error ? error.message : "Kythros could not cancel the Full 3D run.");
     }
   };
   const downloadSuitePlan = () => {
@@ -227,7 +332,22 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
 
     <div className="cfd-fidelity-strip" aria-label="CFD fidelity levels">{CFD_LEVELS.map((level, index) => <button key={level.id} className={fidelity === level.id ? "active" : ""} onClick={() => chooseFidelity(level.id)} disabled={running}><b>{index + 1}</b><span><strong>{level.label}</strong><small>{level.status}</small></span></button>)}</div>
 
-    <div className="simulation-primary-grid">
+    {fidelity === "full-3d" ? <div className="full3d-input-grid">
+      <section className="full3d-engine-summary">
+        <div className="card-heading"><div><span>INPUT</span><h2>{activeDesign.name}</h2></div><small>Immutable engine revision</small></div>
+        <div className="full3d-engine-visual" aria-label="Full annular rotating detonation engine volume">
+          <div className="full3d-engine-shell"><i/><i/><i/></div>
+          <span>Injector</span><b>Annular reacting volume</b><span>Exhaust</span>
+        </div>
+        <div className="simulation-domain-stats"><span><b>{activeDesign.annulusInnerDiameterMm.toFixed(2)} mm</b>Inner diameter</span><span><b>{activeDesign.annulusOuterDiameterMm.toFixed(2)} mm</b>Outer diameter</span><span><b>{activeDesign.chamberLengthMm.toFixed(2)} mm</b>Chamber length</span><span><b>{Math.round(activeDesign.injectorCount)}</b>Injectors</span></div>
+      </section>
+      <section className="simulation-setup-card full3d-setup-card">
+        <div className="card-heading"><div><span>RUN</span><h2>Choose local run quality</h2><p>Kythros uses the saved engine and operating condition. You only choose how much local hardware to use.</p></div></div>
+        <label className="full3d-preset-select"><span>Run quality</span><select disabled={running} value={localPresetId} onChange={(event) => { setLocalPresetId(event.target.value as LocalCfdPresetId); resetResult(); }}>{LOCAL_CFD_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · about {(preset.approximateCells / 1_000_000).toFixed(0)} million cells</option>)}</select></label>
+        <div className="full3d-preset-summary">{(() => { const preset = LOCAL_CFD_PRESETS.find((item) => item.id === localPresetId)!; return <><span><small>Purpose</small><strong>{preset.purpose}</strong></span><span><small>Memory</small><strong>{preset.minimumRamGb}+ GB RAM</strong></span><span><small>GPU</small><strong>{preset.recommendedGpuMemoryGb} GB VRAM recommended</strong></span><span><small>Physics pack</small><strong>PeleC · finite-rate reacting flow · AMR</strong></span></>; })()}</div>
+        <details className="full3d-advanced"><summary>What is fixed in this solver pack?</summary><p>The first reviewed pack is restricted to gas-fed hydrogen/air and hydrogen/oxygen rocket annuli. It retains the exact geometry, injector definition, operating condition, mesh level, CFL, solver version, and executable hash with every result.</p></details>
+      </section>
+    </div> : <div className="simulation-primary-grid">
       <section className="simulation-domain-card">
         <div className="card-heading"><div><span>DOMAIN</span><h2>Periodic unwrapped annulus</h2></div><small>Model geometry</small></div>
         <svg viewBox={`0 0 ${500 * ratio / 3} 240`} role="img" aria-label="Two-dimensional unwrapped annular RDE chamber domain">
@@ -256,21 +376,30 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
           <label className="wide"><span>Injector treatment</span><select disabled={running || fidelity === "rapid-2d"} value={injectorTreatment} onChange={(event) => { setInjectorTreatment(event.target.value); resetResult(); }}><option>Distributed inlet boundary</option><option>Porous injector face</option><option>Resolved discrete injectors</option></select></label>
         </div>
       </section>
-    </div>
+    </div>}
 
     <section className="browser-solver-card" aria-labelledby="browser-solver-title">
-      <div className="browser-solver-heading"><div><span>RUN</span><h2 id="browser-solver-title">{fidelity === "rapid-2d" ? "Run the flow simulation" : `Prepare the ${selectedLevel.label} simulation`}</h2><p>{fidelity === "rapid-2d" ? "Kythros calculates the flow, draws the streamlines through the engine, and returns one recommended change." : `Kythros packages the same engine revision, operating condition, ${externalSolver} selection, model choices, and required outputs for the higher-fidelity run.`}</p></div><div className={`runner-badge ${fidelity === "rapid-2d" ? "ready" : "review"}`}><i />{selectedLevel.status}</div></div>
+      <div className="browser-solver-heading"><div><span>RUN</span><h2 id="browser-solver-title">{fidelity === "rapid-2d" ? "Run the flow simulation" : fidelity === "full-3d" ? "Run Full 3D on this computer" : `Prepare the ${selectedLevel.label} simulation`}</h2><p>{fidelity === "rapid-2d" ? "Kythros calculates the flow, draws the streamlines through the engine, and returns one recommended change." : fidelity === "full-3d" ? "Kythros sends the exact engine case to its installed solver runtime, monitors the calculation, then opens the volumetric result here." : `Kythros packages the same engine revision, operating condition, ${externalSolver} selection, model choices, and required outputs for the higher-fidelity run.`}</p></div><div className={`runner-badge ${fidelity === "rapid-2d" || localReadiness?.ready ? "ready" : "review"}`}><i />{fidelity === "full-3d" ? localStatus === null ? "Checking computer" : localReadiness?.ready ? "Ready to run" : "Setup required" : selectedLevel.status}</div></div>
       <div className="browser-solver-body">
-        <div><span>{fidelity === "rapid-2d" ? "THIS RUN INCLUDES" : "CASE SPECIFICATION INCLUDES"}</span><strong>{fidelity === "rapid-2d" ? "Compressible flow, shocks, periodic propagation, injection, ignition, and simplified heat release" : `${turbulenceModel}, ${settings.chemistryMechanism}, ${wallModel}, and ${injectorTreatment}`}</strong><p>{fidelity === "rapid-2d" ? "Use Detailed 2D or Full 3D when the design decision requires turbulence, detailed chemistry, wall heating, discrete injectors, radial structure, or cooling flow." : "Review the generated mesh and numerical setup in the selected solver before execution, then return the result to this workspace."}</p></div>
-        <div className="simulation-actions"><button className="button primary" disabled={running} onClick={() => fidelity === "rapid-2d" ? void runBrowserSolver() : downloadSuitePlan()}>{running ? "Calculating…" : fidelity === "rapid-2d" ? "Run simulation" : `Download ${selectedLevel.label} specification`}</button>{running && <button className="button danger" onClick={() => abortController.current?.abort()}>Cancel</button>}</div>
+        {fidelity === "full-3d" ? <div className="local-run-readiness"><span>THIS COMPUTER</span><strong>{localStatus?.hardware.gpuName ?? "Desktop hardware not available"}</strong><p>{localReadiness?.ready ? `${localStatus?.hardware.memoryGb?.toFixed(0) ?? "Unknown"} GB RAM · ${localStatus?.hardware.gpuMemoryGb?.toFixed(0) ?? "Unknown"} GB GPU memory · ${localStatus?.solverName} ${localStatus?.solverVersion}` : localReadiness?.blockingIssues[0] ?? "Open the installed desktop app and check the solver setup."}</p>{localReadiness?.warnings[0] && <small>{localReadiness.warnings[0]}</small>}</div> : <div><span>{fidelity === "rapid-2d" ? "THIS RUN INCLUDES" : "CASE SPECIFICATION INCLUDES"}</span><strong>{fidelity === "rapid-2d" ? "Compressible flow, shocks, periodic propagation, injection, ignition, and simplified heat release" : `${turbulenceModel}, ${settings.chemistryMechanism}, ${wallModel}, and ${injectorTreatment}`}</strong><p>{fidelity === "rapid-2d" ? "Use Detailed 2D or Full 3D when the design decision requires turbulence, detailed chemistry, wall heating, discrete injectors, radial structure, or cooling flow." : "Review the generated mesh and numerical setup in the selected solver before execution, then return the result to this workspace."}</p></div>}
+        <div className="simulation-actions"><button className="button primary" disabled={running} onClick={() => fidelity === "rapid-2d" ? void runBrowserSolver() : fidelity === "full-3d" ? void runFull3dSolver() : downloadSuitePlan()}>{running ? fidelity === "full-3d" ? "Full 3D running…" : "Calculating…" : fidelity === "rapid-2d" ? "Run simulation" : fidelity === "full-3d" ? "Run Full 3D" : `Download ${selectedLevel.label} specification`}</button>{running && <button className="button danger" onClick={() => fidelity === "full-3d" ? void cancelFull3dSolver() : abortController.current?.abort()}>Cancel</button>}{fidelity === "full-3d" && !running && <button className="button secondary" onClick={() => void refreshLocalStatus()}>Check computer</button>}</div>
       </div>
-      {progress && <div className="browser-solver-progress" aria-live="polite"><div><span>{progress.stage === "solving" ? `Solving step ${progress.step.toLocaleString()}` : progress.stage === "analyzing" ? "Analyzing the computed field" : "Initializing the flow field"}</span><strong>{Math.round(progress.fraction * 100)}%</strong></div><progress max="1" value={progress.fraction}/><small>{progress.simulatedTimeMs.toFixed(3)} ms simulated</small></div>}
+      {fidelity === "full-3d" && localJob ? <div className="browser-solver-progress" aria-live="polite"><div><span>{localJob.message}</span><strong>{Math.round(localJob.progress * 100)}%</strong></div><progress max="1" value={localJob.progress}/><small>Job {localJob.runId} · {localJob.state.replace("-", " ")}</small></div> : progress && <div className="browser-solver-progress" aria-live="polite"><div><span>{progress.stage === "solving" ? `Solving step ${progress.step.toLocaleString()}` : progress.stage === "analyzing" ? "Analyzing the computed field" : "Initializing the flow field"}</span><strong>{Math.round(progress.fraction * 100)}%</strong></div><progress max="1" value={progress.fraction}/><small>{progress.simulatedTimeMs.toFixed(3)} ms simulated</small></div>}
       {resultError && <p className="runner-error" role="alert">{resultError}</p>}
     </section>
 
     <section className="simulation-results-card" aria-labelledby="simulation-results-title">
       <div className="simulation-results-heading"><div><span>OUTPUT</span><h2 id="simulation-results-title">Simulation result</h2><p>Follow the flow through the engine, review the key outputs, then apply the recommended change.</p></div><label className="result-upload button secondary">Import CFD result<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
-      {!result || !recommendation ? <div className="simulation-result-empty"><strong>Your 3D flow result will appear here</strong><p>Choose the simulation quality above and press Run simulation.</p><div><span>Input</span><span>Run</span><span>Output</span></div></div> : <>
+      {volumeResult && volumeRecommendation ? <>
+        <RdeVolumeFlow3d design={activeDesign} result={volumeResult} field={volumeField} onFieldChange={setVolumeField}/>
+        <div className="simulation-result-kpis"><span><small>Solver</small><strong>{volumeResult.solver.name}</strong></span><span><small>Peak pressure</small><strong>{formatMetric(volumeResult.summary.peakPressureBar, " bar")}</strong></span><span><small>Peak temperature</small><strong>{formatMetric(volumeResult.summary.peakTemperatureK, " K")}</strong></span><span><small>Backflow</small><strong>{formatMetric(volumeResult.summary.injectorBackflowPct, "%")}</strong></span><span><small>Wall heat flux</small><strong>{formatMetric(volumeResult.summary.peakWallHeatFluxMWm2, " MW/m²")}</strong></span></div>
+        <div className={`simulation-result-status ${volumeRecommendation.resultUsable ? "usable" : "blocked"}`}><strong>{volumeRecommendation.status}</strong><p>{volumeRecommendation.detail}</p></div>
+        <div className="simulation-recommendation-grid">
+          <article className="engine-recommendation"><span>ENGINE CHANGE TO TEST</span><h3>{volumeRecommendation.engine.title}</h3><p>{volumeRecommendation.engine.action}</p><small>Why: {volumeRecommendation.engine.reason}</small>{volumeRecommendation.engine.target !== "none" && <button className="button secondary" onClick={volumeRecommendation.engine.target === "operating-condition" ? onOpenEnvelope : onOpenDesign}>{volumeRecommendation.engine.target === "operating-condition" ? "Choose operating condition →" : "Open engine design →"}</button>}</article>
+          <article className="solver-recommendation"><span>NEXT SIMULATION</span><h3>{volumeRecommendation.simulation.title}</h3><p>{volumeRecommendation.simulation.action}</p><small>Why: {volumeRecommendation.simulation.reason}</small></article>
+        </div>
+        <div className="fast-result-actions"><button className="button secondary" onClick={() => download(JSON.stringify(volumeResult, null, 2), `kythros-full-3d-${activeDesign.id}.json`)}>Download volumetric result</button><details><summary>Numerical integrity and provenance</summary><p>Mass conservation error: {formatMetric(volumeResult.summary.massConservationErrorPct, "%")} · adjacent-grid change: {formatMetric(volumeResult.summary.adjacentGridChangePct, "%")} · adjacent-time-step change: {formatMetric(volumeResult.summary.adjacentTimeStepChangePct, "%")}.</p><p>Solver {volumeResult.solver.name} {volumeResult.solver.version} · executable {volumeResult.solver.executableHash} · validation status {volumeResult.provenance.validationStatus.replaceAll("-", " ")}.</p></details></div>
+      </> : !result || !recommendation ? <div className="simulation-result-empty"><strong>Your calculated flow will appear here</strong><p>Choose the simulation quality above and press Run.</p><div><span>Input</span><span>Run</span><span>Output</span></div></div> : <>
         {fastResult && <section className="fast-field-panel">
           <RdeComputedFlow3d design={activeDesign} result={fastResult} metric={fieldMetric} onMetricChange={setFieldMetric}/>
           <details className="flat-field-details"><summary>Inspect the unwrapped 2D calculation</summary><div className="fast-field-heading"><div><span>FINAL FIELD · {fastResult.field.nx} × {fastResult.field.ny}</span><strong>Periodic circumferential–axial solution</strong></div></div><FastRdeFieldCanvas result={fastResult} metric={fieldMetric}/></details>

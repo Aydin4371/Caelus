@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kythros",
+  "version": "0.1.0",
+  "identifier": "ca.caelus.kythros",
+  "build": {
+    "beforeDevCommand": "vite --config vite.desktop.config.ts",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run desktop:frontend",
+    "frontendDist": "../dist-desktop"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Kythros by Caelus",
+        "width": 1440,
+        "height": 960,
+        "minWidth": 1080,
+        "minHeight": 720,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "shortDescription": "Design, run, inspect, and validate rotating detonation engines.",
+    "longDescription": "Kythros connects versioned RDRE definitions, local CFD execution, volumetric results, design guidance, and experiment validation."
+  }
+}
