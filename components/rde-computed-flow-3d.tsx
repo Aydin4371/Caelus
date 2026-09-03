@@ -123,32 +123,93 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
     const chamberLength = 6.4;
     const inletX = -0.5 * chamberLength;
     const outletX = 0.5 * chamberLength;
-    const orientAlongX = <T extends THREE.Object3D>(object: T) => { object.rotation.z = Math.PI / 2; return object; };
-    const material = (color: number, opacity = 1, metalness = 0.1) => new THREE.MeshStandardMaterial({ color, transparent: opacity < 1, opacity, metalness, roughness: 0.48, side: THREE.DoubleSide, depthWrite: opacity > 0.45 });
+    const orientAlongX = <T extends THREE.Object3D>(object: T) => { object.rotation.z = -Math.PI / 2; return object; };
+    const material = (color: number, opacity = 1, metalness = 0.1, roughness = 0.48) => new THREE.MeshStandardMaterial({
+      color,
+      transparent: opacity < 1,
+      opacity,
+      metalness,
+      roughness,
+      side: THREE.DoubleSide,
+      depthWrite: opacity > 0.45,
+    });
 
-    const centerbody = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(innerRadius, innerRadius, chamberLength + 0.1, 64), material(0xb99768, 1, 0.24)));
+    const shellStart = cutaway ? Math.PI * 0.18 : 0;
+    const shellArc = cutaway ? Math.PI * 1.48 : Math.PI * 2;
+    const shellOpacity = cutaway ? 0.34 : 0.14;
+
+    // Feed plenum and injector face make the head end read as an RDRE rather than a generic tube.
+    const plenum = orientAlongX(new THREE.Mesh(
+      new THREE.CylinderGeometry(outerRadius + 0.42, outerRadius + 0.42, 0.76, 72),
+      material(0x668187, 0.82, 0.62, 0.32),
+    ));
+    plenum.position.x = inletX - 0.42;
+    scene.add(plenum);
+
+    const injectorFace = new THREE.Mesh(
+      new THREE.RingGeometry(innerRadius + 0.025, outerRadius - 0.025, 72),
+      material(0xb9434e, 1, 0.42, 0.34),
+    );
+    injectorFace.rotation.y = Math.PI / 2;
+    injectorFace.position.x = inletX + 0.015;
+    scene.add(injectorFace);
+    const injectorCount = Math.max(16, Math.min(32, Math.round(design.injectorCount / 4) || 24));
+    for (let index = 0; index < injectorCount; index += 1) {
+      const angle = index / injectorCount * Math.PI * 2;
+      const orifice = new THREE.Mesh(
+        new THREE.SphereGeometry(0.052, 9, 7),
+        material(0xf1b24b, 1, 0.06, 0.3),
+      );
+      orifice.position.set(inletX + 0.04, Math.cos(angle) * fieldRadius, Math.sin(angle) * fieldRadius);
+      scene.add(orifice);
+    }
+
+    // The centerbody forms the inner wall of the annular combustor and tapers downstream.
+    const centerbody = orientAlongX(new THREE.Mesh(
+      new THREE.CylinderGeometry(innerRadius, innerRadius, chamberLength + 0.04, 72),
+      material(0x88989b, 1, 0.56, 0.3),
+    ));
     scene.add(centerbody);
-    const centerCone = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(0.08, innerRadius, 1.4, 64), material(0xb99768, 1, 0.24)));
-    centerCone.position.x = outletX + 0.72;
+    const centerCone = orientAlongX(new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, innerRadius, 1.62, 72),
+      material(0x88989b, 1, 0.56, 0.3),
+    ));
+    centerCone.position.x = outletX + 0.8;
     scene.add(centerCone);
 
-    const shellStart = cutaway ? Math.PI * 0.19 : 0;
-    const shellArc = cutaway ? Math.PI * 1.50 : Math.PI * 2;
-    const shellOpacity = cutaway ? 0.42 : 0.16;
-    const outerShell = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(outerRadius + 0.18, outerRadius + 0.18, chamberLength + 0.18, 72, 1, true, shellStart, shellArc), material(0x789294, shellOpacity, 0.42)));
+    const hotWall = orientAlongX(new THREE.Mesh(
+      new THREE.CylinderGeometry(outerRadius + 0.025, outerRadius + 0.025, chamberLength + 0.08, 72, 1, true, shellStart, shellArc),
+      material(0xb87333, cutaway ? 0.78 : 0.24, 0.48, 0.35),
+    ));
+    scene.add(hotWall);
+    const outerShell = orientAlongX(new THREE.Mesh(
+      new THREE.CylinderGeometry(outerRadius + 0.22, outerRadius + 0.22, chamberLength + 0.22, 72, 1, true, shellStart, shellArc),
+      material(0xaebfc1, shellOpacity, 0.68, 0.25),
+    ));
     scene.add(outerShell);
-    const injector = new THREE.Mesh(new THREE.TorusGeometry(fieldRadius, Math.max(0.045, 0.22 * (outerRadius - innerRadius)), 12, 72), material(0xc9545c, 0.95, 0.14));
-    injector.rotation.y = Math.PI / 2;
-    injector.position.x = inletX;
-    scene.add(injector);
-    const nozzle = orientAlongX(new THREE.Mesh(new THREE.CylinderGeometry(outerRadius + 0.75, outerRadius + 0.2, 1.65, 64, 1, true, shellStart, shellArc), material(0x687f86, cutaway ? 0.54 : 0.18, 0.5)));
-    nozzle.position.x = outletX + 0.82;
+
+    // Expanding exhaust shroud and tapered centerbody are both on the downstream end.
+    const nozzle = orientAlongX(new THREE.Mesh(
+      new THREE.CylinderGeometry(outerRadius + 0.88, outerRadius + 0.2, 1.72, 72, 1, true, shellStart, shellArc),
+      material(0x586c73, cutaway ? 0.62 : 0.18, 0.72, 0.24),
+    ));
+    nozzle.position.x = outletX + 0.84;
     scene.add(nozzle);
+    const nozzleLip = new THREE.Mesh(
+      new THREE.TorusGeometry(outerRadius + 0.86, 0.075, 10, 72, shellArc),
+      material(0x40575f, 0.9, 0.76, 0.2),
+    );
+    nozzleLip.rotation.y = Math.PI / 2;
+    nozzleLip.rotation.x = shellStart;
+    nozzleLip.position.x = outletX + 1.69;
+    scene.add(nozzleLip);
 
     const sourceNx = result.field.nx;
     const sourceNy = result.field.ny;
     const circumferentialSegments = Math.min(128, sourceNx);
     const axialSegments = Math.min(64, sourceNy);
+    const visibleFieldStart = cutaway ? shellStart : 0;
+    const visibleFieldArc = cutaway ? shellArc : Math.PI * 2;
     const positions: number[] = [];
     const colors: number[] = [];
     const indices: number[] = [];
@@ -156,9 +217,9 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
       const sourceY = Math.min(sourceNy - 1, Math.round(axial / Math.max(1, axialSegments - 1) * (sourceNy - 1)));
       const x = inletX + axial / Math.max(1, axialSegments - 1) * chamberLength;
       for (let circumferential = 0; circumferential <= circumferentialSegments; circumferential += 1) {
-        const wrapped = circumferential % circumferentialSegments;
-        const sourceX = Math.min(sourceNx - 1, Math.floor(wrapped / circumferentialSegments * sourceNx));
-        const theta = circumferential / circumferentialSegments * Math.PI * 2;
+        const theta = visibleFieldStart + circumferential / circumferentialSegments * visibleFieldArc;
+        const normalizedTheta = ((theta % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        const sourceX = Math.min(sourceNx - 1, Math.floor(normalizedTheta / (Math.PI * 2) * sourceNx));
         positions.push(x, Math.cos(theta) * fieldRadius, Math.sin(theta) * fieldRadius);
         const displayColor = normalizedColor(values[sourceY * sourceNx + sourceX], minimum, maximum);
         colors.push(displayColor.r, displayColor.g, displayColor.b);
@@ -179,8 +240,51 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
     fieldGeometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     fieldGeometry.setIndex(indices);
     fieldGeometry.computeVertexNormals();
-    const fieldSurface = new THREE.Mesh(fieldGeometry, new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.52, metalness: 0.02 }));
+    const fieldSurface = new THREE.Mesh(fieldGeometry, new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      roughness: 0.48,
+      metalness: 0.01,
+      transparent: true,
+      opacity: cutaway ? 0.86 : 0.72,
+    }));
     scene.add(fieldSurface);
+
+    // A localized front spanning the annular gap is the defining visual feature of an RDRE.
+    const detonationGroup = new THREE.Group();
+    const frontMaterial = new THREE.MeshStandardMaterial({
+      color: 0xff334b,
+      emissive: 0xff132f,
+      emissiveIntensity: 1.6,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.96,
+      depthWrite: false,
+    });
+    const reactionMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffa12e,
+      emissive: 0xf06519,
+      emissiveIntensity: 0.9,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.68,
+      depthWrite: false,
+    });
+    const front = new THREE.Mesh(
+      new THREE.RingGeometry(innerRadius + 0.018, outerRadius - 0.018, 52, 1, -0.06, 0.16),
+      frontMaterial,
+    );
+    front.rotation.y = Math.PI / 2;
+    front.position.x = inletX + chamberLength * 0.23;
+    detonationGroup.add(front);
+    const reactionZone = new THREE.Mesh(
+      new THREE.RingGeometry(innerRadius + 0.03, outerRadius - 0.03, 52, 1, -0.28, 0.24),
+      reactionMaterial,
+    );
+    reactionZone.rotation.y = Math.PI / 2;
+    reactionZone.position.x = front.position.x + 0.24;
+    detonationGroup.add(reactionZone);
+    scene.add(detonationGroup);
 
     const circumferentialVelocity = result.field.circumferentialVelocityMps ?? result.field.velocityMps.map(() => 0);
     const axialVelocity = result.field.axialVelocityMps ?? result.field.velocityMps;
@@ -202,8 +306,9 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
           const uAxial = axialVelocity[sourceIndex] ?? 0;
           const localRadius = radius + 0.018 * Math.sin(sample * 0.24 + seed);
           points.push(new THREE.Vector3(inletX + axialFraction * chamberLength, Math.cos(theta) * localRadius, Math.sin(theta) * localRadius));
-          theta += 0.045 * uTheta / velocityScale;
-          axialFraction += 0.009 + 0.009 * Math.max(0.12, uAxial / velocityScale);
+          const axialStep = 0.012 + 0.008 * Math.max(0.12, Math.abs(uAxial) / velocityScale);
+          theta += 0.11 * Math.tanh(uTheta / Math.max(1, Math.abs(uAxial)));
+          axialFraction += axialStep;
           if (axialFraction > 1) break;
         }
         if (points.length < 3) continue;
@@ -253,7 +358,8 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
       const elapsedSeconds = Math.min(0.05, Math.max(0, time - previousTime) / 1000);
       previousTime = time;
       if (playingRef.current && !reduceMotion) playbackPhase += elapsedSeconds * Math.min(2.4, Math.max(0.25, waveRotationsPerSecond / 800)) * Math.PI * 2;
-      fieldSurface.rotation.x = playbackPhase;
+      fieldSurface.rotation.x = cutaway ? 0 : playbackPhase;
+      detonationGroup.rotation.x = playbackPhase;
       const positionsAttribute = tracerGeometry.getAttribute("position") as THREE.BufferAttribute;
       for (let index = 0; index < tracerCount; index += 1) {
         const axial = (tracerPhase[index] + time * 0.00008 * (playingRef.current ? 1 : 0)) % 1;
@@ -272,7 +378,7 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
       resizeObserver.disconnect();
       controls.dispose();
       scene.traverse((object) => {
-        if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Points || object instanceof THREE.Line) {
           object.geometry.dispose();
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           materials.forEach((item) => item.dispose());
@@ -285,7 +391,7 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
 
   return <section className="computed-flow-3d" aria-labelledby="computed-flow-title">
     <div className="computed-flow-heading">
-      <div><span>OUTPUT</span><h3 id="computed-flow-title">3D flow through the engine</h3><p>Rotate the engine and follow the calculated streamlines from the injector to the exhaust.</p></div>
+      <div><span>OUTPUT</span><h3 id="computed-flow-title">Flow through the RDRE</h3><p>Rotate the cutaway to see the annular chamber, rotating detonation front, streamlines, and exhaust.</p></div>
       <label><span>Display field</span><select value={metric} onChange={(event) => onMetricChange(event.target.value as ComputedFlowMetric)}><option value="pressure">Pressure</option><option value="temperature">Temperature</option><option value="reaction">Reaction progress</option><option value="velocity">Velocity magnitude</option></select></label>
     </div>
     <div className="computed-flow-toolbar" aria-label="3D flow controls">
@@ -294,9 +400,10 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
     </div>
     <div className="computed-flow-stage">
       <div ref={hostRef} className="computed-flow-host" />
-      <span className="computed-flow-inlet">INJECTOR</span><span className="computed-flow-outlet">EXHAUST</span>
+      <span className="computed-flow-wave-label"><strong>ROTATING DETONATION FRONT</strong><small>shock + reaction zone</small></span>
+      <span className="computed-flow-inlet">PROPELLANT INJECTION</span><span className="computed-flow-outlet">NOZZLE / EXHAUST</span>
     </div>
     <div className="computed-flow-legend"><span>{minimum.toFixed(metric === "reaction" ? 2 : 1)} {fieldUnit(metric)}</span><i/><span>{maximum.toFixed(metric === "reaction" ? 2 : 1)} {fieldUnit(metric)}</span></div>
-    <p className="computed-flow-scope">The current solver calculates circumferential and axial velocity; radial full-3D solver fidelity remains in development.</p>
+    <p className="computed-flow-scope">Screening CFD shown inside the entered annular engine geometry.</p>
   </section>;
 }

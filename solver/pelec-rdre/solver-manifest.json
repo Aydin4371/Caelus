@@ -1,0 +1,30 @@
+{
+  "schema": "kythros-solver-pack-manifest",
+  "formatVersion": 1,
+  "id": "pelec-rdre-gas-hydrogen-v1",
+  "displayName": "PeleC RDRE solver pack",
+  "status": "integration-and-validation-required",
+  "executable": "/opt/kythros/bin/kythros-pelec-rdre",
+  "supportedPlatforms": ["windows-wsl2-x86_64", "linux-x86_64"],
+  "supportedCases": [
+    {
+      "geometry": "annular-rdre",
+      "application": "Rocket",
+      "feed": "gas",
+      "fuel": "Hydrogen",
+      "oxidizers": ["Air", "Oxygen"]
+    }
+  ],
+  "requiredResultSchema": "kythros-rde-3d-volume",
+  "requiredResultFormatVersion": 1,
+  "releaseGates": [
+    "shock-tube",
+    "reacting-shock",
+    "cj-znd",
+    "mass-energy-conservation",
+    "mesh-convergence",
+    "time-step-convergence",
+    "rde-wave-metrics",
+    "signed-runtime"
+  ]
+}
