@@ -1,0 +1,13 @@
+source_id,case_id,run,measurement,location,value,unit,provenance,source_locator
+tobias-agrawal-paxson-2022,case-a-high-flowrate,experiment,wave_frequency,RDC annulus,6.4,kHz,transcribed published value,p. 5 Results text
+tobias-agrawal-paxson-2022,case-a-high-flowrate,cfd,wave_frequency,RDC annulus,6.6,kHz,transcribed published value,p. 5 Results text
+tobias-agrawal-paxson-2022,case-a-high-flowrate,experiment,static_pressure,"CTAP 1, z = 22.3 mm",425,kPa,transcribed published value,p. 5 Figure 4 discussion
+tobias-agrawal-paxson-2022,case-a-high-flowrate,cfd,static_pressure,"CTAP 1, z = 22.3 mm",400,kPa,transcribed published value,p. 5 Figure 4 discussion
+tobias-agrawal-paxson-2022,case-a-high-flowrate,experiment,static_pressure,"CTAP 3, z = 92 mm",380,kPa,transcribed published value,p. 5 Figure 4 discussion
+tobias-agrawal-paxson-2022,case-a-high-flowrate,cfd,static_pressure,"CTAP 3, z = 92 mm",380,kPa,transcribed published value,p. 5 Figure 4 discussion
+strakey-bedick-ferguson-2021,afrl-netl-phi-1-atmospheric-0.5-mm,experiment,wave_count,RDC annulus,1,count,transcribed published value,p. 5 Results text
+strakey-bedick-ferguson-2021,afrl-netl-phi-1-atmospheric-0.5-mm,experiment,wave_speed,RDC annulus,1740,m/s,transcribed published value,p. 5 Results text
+strakey-bedick-ferguson-2021,afrl-netl-phi-1-atmospheric-0.5-mm,baseline_cfd,wave_count,RDC annulus,2,count,transcribed published value,p. 5 Results text
+strakey-bedick-ferguson-2021,afrl-netl-phi-1-atmospheric-0.5-mm,baseline_cfd,wave_speed,RDC annulus,1790,m/s,transcribed published value,p. 5 Results text
+strakey-bedick-ferguson-2021,afrl-netl-phi-1-atmospheric-0.5-mm,pasr_cfd,wave_count,RDC annulus,1,count,transcribed published value,p. 5 Results text
+strakey-bedick-ferguson-2021,afrl-netl-phi-1-atmospheric-0.5-mm,pasr_cfd,wave_speed,RDC annulus,1844,m/s,transcribed published value,p. 5 Results text

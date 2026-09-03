@@ -1,0 +1,52 @@
+{
+  "name": "kythros-by-caelus",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "install:ci": "bash scripts/install-ci.sh",
+    "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
+    "build": "bash scripts/build-verified.sh",
+    "desktop:dev": "npx --yes @tauri-apps/cli@2.11.4 dev",
+    "desktop:frontend": "vite build --config vite.desktop.config.ts",
+    "desktop:build": "npx --yes @tauri-apps/cli@2.11.4 build",
+    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "test": "npm run test:analysis && npm run build && node --test tests/rendered-html.test.mjs",
+    "test:analysis": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:solver-source": "bash solver/pelec-rdre/scripts/validate-source.sh",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "validate:artifact": "bash scripts/validate-artifact.sh",
+    "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern dist-desktop --ignore-pattern .next",
+    "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.2",
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.37.1",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@types/three": "0.180.0",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "drizzle-kit": "0.31.10",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6",
+    "react-server-dom-webpack": "19.2.6",
+    "tailwindcss": "4.2.1",
+    "typescript": "5.9.3",
+    "vinext": "0.0.50",
+    "vite": "8.0.13",
+    "wrangler": "4.92.0"
+  },
+  "type": "module",
+  "displayName": "Kythros by Caelus"
+}
