@@ -2,15 +2,16 @@
 
 ## User flow
 
-1. Save an immutable RDE revision in **Design**.
-2. Open **CFD Suite**, select **Full 3D**, an operating point, and a run quality.
-3. Press **Run Full 3D**. Kythros checks the computer on every attempt.
-4. The desktop command layer writes one versioned request and starts the fixed
+1. Download and run the combined Windows desktop installer.
+2. Open **CFD Suite**, select **Full 3D**, and press **Install Full 3D runtime** once.
+3. If Windows enables WSL2, restart when requested and press Install again.
+4. Select an engine, operating point, and run quality, then press **Run Full 3D**.
+5. The desktop command layer writes one versioned request and starts the fixed
    solver executable without constructing a shell command from user input.
-5. Kythros polls the local job, validates the returned volume, and displays
+6. Kythros polls the local job, validates the returned volume, and displays
    pressure, temperature, reaction progress, velocity magnitude, and integrated
    streamlines.
-6. Numerical gates either withhold engine advice or return one controlled change
+7. Numerical gates either withhold engine advice or return one controlled change
    and one next simulation.
 
 The browser build remains useful for Rapid 2D and for opening results. It cannot
@@ -45,12 +46,21 @@ Missing quantities remain `null`. A result is rejected if any required field has
 the wrong length, contains a non-finite value, loses positivity, or lacks solver
 provenance.
 
-## Release boundary
+## Implemented solver case
 
-The desktop process control and volume contract are implemented in this source
-tree. A distributable production solver runtime additionally requires a pinned
-PeleC build, an RDRE-specific problem definition, benchmark evidence, signed
-Windows/Linux packages, and release hardware testing. Until those artifacts
-pass, the UI reports **solver pack not installed** and does not invent a Full 3D
-result.
+- Three-dimensional Cartesian PeleC domain with an embedded annular chamber
+- Finite-rate LiDryer hydrogen chemistry
+- Circular injectors inherited from the saved engine revision
+- Injector mass flow, angle, temperature, and mixture ratio from the operating point
+- Characteristic pressure outlet and adiabatic no-slip annulus walls
+- Temperature- and pressure-gradient AMR
+- AMReX plotfiles retained locally and sampled into the Kythros cylindrical volume
 
+## Evidence boundary
+
+The source build and installer path are implemented. The CPU release remains a
+development solver until the shock, detonation, conservation, convergence, and
+RDRE wave-metric validation ladder passes. CUDA performance, installer signing,
+and clean-machine release testing are separate release gates. Kythros must not
+present a completed calculation as experiment-validated before those gates and
+prospective RDE evidence pass.

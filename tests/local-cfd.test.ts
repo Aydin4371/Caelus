@@ -43,6 +43,7 @@ const readyStatus: LocalRunnerStatus = {
   solverInstalled: true,
   solverName: "PeleC RDRE solver pack",
   solverVersion: "1.0.0",
+  solverAccelerator: "cuda",
   hardware: { platform: "windows", architecture: "x86_64", logicalCpuCount: 24, memoryGb: 64, gpuName: "NVIDIA GPU", gpuMemoryGb: 24, cudaAvailable: true },
   details: [],
 };
@@ -71,13 +72,19 @@ function volumeResult(): Rde3dVolumeResult {
   };
 }
 
-test("Full 3D readiness requires desktop runtime, supported case, and CUDA hardware", () => {
+test("Full 3D readiness requires desktop runtime and a supported case", () => {
   assert.equal(assessLocalCfdReadiness(readyStatus, "development", design).ready, true);
   const browser = { ...readyStatus, desktop: false };
   assert.equal(assessLocalCfdReadiness(browser, "development", design).ready, false);
   assert.match(assessLocalCfdReadiness(browser, "development", design).blockingIssues[0], /desktop app/);
   const unsupported = { ...design, fuel: "Kerosene" };
   assert.ok(assessLocalCfdReadiness(readyStatus, "development", unsupported).blockingIssues.some((issue) => /hydrogen/.test(issue)));
+  const cpu = { ...readyStatus, solverAccelerator: "cpu-openmp" as const, hardware: { ...readyStatus.hardware, gpuName: null, gpuMemoryGb: null, cudaAvailable: false } };
+  assert.equal(assessLocalCfdReadiness(cpu, "development", design).ready, true);
+  assert.match(assessLocalCfdReadiness(cpu, "development", design).warnings[0], /CPU solver/);
+  assert.equal(assessLocalCfdReadiness(cpu, "workstation", design).ready, false);
+  const cpuOnGpuMachine = { ...readyStatus, solverAccelerator: "cpu-openmp" as const };
+  assert.equal(assessLocalCfdReadiness(cpuOnGpuMachine, "workstation", design).ready, false);
 });
 
 test("Full 3D request preserves immutable engine and operating-condition identity", () => {

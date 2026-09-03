@@ -37,6 +37,9 @@ yarn-error.log*
 next-env.d.ts
 *.tsbuildinfo
 /dist/
+/dist-desktop/
+__pycache__/
+*.pyc
 /.wrangler/
 /.sites-runtime/
 /outputs/

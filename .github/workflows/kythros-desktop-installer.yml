@@ -1,0 +1,99 @@
+name: Kythros Full 3D installer
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "solver/pelec-rdre/**"
+      - "src-tauri/**"
+      - "desktop/**"
+      - "lib/local-cfd.ts"
+      - "lib/desktop-cfd-client.ts"
+      - "components/rde-2d-workspace.tsx"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/kythros-desktop-installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kythros-installer-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  solver-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out Kythros
+        uses: actions/checkout@v4
+
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gfortran cmake ninja-build pkg-config
+
+      - name: Validate the solver request boundary
+        run: |
+          chmod +x solver/pelec-rdre/scripts/*.sh
+          solver/pelec-rdre/scripts/validate-source.sh
+
+      - name: Build pinned PeleC RDRE executable
+        run: solver/pelec-rdre/scripts/build-solver.sh cpu "${RUNNER_TEMP}/kythros-solver"
+
+      - name: Execute three-dimensional annulus smoke case
+        run: solver/pelec-rdre/scripts/test-smoke.sh "${RUNNER_TEMP}/kythros-solver/output/kythros-pelec-rdre.bin" "${RUNNER_TEMP}/kythros-smoke"
+
+      - name: Assemble solver runtime
+        run: solver/pelec-rdre/scripts/package-runtime.sh "${RUNNER_TEMP}/kythros-solver/output/kythros-pelec-rdre.bin" "${RUNNER_TEMP}/kythros-solver/output/accelerator.txt" "${RUNNER_TEMP}/runtime-stage" "${RUNNER_TEMP}/kythros-runtime.tar.gz"
+
+      - name: Build the isolated WSL2 runtime image
+        run: solver/pelec-rdre/scripts/build-rootfs.sh "${RUNNER_TEMP}/kythros-runtime.tar.gz" "${RUNNER_TEMP}/rootfs-build" "${RUNNER_TEMP}/kythros-solver-rootfs.tar"
+
+      - name: Upload solver image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kythros-solver-rootfs
+          path: ${{ runner.temp }}/kythros-solver-rootfs.tar
+          retention-days: 7
+          compression-level: 1
+
+  windows-installer:
+    needs: solver-runtime
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out Kythros
+        uses: actions/checkout@v4
+
+      - name: Download packaged Full 3D runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: kythros-solver-rootfs
+          path: src-tauri/resources
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+          cache: npm
+
+      - name: Use stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Build the combined Windows installer
+        run: npm run desktop:build
+
+      - name: Upload installable application
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kythros-Windows-Installer
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14

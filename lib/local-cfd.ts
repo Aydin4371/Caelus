@@ -71,6 +71,7 @@ export type LocalRunnerStatus = {
   solverInstalled: boolean;
   solverName: string | null;
   solverVersion: string | null;
+  solverAccelerator: "cpu-openmp" | "cuda" | "unknown" | null;
   hardware: LocalHardwareSnapshot;
   details: string[];
 };
@@ -217,8 +218,10 @@ export function assessLocalCfdReadiness(status: LocalRunnerStatus, presetId: Loc
   if (!status.solverInstalled) blockingIssues.push("The verified PeleC RDRE solver pack is not installed.");
   if (!supportsInitialLocal3dCase(design)) blockingIssues.push("The first Full 3D solver pack supports rocket-fed hydrogen/air and hydrogen/oxygen annular engines.");
   if (status.hardware.memoryGb !== null && status.hardware.memoryGb < preset.minimumRamGb) blockingIssues.push(`${preset.label} requires at least ${preset.minimumRamGb} GB of system memory.`);
-  if (!status.hardware.cudaAvailable) blockingIssues.push("A CUDA-capable NVIDIA GPU is required by the first local solver pack.");
-  if (status.hardware.gpuMemoryGb !== null && status.hardware.gpuMemoryGb < preset.recommendedGpuMemoryGb) warnings.push(`${preset.label} is designed for approximately ${preset.recommendedGpuMemoryGb} GB of GPU memory; this machine reports ${status.hardware.gpuMemoryGb.toFixed(0)} GB.`);
+  const cudaSolver = status.solverAccelerator === "cuda";
+  if (presetId !== "development" && (!cudaSolver || !status.hardware.cudaAvailable)) blockingIssues.push(`${preset.label} requires the CUDA solver build and a compatible NVIDIA GPU.`);
+  if (presetId === "development" && status.solverInstalled && !cudaSolver) warnings.push("Development can run on the packaged CPU solver, but a reacting 3D case may take hours.");
+  if (cudaSolver && status.hardware.cudaAvailable && status.hardware.gpuMemoryGb !== null && status.hardware.gpuMemoryGb < preset.recommendedGpuMemoryGb) warnings.push(`${preset.label} is designed for approximately ${preset.recommendedGpuMemoryGb} GB of GPU memory; this machine reports ${status.hardware.gpuMemoryGb.toFixed(0)} GB.`);
   if (status.hardware.logicalCpuCount < 8) warnings.push("Fewer than eight logical CPU cores may make mesh preparation and result conversion slow.");
   if (status.apiVersion !== LOCAL_CFD_API_VERSION) blockingIssues.push("The desktop app and solver runtime use incompatible API versions. Update both components.");
   return { ready: blockingIssues.length === 0, blockingIssues, warnings };

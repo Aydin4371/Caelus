@@ -27,8 +27,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "icon": ["../public/kythros-icon-512.png"],
+    "resources": ["resources/*"],
+    "windows": {
+      "nsis": {
+        "installMode": "perUser"
+      }
+    },
     "shortDescription": "Design, run, inspect, and validate rotating detonation engines.",
     "longDescription": "Kythros connects versioned RDRE definitions, local CFD execution, volumetric results, design guidance, and experiment validation."
   }
