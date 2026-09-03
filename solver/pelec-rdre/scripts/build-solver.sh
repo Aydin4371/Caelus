@@ -37,6 +37,7 @@ if [[ "$mode" == "cuda" ]]; then
 else
   make_arguments+=("USE_CUDA=FALSE")
 fi
+make -C "$case_directory" "${make_arguments[@]}" TPL
 make -C "$case_directory" "${make_arguments[@]}"
 
 binary="$(find "$case_directory" -maxdepth 1 -type f -name 'PeleC3d*.ex' -perm -u+x -print -quit)"
