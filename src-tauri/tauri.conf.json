@@ -32,7 +32,7 @@
     "resources": ["resources/*"],
     "windows": {
       "nsis": {
-        "installMode": "perUser"
+        "installMode": "currentUser"
       }
     },
     "shortDescription": "Design, run, inspect, and validate rotating detonation engines.",
