@@ -100,13 +100,13 @@ def _mixture_mass_fractions(equivalence_ratio: float, oxidizer: str) -> tuple[fl
     )
 
 
-def _mesh_for_preset(preset: str) -> tuple[int, int, int, tuple[int, int, int]]:
+def _mesh_for_preset(preset: str) -> tuple[int, int, tuple[int, int, int]]:
     if preset == "development":
-        return 160, 128, 1, (16, 72, 72)
+        return 160, 1, (16, 72, 72)
     if preset == "workstation":
-        return 320, 256, 2, (20, 96, 96)
+        return 320, 2, (20, 96, 96)
     if preset == "evidence":
-        return 512, 384, 3, (24, 128, 128)
+        return 512, 3, (24, 128, 128)
     raise CaseError("numerics.presetId is not supported")
 
 
@@ -128,14 +128,22 @@ def request_to_parameters(request: dict[str, Any]) -> CaseParameters:
     )
     oxidizer = "air" if oxidizer_key == "air" else "oxygen"
     y_h2, y_o2, y_n2 = _mixture_mass_fractions(phi, oxidizer)
-    axial_cells, transverse_cells, default_amr, visualization_shape = _mesh_for_preset(
+    axial_cells, default_amr, visualization_shape = _mesh_for_preset(
         str(numerics.get("presetId", ""))
     )
     requested_amr = _integer(numerics, "amrLevels", 0)
     if requested_amr != default_amr:
         raise CaseError("the selected preset and AMR level do not match the signed case definition")
 
-    domain_half_width_cm = outer_radius_cm + max(0.12, 0.04 * outer_radius_cm)
+    requested_domain_half_width_cm = outer_radius_cm + max(0.12, 0.04 * outer_radius_cm)
+    # PeleC's quadratic embedded-boundary gradient stencil requires cubic cells.
+    # Derive the transverse extent from the axial spacing and round the count to
+    # the input template's blocking factor instead of distorting the cell shape.
+    cell_width_cm = chamber_length_cm / axial_cells
+    transverse_cells = int(
+        math.ceil((2.0 * requested_domain_half_width_cm / cell_width_cm) / 8.0) * 8
+    )
+    domain_half_width_cm = 0.5 * transverse_cells * cell_width_cm
     back_pressure_bar = _number(condition, "backPressureBar")
     ignition_pressure_bar = max(20.0, 2.5 * _number(condition, "inletPressureBar"))
     gap_cm = outer_radius_cm - inner_radius_cm

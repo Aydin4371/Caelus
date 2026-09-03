@@ -74,6 +74,17 @@ class CaseTranslationTests(unittest.TestCase):
         self.assertAlmostEqual(total, 1.0, places=12)
         self.assertGreater(float(parameters.values["Y_N2"]), 0.7)
 
+    def test_embedded_boundary_mesh_uses_cubic_cells(self) -> None:
+        parameters = request_to_parameters(request())
+        axial_width = float(parameters.values["CHAMBER_LENGTH_CM"]) / float(
+            parameters.values["AXIAL_CELLS"]
+        )
+        transverse_width = (
+            float(parameters.values["DOMAIN_HIGH_CM"])
+            - float(parameters.values["DOMAIN_LOW_CM"])
+        ) / float(parameters.values["TRANSVERSE_CELLS"])
+        self.assertAlmostEqual(axial_width, transverse_width, places=12)
+
     def test_oxygen_case_contains_no_nitrogen(self) -> None:
         value = request()
         value["engine"]["oxidizer"] = "Oxygen"
