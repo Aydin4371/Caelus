@@ -31,5 +31,5 @@ Chemistry_Model := LiDryer
 
 Bpack := ./Make.package
 Blocs := .
-PELE_HOME := ../../..
+PELE_HOME := ../..
 include $(PELE_HOME)/Exec/Make.PeleC
