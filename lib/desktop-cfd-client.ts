@@ -19,6 +19,7 @@ const WEB_STATUS: LocalRunnerStatus = {
   solverInstalled: false,
   solverName: null,
   solverVersion: null,
+  solverAccelerator: null,
   hardware: {
     platform: "unknown",
     architecture: "unknown",
@@ -45,6 +46,10 @@ async function invokeDesktop<T>(command: string, args?: Record<string, unknown>)
 export async function getLocalRunnerStatus(): Promise<LocalRunnerStatus> {
   if (!isKythrosDesktop()) return WEB_STATUS;
   return invokeDesktop<LocalRunnerStatus>("local_runtime_status");
+}
+
+export async function installLocalSolverRuntime(): Promise<LocalRunnerStatus> {
+  return invokeDesktop<LocalRunnerStatus>("install_local_solver_runtime");
 }
 
 export async function startLocalCfd(request: LocalCfdRunRequest): Promise<LocalCfdJobStatus> {

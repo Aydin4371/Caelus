@@ -1,0 +1,23 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libgomp1 \
+      libstdc++6 \
+      python3 \
+      python3-numpy \
+      python3-pip \
+    && python3 -m pip install --break-system-packages --no-cache-dir yt==4.4.1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY runtime-root/ /
+RUN chmod 0755 /opt/kythros/bin/kythros-pelec-rdre \
+    /opt/kythros/libexec/kythros-pelec-rdre.bin \
+    && LD_LIBRARY_PATH=/opt/kythros/libexec/lib ldd /opt/kythros/libexec/kythros-pelec-rdre.bin \
+    | tee /tmp/kythros-solver-ldd.txt \
+    && ! grep -q "not found" /tmp/kythros-solver-ldd.txt
+
+CMD ["/bin/bash"]

@@ -11,6 +11,7 @@ export function PwaInstallButton() {
   const [promptEvent, setPromptEvent] = useState<InstallPromptEvent | null>(null);
   const [showInstructions, setShowInstructions] = useState(false);
   const [installed, setInstalled] = useState(false);
+  const nativeDesktop = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 
   useEffect(() => {
     if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
@@ -48,21 +49,21 @@ export function PwaInstallButton() {
     if (choice.outcome === "dismissed") setShowInstructions(true);
   }
 
-  if (installed) return null;
+  if (installed || nativeDesktop) return null;
 
   return <>
-    <button className="button secondary install-button" onClick={install}>Install Kythros</button>
+    <button className="button secondary install-button" onClick={install}>Install web app</button>
     {showInstructions && <div className="modal-backdrop install-backdrop" role="presentation" onMouseDown={() => setShowInstructions(false)}>
       <section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title" onMouseDown={(event) => event.stopPropagation()}>
-        <span className="eyebrow">DESKTOP APP</span>
-        <h2 id="install-title">Install Kythros</h2>
-        <p>Your browser has not made the one-click installer available on this page. You can still install Kythros from the browser controls.</p>
+        <span className="eyebrow">WEB APP</span>
+        <h2 id="install-title">Install the Kythros web app</h2>
+        <p>This installs the web interface for design, Rapid 2D, and saved results. Full 3D uses the separate Windows desktop installer.</p>
         <ol>
           <li>Look for the install icon at the right side of the address bar.</li>
           <li>If it is not there, open the Chrome or Edge menu.</li>
           <li>Choose <strong>Cast, save, and share</strong>, then <strong>Install Kythros</strong> or <strong>Install page as app</strong>.</li>
         </ol>
-        <p className="install-note">The installed app opens in its own window and stays connected to the current Kythros version.</p>
+        <p className="install-note">The web app opens in its own window. It does not install the local Full 3D solver.</p>
         <div className="install-actions"><button className="button primary" onClick={() => setShowInstructions(false)}>Got it</button></div>
       </section>
     </div>}

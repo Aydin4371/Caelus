@@ -53,7 +53,7 @@ test("renders development preview metadata", async () => {
   assert.match(html, />Experiment Validation</);
   assert.match(html, />Envelope</);
   assert.match(html, /rel="manifest"/);
-  assert.match(html, />Install Kythros</);
+  assert.match(html, />Install web app</);
   assert.match(html, />Help</);
   assert.match(html, /Open saved workspace/);
   assert.match(html, /Go to Kythros home/);

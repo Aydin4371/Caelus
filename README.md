@@ -69,6 +69,9 @@ prove the cause of a discrepancy.
   progress polling, cancellation, per-job storage, and volumetric result return.
 - Windows uses the `KythrosSolver` WSL2 distribution; Linux uses the same
   runtime at `/opt/kythros/bin/kythros-pelec-rdre`.
+- `.github/workflows/kythros-desktop-installer.yml` builds the pinned CPU
+  PeleC case, executes a real three-dimensional annulus smoke run, constructs
+  the isolated solver runtime, and bundles it into a Windows NSIS installer.
 - The initial case contract is intentionally narrow: rocket-fed annular
   hydrogen/air or hydrogen/oxygen designs using the reviewed PeleC RDRE pack.
 - Full 3D engine advice is withheld until solver completion, mass conservation,

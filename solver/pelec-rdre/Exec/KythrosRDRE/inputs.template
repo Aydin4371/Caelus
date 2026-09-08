@@ -1,0 +1,83 @@
+# Kythros-generated PeleC RDRE case. Values use PeleC cgs units.
+max_step = 100000000
+stop_time = {{STOP_TIME_S}}
+
+geometry.is_periodic = 0 0 0
+geometry.coord_sys = 0
+geometry.prob_lo = 0.0 {{DOMAIN_LOW_CM}} {{DOMAIN_LOW_CM}}
+geometry.prob_hi = {{CHAMBER_LENGTH_CM}} {{DOMAIN_HIGH_CM}} {{DOMAIN_HIGH_CM}}
+amr.n_cell = {{AXIAL_CELLS}} {{TRANSVERSE_CELLS}} {{TRANSVERSE_CELLS}}
+
+pelec.lo_bc = "UserBC" "FOExtrap" "FOExtrap"
+pelec.hi_bc = "UserBC" "FOExtrap" "FOExtrap"
+
+pelec.do_hydro = 1
+pelec.do_mol = 0
+pelec.do_react = 1
+pelec.allow_negative_energy = 0
+pelec.diffuse_temp = 1
+pelec.diffuse_vel = 1
+pelec.diffuse_spec = 1
+pelec.diffuse_enth = 1
+pelec.chem_integrator = "ReactorCvode"
+cvode.solve_type = "denseAJ_direct"
+cvode.max_order = 4
+
+pelec.cfl = {{MAX_CFL}}
+pelec.init_shrink = 0.05
+pelec.change_max = 1.08
+pelec.dt_cutoff = 5.e-20
+
+pelec.sum_interval = 1
+pelec.v = 1
+amr.v = 1
+amr.data_log = datlog
+
+amr.max_level = {{AMR_LEVELS}}
+amr.ref_ratio = 2 2 2 2
+amr.regrid_int = 4
+amr.blocking_factor = 8
+amr.max_grid_size = 64
+
+amr.checkpoint_files_output = 1
+amr.check_file = chk
+amr.check_int = 500
+amr.plot_files_output = 1
+amr.plot_file = plt
+amr.plot_int = 100
+amr.plot_vars = density Temp
+amr.derive_plot_vars = x_velocity y_velocity z_velocity magvel pressure
+pelec.plot_rhoy = 0
+pelec.plot_massfrac = 1
+
+eb2.geom_type = "kythros-annulus"
+eb2.small_volfrac = 1.e-8
+ebd.boundary_grad_stencil_type = 1
+pelec.eb_isothermal = 0
+pelec.eb_noslip = 1
+
+prob.inner_radius = {{INNER_RADIUS_CM}}
+prob.outer_radius = {{OUTER_RADIUS_CM}}
+prob.chamber_length = {{CHAMBER_LENGTH_CM}}
+prob.chamber_pressure = {{CHAMBER_PRESSURE_CGS}}
+prob.chamber_temperature = {{CHAMBER_TEMPERATURE_K}}
+prob.inlet_temperature = {{INLET_TEMPERATURE_K}}
+prob.outlet_pressure = {{OUTLET_PRESSURE_CGS}}
+prob.mass_flow = {{MASS_FLOW_GPS}}
+prob.injector_radius = {{INJECTOR_RADIUS_CM}}
+prob.injector_count = {{INJECTOR_COUNT}}
+prob.injector_angle_rad = {{INJECTOR_ANGLE_RAD}}
+prob.Y_H2 = {{Y_H2}}
+prob.Y_O2 = {{Y_O2}}
+prob.Y_N2 = {{Y_N2}}
+prob.ignition_temperature = 2800.0
+prob.ignition_pressure = {{IGNITION_PRESSURE_CGS}}
+prob.ignition_radius = {{IGNITION_RADIUS_CM}}
+prob.ignition_axial_location = {{IGNITION_AXIAL_LOCATION_CM}}
+
+tagging.tempgrad = 150.0
+tagging.max_tempgrad_lev = {{AMR_LEVELS}}
+tagging.presgrad = 2.5e5
+tagging.max_presgrad_lev = {{AMR_LEVELS}}
+
+amrex.signal_handling = 0

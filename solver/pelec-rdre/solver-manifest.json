@@ -3,7 +3,7 @@
   "formatVersion": 1,
   "id": "pelec-rdre-gas-hydrogen-v1",
   "displayName": "PeleC RDRE solver pack",
-  "status": "integration-and-validation-required",
+  "status": "source-implemented-build-and-validation-required",
   "executable": "/opt/kythros/bin/kythros-pelec-rdre",
   "supportedPlatforms": ["windows-wsl2-x86_64", "linux-x86_64"],
   "supportedCases": [
@@ -17,7 +17,14 @@
   ],
   "requiredResultSchema": "kythros-rde-3d-volume",
   "requiredResultFormatVersion": 1,
+  "upstream": {
+    "peleCCommit": "c3f925cc9f54b761b7d5a1efe9e5409c98ed3a3c",
+    "pelePhysicsCommit": "6e8026fc6ed121c07e32c9d3fe1d1c919bafc64b",
+    "chemistryMechanism": "LiDryer"
+  },
+  "availableBuilds": ["cpu-openmp", "cuda-source"],
   "releaseGates": [
+    "source-build-and-annulus-smoke",
     "shock-tube",
     "reacting-shock",
     "cj-znd",
@@ -25,6 +32,7 @@
     "mesh-convergence",
     "time-step-convergence",
     "rde-wave-metrics",
+    "hardware-release-test",
     "signed-runtime"
   ]
 }
