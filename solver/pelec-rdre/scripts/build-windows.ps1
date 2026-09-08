@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 Set-StrictMode -Version Latest
-if (-not $IsWindows) { throw 'This build requires native Windows and Visual Studio C++ build tools.' }
+if (-not $IsWindows) { throw 'This build requires native Windows and Visual Studio C++/Clang tools.' }
 $SolverRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $Lock = Get-Content "$SolverRoot/upstream-lock.json" -Raw | ConvertFrom-Json
 $WorkDirectory = [IO.Path]::GetFullPath($WorkDirectory)
@@ -45,12 +45,12 @@ $VsMajor = ([version]$Vs.installationVersion).Major
 $Capabilities = cmake -E capabilities | ConvertFrom-Json
 $Generator = ($Capabilities.generators | Where-Object { $_.name.StartsWith("Visual Studio $VsMajor ") } | Select-Object -First 1).name
 if (-not $Generator) { throw "CMake has no generator for Visual Studio $VsMajor." }
-cmake -S $Source -B $Build -G $Generator -A x64 "-DCMAKE_GENERATOR_INSTANCE=$VsRoot" `
+cmake -S $Source -B $Build -G $Generator -A x64 -T ClangCL "-DCMAKE_GENERATOR_INSTANCE=$VsRoot" `
     -DPELE_DIM=3 -DPELE_ENABLE_MPI=OFF -DPELE_ENABLE_OPENMP=ON `
     -DPELE_ENABLE_PARTICLES=OFF -DPELE_ENABLE_FCOMPARE=OFF `
     -DPELE_ENABLE_FPE_TRAP_FOR_TESTS=OFF -DPELE_ENABLE_CUDA=OFF `
     -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON `
-    '-DCMAKE_CXX_FLAGS=/bigobj /Zc:__cplusplus'
+    '-DCMAKE_CXX_FLAGS=/bigobj /D_USE_MATH_DEFINES'
 cmake --build $Build --config Release --target PeleC-KythrosRDRE --parallel $Parallel
 $Binary = "$Build/Exec/KythrosRDRE/Release/PeleC-KythrosRDRE.exe"
 if (-not (Test-Path $Binary)) { throw 'Native solver executable was not produced.' }
@@ -59,12 +59,15 @@ Copy-Item $Binary "$Output/kythros-pelec-rdre.exe" -Force
 Get-ChildItem $Build -Recurse -Filter '*.dll' | Copy-Item -Destination $Output -Force
 # Ship the redistributable C++ and OpenMP DLLs app-locally. The solver must
 # not depend on a customer's development tools or a separate runtime install.
-$RedistRoot = Get-ChildItem "$VsRoot/VC/Redist/MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-foreach ($Component in @('Microsoft.VC*.CRT', 'Microsoft.VC*.OpenMP')) {
+$RedistRoot = Get-ChildItem "$VsRoot/VC/Redist/MSVC" -Directory | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+foreach ($Component in @('Microsoft.VC*.CRT')) {
     $Runtime = Get-ChildItem "$($RedistRoot.FullName)/x64" -Directory -Filter $Component | Select-Object -First 1
     if (-not $Runtime) { throw "Missing redistributable component: $Component" }
     Get-ChildItem $Runtime.FullName -Filter '*.dll' | Copy-Item -Destination $Output -Force
 }
+$OpenMpDlls = @(Get-ChildItem "$VsRoot/VC/Tools/Llvm/x64" -Recurse -Filter '*omp*.dll')
+if ($OpenMpDlls.Count -eq 0) { throw 'The native Clang OpenMP redistributable DLL was not found.' }
+$OpenMpDlls | Copy-Item -Destination $Output -Force
 Copy-Item "$SolverRoot/Exec/KythrosRDRE/smoke.inp" $Output -Force
 Copy-Item "$SolverRoot/Exec/KythrosRDRE/inputs.template" $Output -Force
 Copy-Item "$SolverRoot/upstream-lock.json" $Output -Force
@@ -77,7 +80,7 @@ Copy-Item "$Source/Submodules/PelePhysics/Submodules/sundials/LICENSE" "$License
 Copy-Item "$Source/Submodules/PelePhysics/Submodules/amrex/NOTICE" "$Licenses/AMReX-NOTICE.txt" -Force
 Copy-Item "$Source/Submodules/PelePhysics/Submodules/sundials/NOTICE" "$Licenses/SUNDIALS-NOTICE.txt" -Force
 $Manifest = [ordered]@{
-    platform = 'windows-x64'; accelerator = 'cpu-openmp'; peleC = $Lock.peleC.commit
+    platform = 'windows-x64'; compiler = 'clang-cl'; accelerator = 'cpu-openmp'; peleC = $Lock.peleC.commit
     pelePhysics = $PhysicsCommit.Trim(); executable = 'kythros-pelec-rdre.exe'
     sha256 = (Get-FileHash "$Output/kythros-pelec-rdre.exe" -Algorithm SHA256).Hash.ToLower()
     validationStatus = 'development-unvalidated'

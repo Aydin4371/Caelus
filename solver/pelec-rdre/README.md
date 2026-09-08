@@ -34,6 +34,33 @@ The installer workflow performs those steps, constructs an isolated WSL2
 runtime, bundles it into the Windows desktop installer, and uploads the
 installer as a workflow artifact.
 
+## Native Windows solver build
+
+`Kythros native Windows solver` builds the pinned case with native Windows
+Clang on a Windows runner, with MPI, CUDA, and Fortran disabled and
+CPU OpenMP enabled. It does not use WSL, Docker, or a Linux distribution.
+
+Developers with PowerShell 7, Visual Studio C++/Clang tools, Git, CMake, and Python
+3.12 can reproduce the build and test:
+
+```powershell
+./solver/pelec-rdre/scripts/build-windows.ps1 -WorkDirectory C:/kythros-native
+python -m pip install --only-binary=:all: -r solver/pelec-rdre/runtime/requirements.txt
+python solver/pelec-rdre/scripts/test-native-solver.py C:/kythros-native/output/kythros-pelec-rdre.exe "C:/kythros native smoke"
+```
+
+The workflow uploads `Kythros-Native-Windows-CPU` only after the native
+executable advances the reacting annulus beyond its initial state and yt
+converts its final plotfile into finite Kythros volume fields. The package
+includes the executable, C++/OpenMP redistributable DLLs, inputs, dependency
+notices, upstream pins, and an executable hash. Keep these files together.
+
+This artifact is the solver backend, not the Kythros desktop installer. The
+desktop launcher and bundled postprocessor still need native integration
+before the existing app download can stop using WSL. The one-step test
+establishes portability; it does not establish convergence, physical
+accuracy, sustained detonation, or GPU support.
+
 ## Required before evidence claims
 
 - Pass shock-tube, reacting-shock, CJ/ZND, conservation, mesh-convergence,
