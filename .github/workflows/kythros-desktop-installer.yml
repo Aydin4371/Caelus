@@ -1,6 +1,20 @@
 name: Kythros Full 3D installer
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "components/**"
+      - "lib/**"
+      - "public/**"
+      - "solver/pelec-rdre/**"
+      - "src-tauri/**"
+      - "desktop/**"
+      - "vite.desktop.config.ts"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/kythros-desktop-installer.yml"
   pull_request:
     branches:
       - main
@@ -21,7 +35,7 @@ permissions:
 
 concurrency:
   group: kythros-installer-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   solver-runtime:
@@ -105,3 +119,51 @@ jobs:
           path: src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 14
+
+  publish-release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: windows-installer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: desktop-build-${{ github.run_number }}
+    steps:
+      - name: Download tested Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: Kythros-Windows-Installer
+          path: installer
+
+      - name: Prepare stable download name and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' installers < <(find installer -type f -name '*.exe' -print0)
+          if [ "${#installers[@]}" -ne 1 ]; then
+            echo "Expected exactly one Windows installer."
+            exit 1
+          fi
+          cp "${installers[0]}" Kythros-Setup.exe
+          sha256sum Kythros-Setup.exe > SHA256SUMS.txt
+          cat > release-notes.md <<'NOTES'
+          Download Kythros-Setup.exe below, run it, then open Kythros and choose Full 3D → Install Full 3D runtime. Windows may require a restart to enable WSL2.
+
+          Windows 10/11 x64. Includes the CPU/OpenMP Full 3D solver; CUDA acceleration is not included. This is a development solver, not a validated engineering prediction release. The build executes a one-step 3D annulus smoke test, not a complete RDE validation campaign. The installer is not code-signed.
+
+          Release assets do not have the workflow artifacts' automatic expiry. This repository is private, so downloading requires a GitHub account with repository access. SHA256SUMS.txt can be used to verify download integrity.
+          NOTES
+          printf '\nSource commit: %s\n' "$GITHUB_SHA" >> release-notes.md
+
+      - name: Upload all assets before publishing the release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --draft --target "$GITHUB_SHA" --title "Kythros Windows build ${GITHUB_RUN_NUMBER}" --notes-file release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" Kythros-Setup.exe SHA256SUMS.txt --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file release-notes.md
