@@ -66,6 +66,14 @@ cmake -S "$LlvmSource/openmp" -B $OpenMpBuild -G $Generator -A x64 `
     -DOPENMP_ENABLE_LIBOMPTARGET=OFF -DOPENMP_ENABLE_OMPT_TOOLS=OFF -DLIBOMP_OMPT_SUPPORT=OFF `
     -DLIBOMP_USE_ITT_NOTIFY=OFF
 cmake --build $OpenMpBuild --config Release --parallel $Parallel
+# The Visual Studio generator can skip LLVM's def-only ompimp target because
+# it has no compilable source. Generate the intended named import library.
+$OpenMpImport = "$OpenMpBuild/runtime/src/Release/libomp.lib"
+if (-not (Test-Path $OpenMpImport)) {
+    $VcTools = Get-ChildItem "$VsRoot/VC/Tools/MSVC" -Directory | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+    $Librarian = "$($VcTools.FullName)/bin/Hostx64/x64/lib.exe"
+    & $Librarian /nologo /machine:x64 "/def:$OpenMpBuild/runtime/src/libomp.imp.def" "/out:$OpenMpImport"
+}
 cmake --install $OpenMpBuild --config Release
 $OpenMpLibrary = Join-Path $OpenMpInstall 'lib/libomp.lib'
 if (-not (Test-Path $OpenMpLibrary)) { throw 'Native OpenMP import library was not produced.' }
