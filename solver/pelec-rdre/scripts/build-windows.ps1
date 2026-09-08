@@ -59,6 +59,7 @@ $ActualLlvmCommit = git -C $LlvmSource rev-parse HEAD
 if ($ActualLlvmCommit.Trim() -ne $LlvmCommit) { throw 'LLVM OpenMP revision mismatch.' }
 cmake -S "$LlvmSource/openmp" -B $OpenMpBuild -G $Generator -A x64 -T ClangCL `
     "-DCMAKE_GENERATOR_INSTANCE=$VsRoot" "-DCMAKE_INSTALL_PREFIX=$OpenMpInstall" `
+    -DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON '-DCMAKE_CXX_FLAGS=/std:c++17' `
     -DOPENMP_ENABLE_LIBOMPTARGET=OFF -DOPENMP_ENABLE_OMPT_TOOLS=OFF -DLIBOMP_OMPT_SUPPORT=OFF `
     -DLIBOMP_USE_ITT_NOTIFY=OFF
 cmake --build $OpenMpBuild --config Release --parallel $Parallel
@@ -72,7 +73,7 @@ cmake -S $Source -B $Build -G $Generator -A x64 -T ClangCL "-DCMAKE_GENERATOR_IN
     -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON `
     '-DOpenMP_CXX_FLAGS=/clang:-fopenmp' -DOpenMP_CXX_LIB_NAMES=omp `
     "-DOpenMP_omp_LIBRARY=$OpenMpLibrary" "-DOpenMP_CXX_INCLUDE_DIR=$OpenMpInstall/include" `
-    '-DCMAKE_CXX_FLAGS=/bigobj /D_USE_MATH_DEFINES'
+    '-DCMAKE_CXX_FLAGS=/std:c++20 /bigobj /D_USE_MATH_DEFINES'
 cmake --build $Build --config Release --target PeleC-KythrosRDRE --parallel $Parallel
 $Binary = "$Build/Exec/KythrosRDRE/Release/PeleC-KythrosRDRE.exe"
 if (-not (Test-Path $Binary)) { throw 'Native solver executable was not produced.' }
