@@ -37,6 +37,9 @@ jobs:
       - name: Normalize repository script permissions
         run: chmod +x scripts/*.sh
 
+      - name: Check Windows solver file access
+        run: python3 tests/desktop-job-paths.test.py
+
       - name: Type check
         run: npm run typecheck
 

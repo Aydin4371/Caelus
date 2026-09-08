@@ -102,7 +102,7 @@ test("connects design, the CFD suite, operating envelopes, and validation", asyn
   assert.match(simulation, /Detailed 2D/);
   assert.match(simulation, /Full 3D/);
   assert.match(simulation, /Run Full 3D/);
-  assert.match(simulation, /Choose local run quality/);
+  assert.match(simulation, /Run settings/);
   assert.match(simulation, /RdeVolumeFlow3d/);
   assert.match(simulation, /Resolved discrete injectors/);
   assert.match(computedFlow, /Flow through the RDRE/);

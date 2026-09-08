@@ -121,3 +121,11 @@ test("Full 3D advice waits for numerical evidence then names one engine change",
   assert.match(recommendation.engine.title, /Raise inlet pressure/);
   assert.match(recommendation.engine.action, /Change only inlet pressure/);
 });
+
+
+test("CPU installations never offer CUDA-only presets", async () => {
+  const { availableLocalCfdPresets } = await import("../lib/local-cfd.ts");
+  assert.deepEqual(availableLocalCfdPresets(null).map((preset) => preset.id), ["development"]);
+  assert.deepEqual(availableLocalCfdPresets({ ...readyStatus, solverAccelerator: "cpu-openmp" }).map((preset) => preset.id), ["development"]);
+  assert.deepEqual(availableLocalCfdPresets(readyStatus).map((preset) => preset.id), ["development", "workstation"]);
+});
