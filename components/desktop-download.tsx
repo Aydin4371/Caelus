@@ -1,15 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
 const windowsDownload = "https://github.com/Aydin4371/Caelus/releases/latest/download/Kythros-Setup.exe";
 const releasesPage = "https://github.com/Aydin4371/Caelus/releases/latest";
 
 export function DesktopDownload({ details = false }: { details?: boolean }) {
-  const [nativeDesktop, setNativeDesktop] = useState(false);
-  useEffect(() => {
-    setNativeDesktop(Boolean(window.__TAURI_INTERNALS__));
-  }, []);
+  const nativeDesktop = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 
   if (nativeDesktop) return null;
 
