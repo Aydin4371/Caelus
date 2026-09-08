@@ -28,6 +28,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Identify Windows toolchain image
+        id: image
+        run: '"version=$env:ImageVersion" >> $env:GITHUB_OUTPUT'
+      - name: Restore native build
+        id: build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/kythros-native
+          key: native-clang-v1-${{ steps.image.outputs.version }}-${{ hashFiles('solver/pelec-rdre/upstream-lock.json') }}-${{ hashFiles('solver/pelec-rdre/scripts/build-windows.ps1', 'solver/pelec-rdre/Exec/KythrosRDRE/**') }}
+          restore-keys: |
+            native-clang-v1-${{ steps.image.outputs.version }}-${{ hashFiles('solver/pelec-rdre/upstream-lock.json') }}-
       - name: Build native CPU solver
         run: ./solver/pelec-rdre/scripts/build-windows.ps1 -WorkDirectory "$env:RUNNER_TEMP/kythros-native"
       - name: Install result reader
@@ -50,3 +61,9 @@ jobs:
             ${{ runner.temp }}/kythros-native/build/CMakeFiles/CMakeConfigureLog.yaml
             ${{ runner.temp }}/native smoke case/pelec.log
             ${{ runner.temp }}/native smoke case/result.json
+      - name: Preserve compiled dependencies
+        if: ${{ !cancelled() && steps.build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/kythros-native
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}

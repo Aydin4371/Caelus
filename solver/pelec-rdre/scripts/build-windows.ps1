@@ -79,6 +79,7 @@ Copy-Item "$Source/Submodules/PelePhysics/Submodules/amrex/LICENSE" "$Licenses/A
 Copy-Item "$Source/Submodules/PelePhysics/Submodules/sundials/LICENSE" "$Licenses/SUNDIALS.txt" -Force
 Copy-Item "$Source/Submodules/PelePhysics/Submodules/amrex/NOTICE" "$Licenses/AMReX-NOTICE.txt" -Force
 Copy-Item "$Source/Submodules/PelePhysics/Submodules/sundials/NOTICE" "$Licenses/SUNDIALS-NOTICE.txt" -Force
+Copy-Item "$SolverRoot/licenses/LLVM-OpenMP.txt" $Licenses -Force
 $Manifest = [ordered]@{
     platform = 'windows-x64'; compiler = 'clang-cl'; accelerator = 'cpu-openmp'; peleC = $Lock.peleC.commit
     pelePhysics = $PhysicsCommit.Trim(); executable = 'kythros-pelec-rdre.exe'
