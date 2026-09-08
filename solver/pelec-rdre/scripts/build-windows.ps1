@@ -26,6 +26,14 @@ if ($PhysicsCommit.Trim() -ne $Lock.pelePhysics.commit) { throw 'PelePhysics doe
 Copy-Item "$SolverRoot/Exec/KythrosRDRE" "$Source/Exec/" -Recurse -Force
 Set-Content "$Source/Exec/CMakeLists.txt" 'add_subdirectory(KythrosRDRE)' -Encoding utf8
 Set-Content "$Source/Tests/CMakeLists.txt" '# Kythros uses test-native-solver.py.' -Encoding utf8
+# Upstream adds GNU warning switches unconditionally; /Wextra is invalid in
+# MSVC. Change compiler diagnostics only, without altering numerical source.
+$FlagsFile = "$Source/CMake/SetPeleCompileFlags.cmake"
+$Flags = Get-Content $FlagsFile -Raw
+$GnuWarnings = 'list(APPEND PELE_CXX_FLAGS "-Wall" "-Wextra" "-pedantic" "-Wno-unused-function")'
+if (-not $Flags.Contains($GnuWarnings)) { throw 'Upstream compiler flags changed; review the Windows adaptation.' }
+$NativeWarnings = "if(MSVC)`n  list(APPEND PELE_CXX_FLAGS /W3)`nelse()`n  $GnuWarnings`nendif()"
+Set-Content $FlagsFile $Flags.Replace($GnuWarnings, $NativeWarnings) -Encoding utf8
 
 cmake -S $Source -B $Build -G 'Visual Studio 17 2022' -A x64 `
     -DPELE_DIM=3 -DPELE_ENABLE_MPI=OFF -DPELE_ENABLE_OPENMP=ON `
@@ -39,6 +47,16 @@ if (-not (Test-Path $Binary)) { throw 'Native solver executable was not produced
 Copy-Item $Binary "$Output/kythros-pelec-rdre.exe" -Force
 # Include any non-static dependencies beside the executable.
 Get-ChildItem $Build -Recurse -Filter '*.dll' | Copy-Item -Destination $Output -Force
+# Ship the redistributable C++ and OpenMP DLLs app-locally. The solver must
+# not depend on a customer's development tools or a separate runtime install.
+$VsWhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+$VsRoot = & $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+$RedistRoot = Get-ChildItem "$VsRoot/VC/Redist/MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+foreach ($Component in @('Microsoft.VC143.CRT', 'Microsoft.VC143.OpenMP')) {
+    $Runtime = Join-Path $RedistRoot.FullName "x64/$Component"
+    if (-not (Test-Path $Runtime)) { throw "Missing redistributable component: $Component" }
+    Get-ChildItem $Runtime -Filter '*.dll' | Copy-Item -Destination $Output -Force
+}
 Copy-Item "$SolverRoot/Exec/KythrosRDRE/smoke.inp" $Output -Force
 Copy-Item "$SolverRoot/Exec/KythrosRDRE/inputs.template" $Output -Force
 Copy-Item "$SolverRoot/upstream-lock.json" $Output -Force
