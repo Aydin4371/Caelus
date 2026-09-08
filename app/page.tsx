@@ -2,6 +2,7 @@
 
 import { ChangeEvent, useMemo, useState } from "react";
 import { PwaInstallButton } from "@/components/pwa-install-button";
+import { DesktopDownload } from "@/components/desktop-download";
 import { PressureFileMapper } from "@/components/pressure-file-mapper";
 import { SolverManifestImporter } from "@/components/solver-manifest-importer";
 import { SpatialFieldMapper } from "@/components/spatial-field-mapper";
@@ -1382,7 +1383,7 @@ export default function Home() {
       <a className="brand" href="#top" aria-label="Go to Kythros home" onClick={(event) => { event.preventDefault(); setProductView("home"); requestAnimationFrame(() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth", block: "start" })); }}><span className="brand-mark">K</span><span><strong>KYTHROS</strong><small>BY CAELUS</small></span></a>
       <p>RDE design, simulation, and validation</p>
       <nav className="product-tabs" aria-label="Kythros workspaces"><button className={productView === "home" ? "active" : ""} aria-current={productView === "home" ? "page" : undefined} onClick={() => setProductView("home")}>Home</button><button className={productView === "design" ? "active" : ""} aria-current={productView === "design" ? "page" : undefined} onClick={() => setProductView("design")}>Design</button><button className={productView === "simulation" ? "active" : ""} aria-current={productView === "simulation" ? "page" : undefined} onClick={() => setProductView("simulation")}>CFD Suite</button><button className={productView === "envelope" ? "active" : ""} aria-current={productView === "envelope" ? "page" : undefined} onClick={() => setProductView("envelope")}>Envelope</button><button className={productView === "comparison" ? "active" : ""} aria-current={productView === "comparison" ? "page" : undefined} onClick={() => setProductView("comparison")}>Experiment Validation</button></nav>
-      <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><PwaInstallButton /><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={() => setProductView(designs.length ? "simulation" : "design")}>{designs.length ? "Open CFD Suite" : "+ New engine"}</button></div>
+      <div className="header-actions"><span className="prototype-tag">v{ANALYSIS_VERSION}</span><DesktopDownload /><PwaInstallButton /><button className="button secondary help-button" onClick={() => setShowHelp(true)}>Help</button><button className="button primary" onClick={() => setProductView(designs.length ? "simulation" : "design")}>{designs.length ? "Open CFD Suite" : "+ New engine"}</button></div>
     </header>
     {workspaceError && <p className="workspace-error-banner" role="alert">{workspaceError}</p>}
 
@@ -1394,6 +1395,8 @@ export default function Home() {
           <p>Enter the RDE and operating condition, choose a run quality, and press Run. Kythros manages the solver, shows the calculated 3D flow and streamlines, then gives you one change to test next.</p>
           <div className="home-actions"><button className="button primary" onClick={() => setProductView(designs.length ? "simulation" : "design")}>{designs.length ? "Open CFD Suite →" : "Design the first RDE →"}</button><button className="button secondary" onClick={() => setShowHelp(true)}>See how it works</button></div>
         </div>
+
+        <DesktopDownload details />
 
         <section className="home-load-card" aria-labelledby="home-load-title">
           <div className="home-load-heading"><span>OPEN A WORKSPACE</span><h2 id="home-load-title">Continue work or inspect an example</h2><p>All workspace loaders live here. New RDE development starts with Design; saved and example projects restore their existing engines, simulations, and evidence.</p></div>
