@@ -17,7 +17,8 @@ if (-not (Test-Path "$Source/.git")) {
     git clone --no-checkout $Lock.peleC.repository $Source
 }
 git -C $Source checkout --detach $Lock.peleC.commit
-git -C $Source submodule update --init --recursive
+git -C $Source submodule update --init Submodules/PelePhysics
+git -C "$Source/Submodules/PelePhysics" submodule update --init Submodules/amrex Submodules/sundials
 $PhysicsCommit = git -C "$Source/Submodules/PelePhysics" rev-parse HEAD
 if ($PhysicsCommit.Trim() -ne $Lock.pelePhysics.commit) { throw 'PelePhysics does not match upstream-lock.json.' }
 
@@ -41,7 +42,9 @@ $VsWhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.e
 $Vs = (& $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | ConvertFrom-Json)[0]
 $VsRoot = $Vs.installationPath
 $VsMajor = ([version]$Vs.installationVersion).Major
-$Generator = "Visual Studio $VsMajor $($Vs.catalog.productLineVersion)"
+$Capabilities = cmake -E capabilities | ConvertFrom-Json
+$Generator = ($Capabilities.generators | Where-Object { $_.name.StartsWith("Visual Studio $VsMajor ") } | Select-Object -First 1).name
+if (-not $Generator) { throw "CMake has no generator for Visual Studio $VsMajor." }
 cmake -S $Source -B $Build -G $Generator -A x64 "-DCMAKE_GENERATOR_INSTANCE=$VsRoot" `
     -DPELE_DIM=3 -DPELE_ENABLE_MPI=OFF -DPELE_ENABLE_OPENMP=ON `
     -DPELE_ENABLE_PARTICLES=OFF -DPELE_ENABLE_FCOMPARE=OFF `
