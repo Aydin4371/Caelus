@@ -31,11 +31,18 @@ Set-Content "$Source/Tests/CMakeLists.txt" '# Kythros uses test-native-solver.py
 $FlagsFile = "$Source/CMake/SetPeleCompileFlags.cmake"
 $Flags = Get-Content $FlagsFile -Raw
 $GnuWarnings = 'list(APPEND PELE_CXX_FLAGS "-Wall" "-Wextra" "-pedantic" "-Wno-unused-function")'
-if (-not $Flags.Contains($GnuWarnings)) { throw 'Upstream compiler flags changed; review the Windows adaptation.' }
 $NativeWarnings = "if(MSVC)`n  list(APPEND PELE_CXX_FLAGS /W3)`nelse()`n  $GnuWarnings`nendif()"
-Set-Content $FlagsFile $Flags.Replace($GnuWarnings, $NativeWarnings) -Encoding utf8
+if (-not $Flags.Contains($NativeWarnings)) {
+    if (-not $Flags.Contains($GnuWarnings)) { throw 'Upstream compiler flags changed; review the Windows adaptation.' }
+    Set-Content $FlagsFile $Flags.Replace($GnuWarnings, $NativeWarnings) -Encoding utf8
+}
 
-cmake -S $Source -B $Build -G 'Visual Studio 17 2022' -A x64 `
+$VsWhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+$Vs = (& $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | ConvertFrom-Json)[0]
+$VsRoot = $Vs.installationPath
+$VsMajor = ([version]$Vs.installationVersion).Major
+$Generator = "Visual Studio $VsMajor $($Vs.catalog.productLineVersion)"
+cmake -S $Source -B $Build -G $Generator -A x64 "-DCMAKE_GENERATOR_INSTANCE=$VsRoot" `
     -DPELE_DIM=3 -DPELE_ENABLE_MPI=OFF -DPELE_ENABLE_OPENMP=ON `
     -DPELE_ENABLE_PARTICLES=OFF -DPELE_ENABLE_FCOMPARE=OFF `
     -DPELE_ENABLE_FPE_TRAP_FOR_TESTS=OFF -DPELE_ENABLE_CUDA=OFF `
@@ -49,23 +56,23 @@ Copy-Item $Binary "$Output/kythros-pelec-rdre.exe" -Force
 Get-ChildItem $Build -Recurse -Filter '*.dll' | Copy-Item -Destination $Output -Force
 # Ship the redistributable C++ and OpenMP DLLs app-locally. The solver must
 # not depend on a customer's development tools or a separate runtime install.
-$VsWhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
-$VsRoot = & $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $RedistRoot = Get-ChildItem "$VsRoot/VC/Redist/MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-foreach ($Component in @('Microsoft.VC143.CRT', 'Microsoft.VC143.OpenMP')) {
-    $Runtime = Join-Path $RedistRoot.FullName "x64/$Component"
-    if (-not (Test-Path $Runtime)) { throw "Missing redistributable component: $Component" }
-    Get-ChildItem $Runtime -Filter '*.dll' | Copy-Item -Destination $Output -Force
+foreach ($Component in @('Microsoft.VC*.CRT', 'Microsoft.VC*.OpenMP')) {
+    $Runtime = Get-ChildItem "$($RedistRoot.FullName)/x64" -Directory -Filter $Component | Select-Object -First 1
+    if (-not $Runtime) { throw "Missing redistributable component: $Component" }
+    Get-ChildItem $Runtime.FullName -Filter '*.dll' | Copy-Item -Destination $Output -Force
 }
 Copy-Item "$SolverRoot/Exec/KythrosRDRE/smoke.inp" $Output -Force
 Copy-Item "$SolverRoot/Exec/KythrosRDRE/inputs.template" $Output -Force
 Copy-Item "$SolverRoot/upstream-lock.json" $Output -Force
 $Licenses = Join-Path $Output 'licenses'
 New-Item -ItemType Directory -Force $Licenses | Out-Null
-Copy-Item "$Source/LICENSE" "$Licenses/PeleC.txt" -Force
-Copy-Item "$Source/Submodules/PelePhysics/LICENSE" "$Licenses/PelePhysics.txt" -Force
+Copy-Item "$Source/license.txt" "$Licenses/PeleC.txt" -Force
+Copy-Item "$Source/Submodules/PelePhysics/license.txt" "$Licenses/PelePhysics.txt" -Force
 Copy-Item "$Source/Submodules/PelePhysics/Submodules/amrex/LICENSE" "$Licenses/AMReX.txt" -Force
 Copy-Item "$Source/Submodules/PelePhysics/Submodules/sundials/LICENSE" "$Licenses/SUNDIALS.txt" -Force
+Copy-Item "$Source/Submodules/PelePhysics/Submodules/amrex/NOTICE" "$Licenses/AMReX-NOTICE.txt" -Force
+Copy-Item "$Source/Submodules/PelePhysics/Submodules/sundials/NOTICE" "$Licenses/SUNDIALS-NOTICE.txt" -Force
 $Manifest = [ordered]@{
     platform = 'windows-x64'; accelerator = 'cpu-openmp'; peleC = $Lock.peleC.commit
     pelePhysics = $PhysicsCommit.Trim(); executable = 'kythros-pelec-rdre.exe'
