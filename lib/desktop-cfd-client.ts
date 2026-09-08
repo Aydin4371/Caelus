@@ -40,7 +40,15 @@ async function invokeDesktop<T>(command: string, args?: Record<string, unknown>)
   if (!isKythrosDesktop()) throw new Error("Open this workspace in the installed Kythros desktop app to run Full 3D locally.");
   const invoke = window.__TAURI__?.core?.invoke;
   if (!invoke) throw new Error("The Kythros desktop command bridge is unavailable. Restart or update the desktop app.");
-  return invoke<T>(command, args);
+  try {
+    return await invoke<T>(command, args);
+  } catch (error: unknown) {
+    // Tauri serializes Rust Result errors as strings, not JavaScript Errors.
+    // Preserve those actionable setup instructions for the workspace UI.
+    if (error instanceof Error) throw error;
+    if (typeof error === "string" && error.trim()) throw new Error(error);
+    throw new Error("The desktop command failed without an error message. Restart Kythros and try again.");
+  }
 }
 
 export async function getLocalRunnerStatus(): Promise<LocalRunnerStatus> {
