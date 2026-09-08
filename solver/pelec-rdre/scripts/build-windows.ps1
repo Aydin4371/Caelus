@@ -45,11 +45,32 @@ $VsMajor = ([version]$Vs.installationVersion).Major
 $Capabilities = cmake -E capabilities | ConvertFrom-Json
 $Generator = ($Capabilities.generators | Where-Object { $_.name.StartsWith("Visual Studio $VsMajor ") } | Select-Object -First 1).name
 if (-not $Generator) { throw "CMake has no generator for Visual Studio $VsMajor." }
+# Visual Studio's Clang compiler does not include a discoverable libomp SDK.
+# Build the native OpenMP runtime from a pinned source revision and package it.
+$LlvmCommit = '87f0227cb60147a26a1eeb4fb06e3b505e9c7261'
+$LlvmSource = Join-Path $WorkDirectory 'llvm-project'
+$OpenMpBuild = Join-Path $WorkDirectory 'openmp-build'
+$OpenMpInstall = Join-Path $WorkDirectory 'openmp-install'
+if (-not (Test-Path "$LlvmSource/.git")) {
+    git clone --depth 1 --branch llvmorg-20.1.8 --filter=blob:none --sparse https://github.com/llvm/llvm-project.git $LlvmSource
+    git -C $LlvmSource sparse-checkout set openmp cmake llvm/cmake third-party
+}
+$ActualLlvmCommit = git -C $LlvmSource rev-parse HEAD
+if ($ActualLlvmCommit.Trim() -ne $LlvmCommit) { throw 'LLVM OpenMP revision mismatch.' }
+cmake -S "$LlvmSource/openmp" -B $OpenMpBuild -G $Generator -A x64 -T ClangCL `
+    "-DCMAKE_GENERATOR_INSTANCE=$VsRoot" "-DCMAKE_INSTALL_PREFIX=$OpenMpInstall" `
+    -DOPENMP_ENABLE_LIBOMPTARGET=OFF -DOPENMP_ENABLE_OMPT_TOOLS=OFF -DLIBOMP_OMPT_SUPPORT=OFF
+cmake --build $OpenMpBuild --config Release --parallel $Parallel
+cmake --install $OpenMpBuild --config Release
+$OpenMpLibrary = Join-Path $OpenMpInstall 'lib/libomp.lib'
+if (-not (Test-Path $OpenMpLibrary)) { throw 'Native OpenMP import library was not produced.' }
 cmake -S $Source -B $Build -G $Generator -A x64 -T ClangCL "-DCMAKE_GENERATOR_INSTANCE=$VsRoot" `
     -DPELE_DIM=3 -DPELE_ENABLE_MPI=OFF -DPELE_ENABLE_OPENMP=ON `
     -DPELE_ENABLE_PARTICLES=OFF -DPELE_ENABLE_FCOMPARE=OFF `
     -DPELE_ENABLE_FPE_TRAP_FOR_TESTS=OFF -DPELE_ENABLE_CUDA=OFF `
     -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON `
+    '-DOpenMP_CXX_FLAGS=/clang:-fopenmp' -DOpenMP_CXX_LIB_NAMES=omp `
+    "-DOpenMP_omp_LIBRARY=$OpenMpLibrary" "-DOpenMP_CXX_INCLUDE_DIR=$OpenMpInstall/include" `
     '-DCMAKE_CXX_FLAGS=/bigobj /D_USE_MATH_DEFINES'
 cmake --build $Build --config Release --target PeleC-KythrosRDRE --parallel $Parallel
 $Binary = "$Build/Exec/KythrosRDRE/Release/PeleC-KythrosRDRE.exe"
@@ -65,7 +86,7 @@ foreach ($Component in @('Microsoft.VC*.CRT')) {
     if (-not $Runtime) { throw "Missing redistributable component: $Component" }
     Get-ChildItem $Runtime.FullName -Filter '*.dll' | Copy-Item -Destination $Output -Force
 }
-$OpenMpDlls = @(Get-ChildItem "$VsRoot/VC/Tools/Llvm/x64" -Recurse -Filter '*omp*.dll')
+$OpenMpDlls = @(Get-ChildItem "$OpenMpInstall/bin" -Filter '*omp*.dll')
 if ($OpenMpDlls.Count -eq 0) { throw 'The native Clang OpenMP redistributable DLL was not found.' }
 $OpenMpDlls | Copy-Item -Destination $Output -Force
 Copy-Item "$SolverRoot/Exec/KythrosRDRE/smoke.inp" $Output -Force
@@ -83,6 +104,7 @@ Copy-Item "$SolverRoot/licenses/LLVM-OpenMP.txt" $Licenses -Force
 $Manifest = [ordered]@{
     platform = 'windows-x64'; compiler = 'clang-cl'; accelerator = 'cpu-openmp'; peleC = $Lock.peleC.commit
     pelePhysics = $PhysicsCommit.Trim(); executable = 'kythros-pelec-rdre.exe'
+    llvmOpenMP = $LlvmCommit
     sha256 = (Get-FileHash "$Output/kythros-pelec-rdre.exe" -Algorithm SHA256).Hash.ToLower()
     validationStatus = 'development-unvalidated'
 }
