@@ -1,0 +1,51 @@
+name: Kythros native Windows solver
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'solver/pelec-rdre/**'
+      - '.github/workflows/kythros-native-windows.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'solver/pelec-rdre/**'
+      - '.github/workflows/kythros-native-windows.yml'
+permissions:
+  contents: read
+concurrency:
+  group: native-windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-solver:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build native CPU solver
+        run: ./solver/pelec-rdre/scripts/build-windows.ps1 -WorkDirectory "$env:RUNNER_TEMP/kythros-native"
+      - name: Install result reader
+        run: python -m pip install --only-binary=:all: -r solver/pelec-rdre/runtime/requirements.txt
+      - name: Run reacting annulus and convert result
+        run: python solver/pelec-rdre/scripts/test-native-solver.py "$env:RUNNER_TEMP/kythros-native/output/kythros-pelec-rdre.exe" "$env:RUNNER_TEMP/native smoke case"
+      - name: Upload tested native solver
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kythros-Native-Windows-CPU
+          path: ${{ runner.temp }}/kythros-native/output/
+          if-no-files-found: error
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-windows-diagnostics
+          path: |
+            ${{ runner.temp }}/kythros-native/build/CMakeFiles/CMakeConfigureLog.yaml
+            ${{ runner.temp }}/native smoke case/pelec.log
+            ${{ runner.temp }}/native smoke case/result.json

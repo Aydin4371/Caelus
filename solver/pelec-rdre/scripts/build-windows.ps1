@@ -1,0 +1,58 @@
+param(
+    [string]$WorkDirectory = "$PSScriptRoot/../../../.solver-windows",
+    [int]$Parallel = 4
+)
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+Set-StrictMode -Version Latest
+if (-not $IsWindows) { throw 'This build requires native Windows and Visual Studio C++ build tools.' }
+$SolverRoot = (Resolve-Path "$PSScriptRoot/..").Path
+$Lock = Get-Content "$SolverRoot/upstream-lock.json" -Raw | ConvertFrom-Json
+$WorkDirectory = [IO.Path]::GetFullPath($WorkDirectory)
+$Source = Join-Path $WorkDirectory 'PeleC'
+$Build = Join-Path $WorkDirectory 'build'
+$Output = Join-Path $WorkDirectory 'output'
+New-Item -ItemType Directory -Force $WorkDirectory, $Output | Out-Null
+if (-not (Test-Path "$Source/.git")) {
+    git clone --no-checkout $Lock.peleC.repository $Source
+}
+git -C $Source checkout --detach $Lock.peleC.commit
+git -C $Source submodule update --init --recursive
+$PhysicsCommit = git -C "$Source/Submodules/PelePhysics" rev-parse HEAD
+if ($PhysicsCommit.Trim() -ne $Lock.pelePhysics.commit) { throw 'PelePhysics does not match upstream-lock.json.' }
+
+# Build only the Kythros case. Upstream's other cases and shell-based test suite
+# are not needed in a native runtime; the reacting annulus is tested separately.
+Copy-Item "$SolverRoot/Exec/KythrosRDRE" "$Source/Exec/" -Recurse -Force
+Set-Content "$Source/Exec/CMakeLists.txt" 'add_subdirectory(KythrosRDRE)' -Encoding utf8
+Set-Content "$Source/Tests/CMakeLists.txt" '# Kythros uses test-native-solver.py.' -Encoding utf8
+
+cmake -S $Source -B $Build -G 'Visual Studio 17 2022' -A x64 `
+    -DPELE_DIM=3 -DPELE_ENABLE_MPI=OFF -DPELE_ENABLE_OPENMP=ON `
+    -DPELE_ENABLE_PARTICLES=OFF -DPELE_ENABLE_FCOMPARE=OFF `
+    -DPELE_ENABLE_FPE_TRAP_FOR_TESTS=OFF -DPELE_ENABLE_CUDA=OFF `
+    -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON `
+    '-DCMAKE_CXX_FLAGS=/bigobj /Zc:__cplusplus'
+cmake --build $Build --config Release --target PeleC-KythrosRDRE --parallel $Parallel
+$Binary = "$Build/Exec/KythrosRDRE/Release/PeleC-KythrosRDRE.exe"
+if (-not (Test-Path $Binary)) { throw 'Native solver executable was not produced.' }
+Copy-Item $Binary "$Output/kythros-pelec-rdre.exe" -Force
+# Include any non-static dependencies beside the executable.
+Get-ChildItem $Build -Recurse -Filter '*.dll' | Copy-Item -Destination $Output -Force
+Copy-Item "$SolverRoot/Exec/KythrosRDRE/smoke.inp" $Output -Force
+Copy-Item "$SolverRoot/Exec/KythrosRDRE/inputs.template" $Output -Force
+Copy-Item "$SolverRoot/upstream-lock.json" $Output -Force
+$Licenses = Join-Path $Output 'licenses'
+New-Item -ItemType Directory -Force $Licenses | Out-Null
+Copy-Item "$Source/LICENSE" "$Licenses/PeleC.txt" -Force
+Copy-Item "$Source/Submodules/PelePhysics/LICENSE" "$Licenses/PelePhysics.txt" -Force
+Copy-Item "$Source/Submodules/PelePhysics/Submodules/amrex/LICENSE" "$Licenses/AMReX.txt" -Force
+Copy-Item "$Source/Submodules/PelePhysics/Submodules/sundials/LICENSE" "$Licenses/SUNDIALS.txt" -Force
+$Manifest = [ordered]@{
+    platform = 'windows-x64'; accelerator = 'cpu-openmp'; peleC = $Lock.peleC.commit
+    pelePhysics = $PhysicsCommit.Trim(); executable = 'kythros-pelec-rdre.exe'
+    sha256 = (Get-FileHash "$Output/kythros-pelec-rdre.exe" -Algorithm SHA256).Hash.ToLower()
+    validationStatus = 'development-unvalidated'
+}
+$Manifest | ConvertTo-Json | Set-Content "$Output/build-manifest.json" -Encoding utf8
+Write-Host "Native solver: $Output/kythros-pelec-rdre.exe"
