@@ -49,7 +49,7 @@ if (-not $Generator) { throw "CMake has no generator for Visual Studio $VsMajor.
 # Build the native OpenMP runtime from a pinned source revision and package it.
 $LlvmCommit = '87f0227cb60147a26a1eeb4fb06e3b505e9c7261'
 $LlvmSource = Join-Path $WorkDirectory 'llvm-project'
-$OpenMpBuild = Join-Path $WorkDirectory 'openmp-build'
+$OpenMpBuild = Join-Path $WorkDirectory 'openmp-msvc-build'
 $OpenMpInstall = Join-Path $WorkDirectory 'openmp-install'
 if (-not (Test-Path "$LlvmSource/.git")) {
     git clone --depth 1 --branch llvmorg-20.1.8 --filter=blob:none --sparse https://github.com/llvm/llvm-project.git $LlvmSource
@@ -57,7 +57,10 @@ if (-not (Test-Path "$LlvmSource/.git")) {
 }
 $ActualLlvmCommit = git -C $LlvmSource rev-parse HEAD
 if ($ActualLlvmCommit.Trim() -ne $LlvmCommit) { throw 'LLVM OpenMP revision mismatch.' }
-cmake -S "$LlvmSource/openmp" -B $OpenMpBuild -G $Generator -A x64 -T ClangCL `
+# Build the C-ABI runtime with MSVC; ClangCL compiles the OpenMP application.
+# This avoids ClangCL/Windows STL atomic-initialization incompatibilities in
+# libomp itself while retaining Clang's OpenMP support for AMReX.
+cmake -S "$LlvmSource/openmp" -B $OpenMpBuild -G $Generator -A x64 `
     "-DCMAKE_GENERATOR_INSTANCE=$VsRoot" "-DCMAKE_INSTALL_PREFIX=$OpenMpInstall" `
     -DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON '-DCMAKE_CXX_FLAGS=/std:c++17' `
     -DOPENMP_ENABLE_LIBOMPTARGET=OFF -DOPENMP_ENABLE_OMPT_TOOLS=OFF -DLIBOMP_OMPT_SUPPORT=OFF `
