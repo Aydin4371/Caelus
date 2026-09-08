@@ -59,7 +59,8 @@ $ActualLlvmCommit = git -C $LlvmSource rev-parse HEAD
 if ($ActualLlvmCommit.Trim() -ne $LlvmCommit) { throw 'LLVM OpenMP revision mismatch.' }
 cmake -S "$LlvmSource/openmp" -B $OpenMpBuild -G $Generator -A x64 -T ClangCL `
     "-DCMAKE_GENERATOR_INSTANCE=$VsRoot" "-DCMAKE_INSTALL_PREFIX=$OpenMpInstall" `
-    -DOPENMP_ENABLE_LIBOMPTARGET=OFF -DOPENMP_ENABLE_OMPT_TOOLS=OFF -DLIBOMP_OMPT_SUPPORT=OFF
+    -DOPENMP_ENABLE_LIBOMPTARGET=OFF -DOPENMP_ENABLE_OMPT_TOOLS=OFF -DLIBOMP_OMPT_SUPPORT=OFF `
+    -DLIBOMP_USE_ITT_NOTIFY=OFF
 cmake --build $OpenMpBuild --config Release --parallel $Parallel
 cmake --install $OpenMpBuild --config Release
 $OpenMpLibrary = Join-Path $OpenMpInstall 'lib/libomp.lib'
