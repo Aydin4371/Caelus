@@ -39,49 +39,57 @@ concurrency:
 
 jobs:
   solver-runtime:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
     steps:
-      - name: Check out Kythros
-        uses: actions/checkout@v4
-
-      - name: Install native build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential gfortran cmake ninja-build pkg-config
-
-      - name: Validate the solver request boundary
-        run: |
-          chmod +x solver/pelec-rdre/scripts/*.sh
-          solver/pelec-rdre/scripts/validate-source.sh
-
-      - name: Restore the pinned solver build
-        id: solver-cache
-        uses: actions/cache@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          path: ${{ runner.temp }}/kythros-solver/output
-          key: kythros-pelec-cpu-${{ hashFiles('solver/pelec-rdre/Exec/KythrosRDRE/GNUmakefile', 'solver/pelec-rdre/Exec/KythrosRDRE/Make.package', 'solver/pelec-rdre/Exec/KythrosRDRE/prob.H', 'solver/pelec-rdre/Exec/KythrosRDRE/prob.cpp', 'solver/pelec-rdre/Exec/KythrosRDRE/prob_parm.H', 'solver/pelec-rdre/scripts/build-solver.sh', 'solver/pelec-rdre/upstream-lock.json') }}
-
-      - name: Build pinned PeleC RDRE executable
-        if: steps.solver-cache.outputs.cache-hit != 'true'
-        run: solver/pelec-rdre/scripts/build-solver.sh cpu "${RUNNER_TEMP}/kythros-solver"
-
-      - name: Execute three-dimensional annulus smoke case
-        run: solver/pelec-rdre/scripts/test-smoke.sh "${RUNNER_TEMP}/kythros-solver/output/kythros-pelec-rdre.bin" "${RUNNER_TEMP}/kythros-smoke"
-
-      - name: Assemble solver runtime
-        run: solver/pelec-rdre/scripts/package-runtime.sh "${RUNNER_TEMP}/kythros-solver/output/kythros-pelec-rdre.bin" "${RUNNER_TEMP}/kythros-solver/output/accelerator.txt" "${RUNNER_TEMP}/runtime-stage" "${RUNNER_TEMP}/kythros-runtime.tar.gz"
-
-      - name: Build the isolated WSL2 runtime image
-        run: solver/pelec-rdre/scripts/build-rootfs.sh "${RUNNER_TEMP}/kythros-runtime.tar.gz" "${RUNNER_TEMP}/rootfs-build" "${RUNNER_TEMP}/kythros-solver-rootfs.tar"
-
-      - name: Upload solver image
+          python-version: '3.12'
+      - name: Identify Windows toolchain image
+        id: image
+        run: '"version=$env:ImageVersion" >> $env:GITHUB_OUTPUT'
+      - name: Restore native build
+        id: build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/kythros-native
+          key: native-clang-v1-${{ steps.image.outputs.version }}-${{ hashFiles('solver/pelec-rdre/upstream-lock.json') }}-${{ hashFiles('solver/pelec-rdre/scripts/build-windows.ps1', 'solver/pelec-rdre/Exec/KythrosRDRE/**') }}
+          restore-keys: |
+            native-clang-v1-${{ steps.image.outputs.version }}-${{ hashFiles('solver/pelec-rdre/upstream-lock.json') }}-
+      - name: Build native Windows solver
+        run: ./solver/pelec-rdre/scripts/build-windows.ps1 -WorkDirectory "$env:RUNNER_TEMP/kythros-native"
+      - name: Package native solver and result reader
+        run: ./solver/pelec-rdre/scripts/package-windows.ps1 -SolverDirectory "$env:RUNNER_TEMP/kythros-native/output" -Destination "$env:RUNNER_TEMP/native-runtime" -WorkDirectory "$env:RUNNER_TEMP/runtime-package-build"
+      - name: Test packaged request-to-result workflow
+        run: |
+          $env:OMP_NUM_THREADS = '2'
+          & "$env:RUNNER_TEMP/native-runtime/kythros-runtime.exe" --self-test "$env:RUNNER_TEMP/packaged CFD test"
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged solver test failed.' }
+      - name: Upload native runtime
         uses: actions/upload-artifact@v4
         with:
-          name: kythros-solver-rootfs
-          path: ${{ runner.temp }}/kythros-solver-rootfs.tar
-          retention-days: 7
-          compression-level: 1
+          name: kythros-native-runtime
+          path: ${{ runner.temp }}/native-runtime/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve native diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-runtime-diagnostics
+          path: |
+            ${{ runner.temp }}/packaged CFD test/
+            ${{ runner.temp }}/runtime-package-build/build/kythros-runtime/warn-kythros-runtime.txt
+      - name: Preserve compiled dependencies
+        if: ${{ !cancelled() && steps.build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/kythros-native
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
 
   windows-installer:
     needs: solver-runtime
@@ -94,8 +102,8 @@ jobs:
       - name: Download packaged Full 3D runtime
         uses: actions/download-artifact@v4
         with:
-          name: kythros-solver-rootfs
-          path: src-tauri/resources
+          name: kythros-native-runtime
+          path: src-tauri/resources/native-runtime
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -111,6 +119,17 @@ jobs:
 
       - name: Build the combined Windows installer
         run: npm run desktop:build
+
+      - name: Test the installed native application
+        shell: pwsh
+        run: ./solver/pelec-rdre/scripts/test-windows-installer.ps1
+
+      - name: Preserve installed-app diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-native-diagnostics
+          path: ${{ runner.temp }}/Kythros installed CFD test/
 
       - name: Upload installable application
         uses: actions/upload-artifact@v4
@@ -150,9 +169,9 @@ jobs:
           cp "${installers[0]}" Kythros-Setup.exe
           sha256sum Kythros-Setup.exe > SHA256SUMS.txt
           cat > release-notes.md <<'NOTES'
-          Download Kythros-Setup.exe below, run it, then open Kythros and choose Full 3D → Install Full 3D runtime. Windows may require a restart to enable WSL2.
+          Download Kythros-Setup.exe below, run it, then open Kythros and choose Full 3D → Run Full 3D. The native Windows solver and result reader are included. No WSL, Linux distribution, or separate Python installation is needed.
 
-          Windows 10/11 x64. Includes the CPU/OpenMP Full 3D solver; CUDA acceleration is not included. This is a development solver, not a validated engineering prediction release. The build executes a one-step 3D annulus smoke test, not a complete RDE validation campaign. The installer is not code-signed.
+          Windows 10/11 x64. Includes the CPU/OpenMP Full 3D solver; CUDA acceleration is not included. This is a development solver, not a validated engineering prediction release. The installed app passes a native request-to-result smoke test. This is not a complete RDE validation campaign; the existing smoke case has a known temperature anomaly also present on Linux. The installer is not code-signed.
 
           Release assets do not have the workflow artifacts' automatic expiry. This repository is private, so downloading requires a GitHub account with repository access. SHA256SUMS.txt can be used to verify download integrity.
           NOTES
@@ -167,3 +186,4 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" Kythros-Setup.exe SHA256SUMS.txt --clobber
           gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file release-notes.md
+

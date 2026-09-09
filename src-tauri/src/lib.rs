@@ -16,7 +16,7 @@ use tauri::{AppHandle, Manager, State};
 
 const API_VERSION: u32 = 1;
 const SOLVER_PATH: &str = "/opt/kythros/bin/kythros-pelec-rdre";
-const WSL_DISTRIBUTION: &str = "KythrosSolver";
+
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,15 +85,24 @@ fn command_output(mut command: Command) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-fn wsl_distribution_exists() -> bool {
-    if !cfg!(target_os = "windows") {
-        return false;
+fn quiet_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
     }
-    let mut command = Command::new("wsl.exe");
-    command.args(["--list", "--quiet"]);
-    command_output(command)
-        .map(|value| value.replace('\0', "").lines().any(|line| line.trim() == WSL_DISTRIBUTION))
-        .unwrap_or(false)
+    command
+}
+
+fn native_runner(resources: &Path) -> Result<PathBuf, String> {
+    for root in [resources.join("resources/native-runtime"), resources.join("native-runtime")] {
+        let runner = root.join("kythros-runtime.exe");
+        if runner.is_file() && root.join("kythros-pelec-rdre.exe").is_file() && root.join("inputs.template").is_file() {
+            return Ok(runner);
+        }
+    }
+    Err("The native Full 3D package is missing. Reinstall Kythros using the latest complete Windows installer.".to_string())
 }
 
 fn platform() -> &'static str {
@@ -114,7 +123,7 @@ fn total_memory_gb() -> Option<f64> {
         let kb = content.lines().find(|line| line.starts_with("MemTotal:"))?.split_whitespace().nth(1)?.parse::<f64>().ok()?;
         Some(kb / 1024.0 / 1024.0)
     } else if cfg!(target_os = "windows") {
-        let mut command = Command::new("powershell.exe");
+        let mut command = quiet_command("powershell.exe");
         command.args(["-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"]);
         command_output(command)?.parse::<f64>().ok().map(|bytes| bytes / 1024.0 / 1024.0 / 1024.0)
     } else {
@@ -123,7 +132,7 @@ fn total_memory_gb() -> Option<f64> {
 }
 
 fn nvidia_gpu() -> (Option<String>, Option<f64>) {
-    let mut command = Command::new("nvidia-smi");
+    let mut command = quiet_command("nvidia-smi");
     command.args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]);
     let Some(line) = command_output(command).and_then(|output| output.lines().next().map(str::to_string)) else {
         return (None, None);
@@ -134,18 +143,16 @@ fn nvidia_gpu() -> (Option<String>, Option<f64>) {
     (name, memory)
 }
 
-fn solver_command() -> Command {
+fn solver_command(resources: &Path) -> Result<Command, String> {
     if cfg!(target_os = "windows") {
-        let mut command = Command::new("wsl.exe");
-        command.args(["-d", WSL_DISTRIBUTION, "--", SOLVER_PATH]);
-        command
+        Ok(quiet_command(native_runner(resources)?))
     } else {
-        Command::new(SOLVER_PATH)
+        Ok(quiet_command(SOLVER_PATH))
     }
 }
 
-fn solver_version() -> Option<String> {
-    let mut command = solver_command();
+fn solver_version(resources: &Path) -> Option<String> {
+    let mut command = solver_command(resources).ok()?;
     command.arg("--version");
     command_output(command)
 }
@@ -159,69 +166,14 @@ fn solver_field(identity: Option<&String>, key: &str) -> Option<String> {
     })
 }
 
-fn runtime_installed() -> bool {
-    if cfg!(target_os = "windows") {
-        let mut command = Command::new("wsl.exe");
-        command.args(["-d", WSL_DISTRIBUTION, "--", "test", "-x", SOLVER_PATH]);
-        command.status().map(|status| status.success()).unwrap_or(false)
-    } else {
-        Path::new(SOLVER_PATH).is_file()
-    }
+fn runtime_installed(resources: &Path) -> bool {
+    if cfg!(target_os = "windows") { native_runner(resources).is_ok() }
+    else { Path::new(SOLVER_PATH).is_file() }
 }
 
-fn bundled_solver_rootfs(app: &AppHandle) -> Result<PathBuf, String> {
-    let resource_directory = app.path().resource_dir().map_err(|error| format!("Kythros could not open its installer resources: {error}"))?;
-    let candidates = [
-        resource_directory.join("resources").join("kythros-solver-rootfs.tar"),
-        resource_directory.join("kythros-solver-rootfs.tar"),
-    ];
-    for candidate in candidates {
-        if candidate.is_file() {
-            let size = fs::metadata(&candidate).map_err(|error| format!("Kythros could not inspect its solver package: {error}"))?.len();
-            if size < 10 * 1024 * 1024 {
-                return Err("This development build does not contain the Full 3D solver package. Install a complete Kythros release.".to_string());
-            }
-            return Ok(candidate);
-        }
-    }
-    Err("This Kythros installer does not contain the Full 3D solver package.".to_string())
-}
-
-fn ensure_wsl_available() -> Result<(), String> {
-    let mut status = Command::new("wsl.exe");
-    status.arg("--status");
-    if status.status().map(|value| value.success()).unwrap_or(false) {
-        return Ok(());
-    }
-    let mut install = Command::new("powershell.exe");
-    install.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Start-Process wsl.exe -Verb RunAs -ArgumentList '--install','--no-distribution' -Wait",
-    ]);
-    let installed = install.status().map(|value| value.success()).unwrap_or(false);
-    if installed {
-        Err("Windows enabled the local solver subsystem. Restart the computer, reopen Kythros, and choose Install Full 3D runtime again.".to_string())
-    } else {
-        Err("Windows Subsystem for Linux 2 is required. Enable WSL2 in Windows Features, restart, and try again.".to_string())
-    }
-}
-
-fn wsl_path(path: &Path) -> Result<String, String> {
-    if !cfg!(target_os = "windows") {
-        return Ok(path.to_string_lossy().to_string());
-    }
-    let native = path.to_string_lossy().to_string();
-    let mut command = Command::new("wsl.exe");
-    command.args(["-d", WSL_DISTRIBUTION, "--", "wslpath", "-a", &native]);
-    command_output(command).ok_or_else(|| format!("Could not translate the Kythros job path for {WSL_DISTRIBUTION}."))
-}
-
-#[tauri::command]
-fn local_runtime_status() -> RuntimeStatus {
-    let installed = runtime_installed();
-    let identity = installed.then(solver_version).flatten();
+fn inspect_runtime(resources: &Path) -> RuntimeStatus {
+    let installed = runtime_installed(resources);
+    let identity = installed.then(|| solver_version(resources)).flatten();
     let runtime_version = identity.as_ref().and_then(|value| {
         value.split(';').next()?.split_whitespace().last().map(str::to_string)
     });
@@ -230,12 +182,12 @@ fn local_runtime_status() -> RuntimeStatus {
     let (gpu_name, gpu_memory_gb) = nvidia_gpu();
     let mut details = Vec::new();
     if cfg!(target_os = "windows") {
-        details.push(format!("Solver runtime: WSL2 distribution {WSL_DISTRIBUTION}"));
+        details.push("Native Windows CPU solver included with Kythros.".to_string());
     } else {
         details.push(format!("Solver runtime: {SOLVER_PATH}"));
     }
     if !installed {
-        details.push("Install the signed Kythros Solver Runtime before starting a Full 3D job.".to_string());
+        details.push("Reinstall Kythros using the complete Windows installer to restore the included solver.".to_string());
     }
     RuntimeStatus {
         api_version: API_VERSION,
@@ -251,7 +203,7 @@ fn local_runtime_status() -> RuntimeStatus {
             architecture: std::env::consts::ARCH.to_string(),
             logical_cpu_count: std::thread::available_parallelism().map(usize::from).unwrap_or(1),
             memory_gb: total_memory_gb(),
-            cuda_available: gpu_name.is_some(),
+            cuda_available: !cfg!(target_os = "windows") && gpu_name.is_some(),
             gpu_name,
             gpu_memory_gb,
         },
@@ -260,35 +212,18 @@ fn local_runtime_status() -> RuntimeStatus {
 }
 
 #[tauri::command]
-fn install_local_solver_runtime(app: AppHandle) -> Result<RuntimeStatus, String> {
-    if !cfg!(target_os = "windows") {
-        return Err("The one-click solver installer currently supports Windows. Linux packages use the signed runtime installation script.".to_string());
-    }
-    if runtime_installed() {
-        return Ok(local_runtime_status());
-    }
-    ensure_wsl_available()?;
-    let rootfs = bundled_solver_rootfs(&app)?;
-    if !wsl_distribution_exists() {
-        let install_directory = app.path().app_local_data_dir()
-            .map_err(|error| format!("Kythros could not create its solver directory: {error}"))?
-            .join("solver-wsl");
-        fs::create_dir_all(&install_directory)
-            .map_err(|error| format!("Kythros could not create its solver directory: {error}"))?;
-        let status = Command::new("wsl.exe")
-            .args(["--import", WSL_DISTRIBUTION])
-            .arg(&install_directory)
-            .arg(&rootfs)
-            .args(["--version", "2"])
-            .status()
-            .map_err(|error| format!("Kythros could not start the local solver installation: {error}"))?;
-        if !status.success() {
-            return Err("Windows could not install the packaged Full 3D solver runtime.".to_string());
-        }
-    }
-    let status = local_runtime_status();
-    if !status.runtime_installed || !status.solver_installed {
-        return Err("The solver package was installed but did not pass its executable check.".to_string());
+async fn local_runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
+    let resources = app.path().resource_dir().map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || inspect_runtime(&resources))
+        .await.map_err(|error| error.to_string())
+}
+
+// Compatibility for older UI clients: the solver is now installed with the app.
+#[tauri::command]
+async fn install_local_solver_runtime(app: AppHandle) -> Result<RuntimeStatus, String> {
+    let status = local_runtime_status(app).await?;
+    if !status.solver_installed {
+        return Err("The included solver did not pass its check. Reinstall the latest complete Kythros Windows installer.".to_string());
     }
     Ok(status)
 }
@@ -319,17 +254,16 @@ fn start_local_cfd(app: AppHandle, store: State<'_, JobStore>, request: Value) -
         return Err("The Full 3D run identifier is invalid.".to_string());
     }
     let _ = decoded.remaining;
-    if !runtime_installed() {
-        return Err("Install the Kythros Solver Runtime before starting Full 3D.".to_string());
-    }
+    let resources = app.path().resource_dir().map_err(|error| error.to_string())?;
+    let mut command = solver_command(&resources)?;
     let base = app.path().app_local_data_dir().map_err(|error| format!("Kythros could not open its local job directory: {error}"))?;
     let job_dir = base.join("cfd-jobs").join(&decoded.run_id);
-    fs::create_dir_all(&job_dir).map_err(|error| format!("Kythros could not create the local job directory: {error}"))?;
+    fs::create_dir_all(base.join("cfd-jobs")).map_err(|error| error.to_string())?;
+    fs::create_dir(&job_dir).map_err(|error| format!("Kythros could not create the local job directory: {error}"))?;
     let request_path = job_dir.join("request.json");
     let result_path = job_dir.join("kythros-volume-result.json");
     fs::write(&request_path, serde_json::to_vec_pretty(&request).map_err(|error| error.to_string())?).map_err(|error| format!("Kythros could not save the run request: {error}"))?;
-    let solver_request_path = wsl_path(&request_path)?;
-    let solver_result_path = wsl_path(&result_path)?;
+    command.arg("--request").arg(&request_path).arg("--result").arg(&result_path);
     let record = Arc::new(JobRecord {
         status: Mutex::new(JobStatus {
             run_id: decoded.run_id.clone(),
@@ -353,9 +287,12 @@ fn start_local_cfd(app: AppHandle, store: State<'_, JobStore>, request: Value) -
     let thread_record = Arc::clone(&record);
     thread::spawn(move || {
         update_status(&thread_record, "preparing", 0.03, "Preparing the engine geometry and solver case.");
-        let mut command = solver_command();
-        command.args(["--request", &solver_request_path, "--result", &solver_result_path]);
-        command.stdout(Stdio::null()).stderr(Stdio::piped());
+        let runtime_log = job_dir.join("runtime.log");
+        let log = match fs::File::create(&runtime_log) {
+            Ok(log) => log,
+            Err(error) => { fail_job(&thread_record, error.to_string()); return; }
+        };
+        command.current_dir(&job_dir).stdout(Stdio::null()).stderr(Stdio::from(log));
         let Ok(mut child) = command.spawn() else {
             fail_job(&thread_record, "The verified PeleC RDRE solver executable could not be started.".to_string());
             return;
@@ -363,7 +300,17 @@ fn start_local_cfd(app: AppHandle, store: State<'_, JobStore>, request: Value) -
         update_status(&thread_record, "solving", 0.08, "The local solver is running. Progress comes from the runtime status file when available.");
         loop {
             if thread_record.cancel.load(Ordering::Relaxed) {
-                let _ = child.kill();
+                let _ = fs::write(job_dir.join("cancel.flag"), b"cancel");
+                for _ in 0..50 {
+                    if matches!(child.try_wait(), Ok(Some(_))) { break; }
+                    thread::sleep(Duration::from_millis(200));
+                }
+                if matches!(child.try_wait(), Ok(None)) {
+                    if cfg!(target_os = "windows") {
+                        let _ = quiet_command("taskkill.exe").args(["/PID", &child.id().to_string(), "/T", "/F"]).status();
+                    }
+                    let _ = child.kill();
+                }
                 let _ = child.wait();
                 update_status(&thread_record, "cancelled", 0.0, "The local CFD job was cancelled.");
                 return;
@@ -371,12 +318,8 @@ fn start_local_cfd(app: AppHandle, store: State<'_, JobStore>, request: Value) -
             match child.try_wait() {
                 Ok(Some(exit)) if exit.success() => break,
                 Ok(Some(exit)) => {
-                    let error = child.stderr.take().and_then(|stderr| {
-                        use std::io::Read;
-                        let mut reader = stderr;
-                        let mut value = String::new();
-                        reader.read_to_string(&mut value).ok().map(|_| value.trim().to_string())
-                    }).filter(|value| !value.is_empty()).unwrap_or_else(|| format!("Solver process exited with {exit}."));
+                    let detail = fs::read_to_string(&runtime_log).unwrap_or_default();
+                    let error = format!("Full 3D stopped ({exit}). {}\nRun files: {}", detail.trim(), job_dir.display());
                     fail_job(&thread_record, error);
                     return;
                 }
@@ -446,6 +389,19 @@ fn cancel_local_cfd(store: State<'_, JobStore>, run_id: String) -> Result<JobSta
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // CI invokes the installed app to check the same resource lookup and launcher
+    // used by the Run Full 3D command, without opening a WebView.
+    let args: Vec<_> = std::env::args_os().collect();
+    if args.get(1).is_some_and(|arg| arg == "--test-native-runtime") {
+        let result = (|| -> Result<bool, String> {
+            let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+            let root = executable.parent().ok_or("Missing application directory")?;
+            let destination = args.get(2).ok_or("Missing test directory")?;
+            let mut command = solver_command(root)?;
+            Ok(command.arg("--self-test").arg(destination).status().map_err(|error| error.to_string())?.success())
+        })();
+        match result { Ok(true) => std::process::exit(0), other => { eprintln!("Native package test failed: {other:?}"); std::process::exit(1); } }
+    }
     tauri::Builder::default()
         .manage(JobStore::default())
         .invoke_handler(tauri::generate_handler![
@@ -458,3 +414,4 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running Kythros desktop");
 }
+

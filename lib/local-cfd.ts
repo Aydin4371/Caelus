@@ -21,7 +21,7 @@ export const LOCAL_CFD_PRESETS: LocalCfdPreset[] = [
   {
     id: "development",
     label: "Development",
-    purpose: "Check setup and initial wave development on one local GPU.",
+    purpose: "Check setup and initial wave development on the local solver.",
     approximateCells: 3_000_000,
     minimumRamGb: 24,
     recommendedGpuMemoryGb: 8,
@@ -214,7 +214,7 @@ export function assessLocalCfdReadiness(status: LocalRunnerStatus, presetId: Loc
   const warnings: string[] = [];
   if (!status.desktop) blockingIssues.push("Install and open the Kythros desktop app to run Full 3D on this computer.");
   if (!["windows", "linux"].includes(status.hardware.platform)) blockingIssues.push("The first local solver release supports 64-bit Windows and Linux workstations.");
-  if (!status.runtimeInstalled) blockingIssues.push("Install the Kythros Solver Runtime from Desktop setup.");
+  if (!status.runtimeInstalled) blockingIssues.push("The included solver is missing. Reinstall the latest complete Kythros installer.");
   if (!status.solverInstalled) blockingIssues.push("The verified PeleC RDRE solver pack is not installed.");
   if (!supportsInitialLocal3dCase(design)) blockingIssues.push("The first Full 3D solver pack supports rocket-fed hydrogen/air and hydrogen/oxygen annular engines.");
   if (status.hardware.memoryGb !== null && status.hardware.memoryGb < preset.minimumRamGb) blockingIssues.push(`${preset.label} requires at least ${preset.minimumRamGb} GB of system memory.`);
@@ -223,7 +223,7 @@ export function assessLocalCfdReadiness(status: LocalRunnerStatus, presetId: Loc
   if (presetId === "development" && status.solverInstalled && !cudaSolver) warnings.push("Development can run on the packaged CPU solver, but a reacting 3D case may take hours.");
   if (cudaSolver && status.hardware.cudaAvailable && status.hardware.gpuMemoryGb !== null && status.hardware.gpuMemoryGb < preset.recommendedGpuMemoryGb) warnings.push(`${preset.label} is designed for approximately ${preset.recommendedGpuMemoryGb} GB of GPU memory; this machine reports ${status.hardware.gpuMemoryGb.toFixed(0)} GB.`);
   if (status.hardware.logicalCpuCount < 8) warnings.push("Fewer than eight logical CPU cores may make mesh preparation and result conversion slow.");
-  if (status.apiVersion !== LOCAL_CFD_API_VERSION) blockingIssues.push("The desktop app and solver runtime use incompatible API versions. Update both components.");
+  if (status.apiVersion !== LOCAL_CFD_API_VERSION) blockingIssues.push("The desktop app and solver runtime use incompatible API versions. Install the latest complete Kythros update.");
   return { ready: blockingIssues.length === 0, blockingIssues, warnings };
 }
 
@@ -394,3 +394,4 @@ export function recommendLocalRde3dChange(design: EngineDesign, condition: Rde2d
     simulation: { title: "Rerun exactly one operating change", action: `Repeat the converged Full 3D case at ${nextMassFlow.toFixed(3)} kg/s with every other input locked.`, reason: "The result becomes a traceable adjacent point for the operating envelope." },
   };
 }
+
