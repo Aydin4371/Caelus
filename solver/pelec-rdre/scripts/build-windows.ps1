@@ -54,6 +54,14 @@ if ($MainSource.Contains($PosixUtc)) {
 } elseif (-not $MainSource.Contains($WindowsUtc)) {
     throw 'Upstream startup timestamp code changed; review the Windows adaptation.'
 }
+# Trace native shutdown stages while the Windows port is under validation.
+$MainSource = Get-Content $MainFile -Raw
+foreach ($Stage in @('if (auto* arena = dynamic_cast<amrex::CArena*>(amrex::The_Arena())) {', 'BL_PROFILE_VAR_STOP(pmain);', 'amrex::sundials::Finalize();', 'amrex::Finalize();', 'return 0;')) {
+    $Marker = 'std::cerr << "Native shutdown: ' + $Stage.Replace('"', '\"') + '" << std::endl;'
+    if (-not $MainSource.Contains($Marker)) { $MainSource = $MainSource.Replace($Stage, "$Marker`n  $Stage") }
+}
+Set-Content $MainFile $MainSource -Encoding utf8
+
 # Upstream adds GNU warning switches unconditionally; /Wextra is invalid in
 # MSVC. Change compiler diagnostics only, without altering numerical source.
 $FlagsFile = "$Source/CMake/SetPeleCompileFlags.cmake"
