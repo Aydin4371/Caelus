@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -31,6 +32,19 @@ def main() -> None:
         )
     print((work / "pelec.log").read_text(encoding="utf-8", errors="replace"))
     if result.returncode:
+        log_text = (work / "pelec.log").read_text(encoding="utf-8", errors="replace")
+        for map_file in (binary.parent.parent / "build").rglob("PeleC-KythrosRDRE.map"):
+            symbols = []
+            for line in map_file.read_text(errors="replace").splitlines():
+                match = re.match(r"\s+[0-9a-fA-F]+:[0-9a-fA-F]+\s+(\S+)\s+([0-9a-fA-F]{12,16})\s", line)
+                if match:
+                    symbols.append((int(match[2], 16), match[1]))
+            for offset in re.findall(r"kythros-pelec-rdre\.exe (?:at offset|\+) ([0-9a-fA-F]+)", log_text):
+                address = 0x140000000 + int(offset, 16)
+                preceding = [s for s in symbols if s[0] <= address]
+                if preceding:
+                    nearest = max(preceding)
+                    print(f"Native symbol: {nearest[1]} + {address-nearest[0]:x}")
         raise RuntimeError(f"Native solver exited with {result.returncode}")
     plots = sorted(p for p in work.glob("plt*") if (p / "Header").is_file())
     if not plots:

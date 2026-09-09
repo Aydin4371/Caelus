@@ -62,6 +62,7 @@ jobs:
             ${{ runner.temp }}/native smoke case/pelec.log
             ${{ runner.temp }}/native smoke case/result.json
             ${{ runner.temp }}/native smoke case/plt*
+            ${{ runner.temp }}/kythros-native/build/Exec/KythrosRDRE/Release/*.map
       - name: Preserve compiled dependencies
         if: ${{ !cancelled() && steps.build-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4

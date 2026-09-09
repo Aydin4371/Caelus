@@ -6,6 +6,45 @@
 
 #include <algorithm>
 
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#include <cstdio>
+
+namespace {
+LONG WINAPI report_native_crash(EXCEPTION_POINTERS* info)
+{
+  HMODULE module = nullptr;
+  char path[MAX_PATH] = {};
+  const auto address = info->ExceptionRecord->ExceptionAddress;
+  GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                      GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    reinterpret_cast<LPCSTR>(address), &module);
+  GetModuleFileNameA(module, path, MAX_PATH);
+  std::fprintf(stderr, "Native exception %lx in %s at offset %llx\n",
+               info->ExceptionRecord->ExceptionCode, path,
+               static_cast<unsigned long long>(
+                 reinterpret_cast<uintptr_t>(address) -
+                 reinterpret_cast<uintptr_t>(module)));
+  void* frames[32];
+  const auto count = CaptureStackBackTrace(0, 32, frames, nullptr);
+  for (unsigned i = 0; i < count; ++i) {
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                      reinterpret_cast<LPCSTR>(frames[i]), &module);
+    GetModuleFileNameA(module, path, MAX_PATH);
+    std::fprintf(stderr, "Native frame %u: %s + %llx\n", i, path,
+                 static_cast<unsigned long long>(
+                   reinterpret_cast<uintptr_t>(frames[i]) -
+                   reinterpret_cast<uintptr_t>(module)));
+  }
+  std::fflush(stderr);
+  return EXCEPTION_CONTINUE_SEARCH;
+}
+const auto previous_exception_filter = SetUnhandledExceptionFilter(report_native_crash);
+}
+#endif
+
 void pc_prob_close() {}
 
 namespace {
