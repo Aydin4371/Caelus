@@ -33,7 +33,7 @@ def main() -> None:
     print((work / "pelec.log").read_text(encoding="utf-8", errors="replace"))
     if result.returncode:
         log_text = (work / "pelec.log").read_text(encoding="utf-8", errors="replace")
-        for map_file in (binary.parent.parent / "build").rglob("PeleC-KythrosRDRE.map"):
+        for map_file in binary.parent.glob("native-solver.map"):
             symbols = []
             for line in map_file.read_text(errors="replace").splitlines():
                 match = re.match(r"\s+[0-9a-fA-F]+:[0-9a-fA-F]+\s+(\S+)\s+([0-9a-fA-F]{12,16})\s", line)

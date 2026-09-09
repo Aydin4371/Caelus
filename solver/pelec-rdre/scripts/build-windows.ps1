@@ -119,12 +119,14 @@ cmake -S $Source -B $Build -G $Generator -A x64 -T ClangCL "-DCMAKE_GENERATOR_IN
     -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON `
     '-DOpenMP_CXX_FLAGS=/clang:-fopenmp' -DOpenMP_CXX_LIB_NAMES=omp `
     "-DOpenMP_omp_LIBRARY=$OpenMpLibrary" "-DOpenMP_CXX_INCLUDE_DIR=$OpenMpInstall/include" `
-    '-DCMAKE_EXE_LINKER_FLAGS=/MAP' `
+    "-DCMAKE_EXE_LINKER_FLAGS=/MAP:$Build/native-solver.map" `
     '-DCMAKE_CXX_FLAGS=/std:c++20 /bigobj /D_USE_MATH_DEFINES'
 cmake --build $Build --config Release --target PeleC-KythrosRDRE --parallel $Parallel
 $Binary = "$Build/Exec/KythrosRDRE/Release/PeleC-KythrosRDRE.exe"
 if (-not (Test-Path $Binary)) { throw 'Native solver executable was not produced.' }
 Copy-Item $Binary "$Output/kythros-pelec-rdre.exe" -Force
+if (-not (Test-Path "$Build/native-solver.map")) { throw 'Native diagnostic linker map was not produced.' }
+Copy-Item "$Build/native-solver.map" $Output -Force
 # Include any non-static dependencies beside the executable.
 Get-ChildItem $Build -Recurse -Filter '*.dll' | Copy-Item -Destination $Output -Force
 # Ship the redistributable C++ and OpenMP DLLs app-locally. The solver must
