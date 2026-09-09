@@ -32,6 +32,7 @@ foreach ($CaseFile in (Get-ChildItem "$SolverRoot/Exec/KythrosRDRE" -File)) {
         Copy-Item $CaseFile.FullName $Destination -Force
     }
 }
+Add-Content "$CaseTarget/CMakeLists.txt" 'target_link_options(${pele_exe_name} PRIVATE "/MAP:${CMAKE_BINARY_DIR}/native-solver.map")' -Encoding utf8
 Set-Content "$Source/Exec/CMakeLists.txt" 'add_subdirectory(KythrosRDRE)' -Encoding utf8
 Set-Content "$Source/Tests/CMakeLists.txt" '# Kythros uses test-native-solver.py.' -Encoding utf8
 # Only the plotfile metadata timestamp uses this POSIX API. Microsoft's
@@ -121,6 +122,7 @@ cmake -S $Source -B $Build -G $Generator -A x64 -T ClangCL "-DCMAKE_GENERATOR_IN
     "-DOpenMP_omp_LIBRARY=$OpenMpLibrary" "-DOpenMP_CXX_INCLUDE_DIR=$OpenMpInstall/include" `
     "-DCMAKE_EXE_LINKER_FLAGS=/MAP:$Build/native-solver.map" `
     '-DCMAKE_CXX_FLAGS=/std:c++20 /bigobj /D_USE_MATH_DEFINES'
+Get-Content "$Build/Exec/KythrosRDRE/PeleC-KythrosRDRE.vcxproj" | Select-String -Pattern "MapFile|GenerateMap|AdditionalOptions"
 cmake --build $Build --config Release --target PeleC-KythrosRDRE --parallel $Parallel
 $Binary = "$Build/Exec/KythrosRDRE/Release/PeleC-KythrosRDRE.exe"
 if (-not (Test-Path $Binary)) { throw 'Native solver executable was not produced.' }
