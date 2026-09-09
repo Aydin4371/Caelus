@@ -27,6 +27,17 @@ if ($PhysicsCommit.Trim() -ne $Lock.pelePhysics.commit) { throw 'PelePhysics doe
 Copy-Item "$SolverRoot/Exec/KythrosRDRE" "$Source/Exec/" -Recurse -Force
 Set-Content "$Source/Exec/CMakeLists.txt" 'add_subdirectory(KythrosRDRE)' -Encoding utf8
 Set-Content "$Source/Tests/CMakeLists.txt" '# Kythros uses test-native-solver.py.' -Encoding utf8
+# Only the plotfile metadata timestamp uses this POSIX API. Microsoft's
+# thread-safe equivalent reverses the arguments; no numerical code changes.
+$IoFile = "$Source/Source/IO.cpp"
+$IoSource = Get-Content $IoFile -Raw
+$PosixTime = 'localtime_r(&now, &localtm);'
+$WindowsTime = 'localtime_s(&localtm, &now);'
+if ($IoSource.Contains($PosixTime)) {
+    Set-Content $IoFile $IoSource.Replace($PosixTime, $WindowsTime) -Encoding utf8
+} elseif (-not $IoSource.Contains($WindowsTime)) {
+    throw 'Upstream output timestamp code changed; review the Windows adaptation.'
+}
 # Upstream adds GNU warning switches unconditionally; /Wextra is invalid in
 # MSVC. Change compiler diagnostics only, without altering numerical source.
 $FlagsFile = "$Source/CMake/SetPeleCompileFlags.cmake"
@@ -118,6 +129,7 @@ $Manifest = [ordered]@{
     platform = 'windows-x64'; compiler = 'clang-cl'; accelerator = 'cpu-openmp'; peleC = $Lock.peleC.commit
     pelePhysics = $PhysicsCommit.Trim(); executable = 'kythros-pelec-rdre.exe'
     llvmOpenMP = $LlvmCommit
+    windowsAdaptationVersion = 1
     sha256 = (Get-FileHash "$Output/kythros-pelec-rdre.exe" -Algorithm SHA256).Hash.ToLower()
     validationStatus = 'development-unvalidated'
 }
