@@ -5,9 +5,10 @@ import type { EngineDesign, OperatingPoint } from "@/lib/design-workspace";
 import { runFastRde2d, type FastRde2dProgress, type FastRde2dResult } from "@/lib/fast-rde-2d";
 import { RdeComputedFlow3d, type ComputedFlowMetric } from "@/components/rde-computed-flow-3d";
 import { RdeVolumeFlow3d } from "@/components/rde-volume-flow-3d";
-import { cancelLocalCfd, getLocalCfdJobStatus, getLocalRunnerStatus, installLocalSolverRuntime, startLocalCfd } from "@/lib/desktop-cfd-client";
+import { cancelLocalCfd, getLocalCfdJobStatus, getLocalRunnerStatus, installLocalSolverRuntime, openDesktopUpdate, startLocalCfd } from "@/lib/desktop-cfd-client";
 import {
   assessLocalCfdReadiness,
+  availableLocalCfdPresets,
   createLocalCfdRunRequest,
   LOCAL_CFD_PRESETS,
   parseRde3dVolumeResult,
@@ -129,6 +130,8 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const [localPresetId, setLocalPresetId] = useState<LocalCfdPresetId>("development");
   const [localStatus, setLocalStatus] = useState<LocalRunnerStatus | null>(null);
   const [installingRuntime, setInstallingRuntime] = useState(false);
+  const [setupNeedsRestart, setSetupNeedsRestart] = useState(false);
+  const [launchMessage, setLaunchMessage] = useState<string | null>(null);
   const [localJob, setLocalJob] = useState<LocalCfdJobStatus | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -140,7 +143,9 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const recommendation = activeDesign && condition && result ? analyzeRde2dResult(activeDesign, condition, result) : null;
   const volumeRecommendation = activeDesign && condition && volumeResult ? recommendLocalRde3dChange(activeDesign, condition, volumeResult) : null;
   const selectedLevel = CFD_LEVELS.find((level) => level.id === fidelity)!;
-  const localReadiness = activeDesign && localStatus ? assessLocalCfdReadiness(localStatus, localPresetId, activeDesign) : null;
+  const availablePresets = availableLocalCfdPresets(localStatus);
+  const effectiveLocalPresetId = availablePresets.some((preset) => preset.id === localPresetId) ? localPresetId : "development";
+  const localReadiness = activeDesign && localStatus ? assessLocalCfdReadiness(localStatus, effectiveLocalPresetId, activeDesign) : null;
 
   const refreshLocalStatus = async () => {
     try {
@@ -150,16 +155,9 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     }
   };
 
-  const installRuntime = async () => {
-    setInstallingRuntime(true);
-    setResultError(null);
-    try {
-      setLocalStatus(await installLocalSolverRuntime());
-    } catch (error) {
-      setResultError(error instanceof Error ? error.message : "Kythros could not install the Full 3D runtime.");
-    } finally {
-      setInstallingRuntime(false);
-    }
+  const downloadDesktopUpdate = async () => {
+    try { await openDesktopUpdate(); }
+    catch (error) { setResultError(error instanceof Error ? error.message : String(error)); }
   };
 
   useEffect(() => {
@@ -275,19 +273,37 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     }
   };
   const runFull3dSolver = async () => {
+    if (running || installingRuntime) return;
     setResultError(null);
     setVolumeResult(null);
+    setLocalJob(null);
+    setRunning(true);
+    setLaunchMessage("Checking this computer…");
     try {
-      const status = await getLocalRunnerStatus();
+      const request = createLocalCfdRunRequest(activeDesign, condition!, effectiveLocalPresetId);
+      let status = await getLocalRunnerStatus();
       setLocalStatus(status);
-      const readiness = assessLocalCfdReadiness(status, localPresetId, activeDesign);
+      if (status.desktop && (!status.runtimeInstalled || !status.solverInstalled)) {
+        setInstallingRuntime(true);
+        setLaunchMessage("Setting up Full 3D. Approve the Windows permission prompt if it appears. This may take several minutes.");
+        status = await installLocalSolverRuntime();
+        setLocalStatus(status);
+        setInstallingRuntime(false);
+      }
+      const readiness = assessLocalCfdReadiness(status, effectiveLocalPresetId, activeDesign);
       if (!readiness.ready) throw new Error(readiness.blockingIssues[0]);
-      const request = createLocalCfdRunRequest(activeDesign, condition!, localPresetId);
-      setRunning(true);
+      setLaunchMessage("Checking run files and starting the solver…");
       setLocalJob(await startLocalCfd(request));
+      setSetupNeedsRestart(false);
     } catch (error) {
       setRunning(false);
-      setResultError(error instanceof Error ? error.message : "Kythros could not start the Full 3D run.");
+      const message = error instanceof Error ? error.message : String(error);
+      const restart = message.startsWith("RESTART_REQUIRED:");
+      setSetupNeedsRestart(restart);
+      setResultError(message.replace(/^RESTART_REQUIRED:\s*/, ""));
+    } finally {
+      setInstallingRuntime(false);
+      setLaunchMessage(null);
     }
   };
   const cancelFull3dSolver = async () => {
@@ -355,9 +371,9 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
         <div className="simulation-domain-stats"><span><b>{activeDesign.annulusInnerDiameterMm.toFixed(2)} mm</b>Inner diameter</span><span><b>{activeDesign.annulusOuterDiameterMm.toFixed(2)} mm</b>Outer diameter</span><span><b>{activeDesign.chamberLengthMm.toFixed(2)} mm</b>Chamber length</span><span><b>{Math.round(activeDesign.injectorCount)}</b>Injectors</span></div>
       </section>
       <section className="simulation-setup-card full3d-setup-card">
-        <div className="card-heading"><div><span>RUN</span><h2>Choose local run quality</h2><p>Kythros uses the saved engine and operating condition. You only choose how much local hardware to use.</p></div></div>
-        <label className="full3d-preset-select"><span>Run quality</span><select disabled={running} value={localPresetId} onChange={(event) => { setLocalPresetId(event.target.value as LocalCfdPresetId); resetResult(); }}>{LOCAL_CFD_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · about {(preset.approximateCells / 1_000_000).toFixed(0)} million cells</option>)}</select></label>
-        <div className="full3d-preset-summary">{(() => { const preset = LOCAL_CFD_PRESETS.find((item) => item.id === localPresetId)!; return <><span><small>Purpose</small><strong>{preset.purpose}</strong></span><span><small>Memory</small><strong>{preset.minimumRamGb}+ GB RAM</strong></span><span><small>GPU</small><strong>{preset.recommendedGpuMemoryGb} GB VRAM recommended</strong></span><span><small>Physics pack</small><strong>PeleC · finite-rate reacting flow · AMR</strong></span></>; })()}</div>
+        <div className="card-heading"><div><span>RUN</span><h2>Run settings</h2><p>Kythros checks your computer and shows the run settings supported by your installed solver.</p></div></div>
+        <label className="full3d-preset-select"><span>Run quality</span><select disabled={running} value={effectiveLocalPresetId} onChange={(event) => { setLocalPresetId(event.target.value as LocalCfdPresetId); resetResult(); }}>{availablePresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · about {(preset.approximateCells / 1_000_000).toFixed(0)} million cells</option>)}</select></label>
+        <div className="full3d-preset-summary">{(() => { const preset = LOCAL_CFD_PRESETS.find((item) => item.id === effectiveLocalPresetId)!; return <><span><small>Purpose</small><strong>{preset.purpose}</strong></span><span><small>Memory</small><strong>{preset.minimumRamGb}+ GB RAM</strong></span><span><small>Execution</small><strong>{localStatus?.solverAccelerator === "cuda" ? `GPU · ${preset.recommendedGpuMemoryGb} GB VRAM recommended` : "CPU · no GPU required"}</strong></span><span><small>Physics pack</small><strong>PeleC · finite-rate reacting flow · AMR</strong></span></>; })()}</div>
         <details className="full3d-advanced"><summary>What is fixed in this solver pack?</summary><p>The first reviewed pack is restricted to gas-fed hydrogen/air and hydrogen/oxygen rocket annuli. It retains the exact geometry, injector definition, operating condition, mesh level, CFL, solver version, and executable hash with every result.</p></details>
       </section>
     </div> : <div className="simulation-primary-grid">
@@ -394,11 +410,13 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     <section className="browser-solver-card" aria-labelledby="browser-solver-title">
       <div className="browser-solver-heading"><div><span>RUN</span><h2 id="browser-solver-title">{fidelity === "rapid-2d" ? "Run the flow simulation" : fidelity === "full-3d" ? "Run Full 3D on this computer" : `Prepare the ${selectedLevel.label} simulation`}</h2><p>{fidelity === "rapid-2d" ? "Kythros calculates the flow, draws the streamlines through the engine, and returns one recommended change." : fidelity === "full-3d" ? "Kythros sends the exact engine case to its installed solver runtime, monitors the calculation, then opens the volumetric result here." : `Kythros packages the same engine revision, operating condition, ${externalSolver} selection, model choices, and required outputs for the higher-fidelity run.`}</p></div><div className={`runner-badge ${fidelity === "rapid-2d" || localReadiness?.ready ? "ready" : "review"}`}><i />{fidelity === "full-3d" ? localStatus === null ? "Checking computer" : localReadiness?.ready ? "Ready to run" : "Setup required" : selectedLevel.status}</div></div>
       <div className="browser-solver-body">
-        {fidelity === "full-3d" ? <div className="local-run-readiness"><span>THIS COMPUTER</span><strong>{localStatus?.hardware.gpuName ?? (localStatus?.desktop ? `${localStatus.hardware.logicalCpuCount} logical CPU cores` : "Desktop app required")}</strong><p>{localReadiness?.ready ? `${localStatus?.hardware.memoryGb?.toFixed(0) ?? "Unknown"} GB RAM · ${localStatus?.solverAccelerator === "cuda" ? `${localStatus.hardware.gpuMemoryGb?.toFixed(0) ?? "Unknown"} GB GPU memory` : "CPU/OpenMP solver"} · ${localStatus?.solverName} ${localStatus?.solverVersion}` : localReadiness?.blockingIssues[0] ?? "Open the installed desktop app and check the solver setup."}</p>{localReadiness?.warnings[0] && <small>{localReadiness.warnings[0]}</small>}</div> : <div><span>{fidelity === "rapid-2d" ? "THIS RUN INCLUDES" : "CASE SPECIFICATION INCLUDES"}</span><strong>{fidelity === "rapid-2d" ? "Compressible flow, shocks, periodic propagation, injection, ignition, and simplified heat release" : `${turbulenceModel}, ${settings.chemistryMechanism}, ${wallModel}, and ${injectorTreatment}`}</strong><p>{fidelity === "rapid-2d" ? "Use Detailed 2D or Full 3D when the design decision requires turbulence, detailed chemistry, wall heating, discrete injectors, radial structure, or cooling flow." : "Review the generated mesh and numerical setup in the selected solver before execution, then return the result to this workspace."}</p></div>}
-        <div className="simulation-actions">{fidelity === "full-3d" && localStatus?.desktop && !localStatus.runtimeInstalled ? <button className="button primary" disabled={installingRuntime} onClick={() => void installRuntime()}>{installingRuntime ? "Installing Full 3D…" : "Install Full 3D runtime"}</button> : <button className="button primary" disabled={running} onClick={() => fidelity === "rapid-2d" ? void runBrowserSolver() : fidelity === "full-3d" ? void runFull3dSolver() : downloadSuitePlan()}>{running ? fidelity === "full-3d" ? "Full 3D running…" : "Calculating…" : fidelity === "rapid-2d" ? "Run simulation" : fidelity === "full-3d" ? "Run Full 3D" : `Download ${selectedLevel.label} specification`}</button>}{running && <button className="button danger" onClick={() => fidelity === "full-3d" ? void cancelFull3dSolver() : abortController.current?.abort()}>Cancel</button>}{fidelity === "full-3d" && !running && <button className="button secondary" onClick={() => void refreshLocalStatus()}>Check computer</button>}</div>
+        {fidelity === "full-3d" ? <div className="local-run-readiness"><span>THIS COMPUTER</span><strong>{localStatus?.desktop ? localStatus.solverAccelerator === "cuda" ? localStatus.hardware.gpuName ?? "GPU solver" : `${localStatus.hardware.logicalCpuCount} CPU threads · CPU solver` : "Desktop app required"}</strong><p>{localReadiness?.ready ? `${localStatus?.hardware.memoryGb?.toFixed(0) ?? "Unknown"} GB RAM · ${localStatus?.solverAccelerator === "cuda" ? `${localStatus.hardware.gpuMemoryGb?.toFixed(0) ?? "Unknown"} GB GPU memory` : "CPU/OpenMP solver"} · ${localStatus?.solverName} ${localStatus?.solverVersion}` : localReadiness?.blockingIssues[0] ?? "Open the installed desktop app and check the solver setup."}</p>{localReadiness?.warnings[0] && <small>{localReadiness.warnings[0]}</small>}</div> : <div><span>{fidelity === "rapid-2d" ? "THIS RUN INCLUDES" : "CASE SPECIFICATION INCLUDES"}</span><strong>{fidelity === "rapid-2d" ? "Compressible flow, shocks, periodic propagation, injection, ignition, and simplified heat release" : `${turbulenceModel}, ${settings.chemistryMechanism}, ${wallModel}, and ${injectorTreatment}`}</strong><p>{fidelity === "rapid-2d" ? "Use Detailed 2D or Full 3D when the design decision requires turbulence, detailed chemistry, wall heating, discrete injectors, radial structure, or cooling flow." : "Review the generated mesh and numerical setup in the selected solver before execution, then return the result to this workspace."}</p></div>}
+        <div className="simulation-actions"><button className="button primary" disabled={running || installingRuntime || (fidelity === "full-3d" && (!localStatus?.desktop || setupNeedsRestart))} onClick={() => fidelity === "rapid-2d" ? void runBrowserSolver() : fidelity === "full-3d" ? void runFull3dSolver() : downloadSuitePlan()}>{running ? fidelity === "full-3d" ? installingRuntime ? "Setting up Full 3D…" : localJob ? "Full 3D running…" : "Starting Full 3D…" : "Calculating…" : fidelity === "rapid-2d" ? "Run simulation" : fidelity === "full-3d" ? setupNeedsRestart ? "Restart Windows to continue" : localStatus?.runtimeInstalled && localStatus.solverInstalled ? "Run Full 3D" : "Set up and run Full 3D" : `Download ${selectedLevel.label} specification`}</button>{running && (fidelity !== "full-3d" || localJob) && <button className="button danger" onClick={() => fidelity === "full-3d" ? void cancelFull3dSolver() : abortController.current?.abort()}>Cancel</button>}{fidelity === "full-3d" && !running && <button className="button secondary" onClick={() => void refreshLocalStatus()}>Check computer</button>}</div>
       </div>
-      {fidelity === "full-3d" && localJob ? <div className="browser-solver-progress" aria-live="polite"><div><span>{localJob.message}</span><strong>{Math.round(localJob.progress * 100)}%</strong></div><progress max="1" value={localJob.progress}/><small>Job {localJob.runId} · {localJob.state.replace("-", " ")}</small></div> : progress && <div className="browser-solver-progress" aria-live="polite"><div><span>{progress.stage === "solving" ? `Solving step ${progress.step.toLocaleString()}` : progress.stage === "analyzing" ? "Analyzing the computed field" : "Initializing the flow field"}</span><strong>{Math.round(progress.fraction * 100)}%</strong></div><progress max="1" value={progress.fraction}/><small>{progress.simulatedTimeMs.toFixed(3)} ms simulated</small></div>}
-      {resultError && <p className="runner-error" role="alert">{resultError}</p>}
+      {fidelity === "full-3d" && localJob ? <div className="browser-solver-progress" aria-live="polite"><div><span>{localJob.message}</span><strong>{localJob.state === "completed" ? "Complete" : localJob.state === "failed" ? "Stopped" : "Working"}</strong></div><progress max="1" value={localJob.state === "completed" ? 1 : undefined}/><small>Job {localJob.runId} · {localJob.state.replace("-", " ")}</small></div> : progress && <div className="browser-solver-progress" aria-live="polite"><div><span>{progress.stage === "solving" ? `Solving step ${progress.step.toLocaleString()}` : progress.stage === "analyzing" ? "Analyzing the computed field" : "Initializing the flow field"}</span><strong>{Math.round(progress.fraction * 100)}%</strong></div><progress max="1" value={progress.fraction}/><small>{progress.simulatedTimeMs.toFixed(3)} ms simulated</small></div>}
+      {launchMessage && <p className="launch-status" role="status">{launchMessage}</p>}
+      {resultError && <div className="runner-error" role="alert"><strong>{setupNeedsRestart ? "One restart is needed" : "The run needs attention"}</strong><p>{resultError}</p>{fidelity === "full-3d" && <button className="button secondary" onClick={() => void navigator.clipboard.writeText(resultError).catch(() => {})}>Copy error details</button>}</div>}
+      {fidelity === "full-3d" && localStatus?.desktop && <div className="desktop-update-row"><span>Kythros desktop {localStatus.desktopVersion ?? "0.1.0"}</span><button className="button secondary" disabled={running || installingRuntime} onClick={() => void downloadDesktopUpdate()}>Download latest update</button><small>Close Kythros and run the downloaded installer. Your saved workspace is kept. GitHub sign-in is required for this private release.</small></div>}
     </section>
 
     <section className="simulation-results-card" aria-labelledby="simulation-results-title">

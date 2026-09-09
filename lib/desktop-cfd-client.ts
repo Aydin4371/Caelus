@@ -71,3 +71,7 @@ export async function getLocalCfdJobStatus(runId: string): Promise<LocalCfdJobSt
 export async function cancelLocalCfd(runId: string): Promise<LocalCfdJobStatus> {
   return invokeDesktop<LocalCfdJobStatus>("cancel_local_cfd", { runId });
 }
+
+export async function openDesktopUpdate(): Promise<void> {
+  return invokeDesktop<void>("open_desktop_update");
+}

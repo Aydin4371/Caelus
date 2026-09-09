@@ -2178,3 +2178,10 @@ body { font-size: 14px; line-height: 1.5; }
   .desktop-download-card { align-items: stretch; flex-direction: column; padding: 18px; }
   .desktop-download-actions { align-items: stretch; text-align: center; }
 }
+
+/* Keep run feedback in the card at every desktop width. */
+.simulation-workspace .browser-solver-card { display: block; }
+.simulation-workspace .browser-solver-card .runner-error { width: 100%; box-sizing: border-box; overflow-wrap: anywhere; white-space: pre-wrap; }
+.launch-status { padding: 16px; font-size: 1rem; }
+.desktop-update-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px; font-size: .875rem; }
+.desktop-update-row small { flex-basis: 100%; font-size: .875rem; }

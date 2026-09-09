@@ -10,7 +10,8 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
+    io::Read,
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -43,6 +44,8 @@ struct RuntimeStatus {
     solver_accelerator: Option<String>,
     hardware: HardwareSnapshot,
     details: Vec<String>,
+    desktop_version: String,
+    setup_message: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -72,24 +75,60 @@ struct JobRecord {
     cancel: AtomicBool,
 }
 
-#[derive(Default)]
-struct JobStore(Mutex<HashMap<String, Arc<JobRecord>>>);
+#[derive(Default, Clone)]
+struct JobStore(Arc<Mutex<HashMap<String, Arc<JobRecord>>>>);
 
-fn command_output(mut command: Command) -> Option<String> {
-    command.stdout(Stdio::piped()).stderr(Stdio::null());
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
+fn quiet_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    command.stdin(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW; UAC still uses its own prompt.
     }
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!value.is_empty()).then_some(value)
+    command
+}
+
+fn checked_output(mut command: Command, timeout_seconds: u64) -> Result<String, String> {
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| format!("Could not start the Windows/solver command: {error}"))?;
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let read = |mut pipe: Box<dyn Read + Send>| {
+        let mut bytes = Vec::new();
+        let _ = pipe.read_to_end(&mut bytes);
+        String::from_utf8_lossy(&bytes).replace('\0', "").trim().to_string()
+    };
+    let out = thread::spawn(move || read(Box::new(stdout)));
+    let err = thread::spawn(move || read(Box::new(stderr)));
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if start.elapsed().as_secs() < timeout_seconds => thread::sleep(Duration::from_millis(100)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("The setup check timed out. Close Kythros, restart Windows, and retry setup.".to_string());
+            }
+            Err(error) => return Err(format!("Could not check the solver process: {error}")),
+        }
+    };
+    let stdout = out.join().unwrap_or_default();
+    let stderr = err.join().unwrap_or_default();
+    if status.success() { return Ok(stdout); }
+    Err(format!("{}{}{} (exit {status})", stdout, if stdout.is_empty() || stderr.is_empty() { "" } else { "\n" }, stderr))
+}
+
+fn command_output(command: Command) -> Option<String> {
+    checked_output(command, 30).ok().filter(|value| !value.is_empty())
 }
 
 fn wsl_distribution_exists() -> bool {
     if !cfg!(target_os = "windows") {
         return false;
     }
-    let mut command = Command::new("wsl.exe");
+    let mut command = quiet_command("wsl.exe");
     command.args(["--list", "--quiet"]);
     command_output(command)
         .map(|value| value.replace('\0', "").lines().any(|line| line.trim() == WSL_DISTRIBUTION))
@@ -114,7 +153,7 @@ fn total_memory_gb() -> Option<f64> {
         let kb = content.lines().find(|line| line.starts_with("MemTotal:"))?.split_whitespace().nth(1)?.parse::<f64>().ok()?;
         Some(kb / 1024.0 / 1024.0)
     } else if cfg!(target_os = "windows") {
-        let mut command = Command::new("powershell.exe");
+        let mut command = quiet_command("powershell.exe");
         command.args(["-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"]);
         command_output(command)?.parse::<f64>().ok().map(|bytes| bytes / 1024.0 / 1024.0 / 1024.0)
     } else {
@@ -123,7 +162,7 @@ fn total_memory_gb() -> Option<f64> {
 }
 
 fn nvidia_gpu() -> (Option<String>, Option<f64>) {
-    let mut command = Command::new("nvidia-smi");
+    let mut command = quiet_command("nvidia-smi");
     command.args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]);
     let Some(line) = command_output(command).and_then(|output| output.lines().next().map(str::to_string)) else {
         return (None, None);
@@ -136,11 +175,11 @@ fn nvidia_gpu() -> (Option<String>, Option<f64>) {
 
 fn solver_command() -> Command {
     if cfg!(target_os = "windows") {
-        let mut command = Command::new("wsl.exe");
-        command.args(["-d", WSL_DISTRIBUTION, "--", SOLVER_PATH]);
+        let mut command = quiet_command("wsl.exe");
+        command.args(["-d", WSL_DISTRIBUTION, "--cd", "/", "--exec", SOLVER_PATH]);
         command
     } else {
-        Command::new(SOLVER_PATH)
+        quiet_command(SOLVER_PATH)
     }
 }
 
@@ -161,9 +200,10 @@ fn solver_field(identity: Option<&String>, key: &str) -> Option<String> {
 
 fn runtime_installed() -> bool {
     if cfg!(target_os = "windows") {
-        let mut command = Command::new("wsl.exe");
-        command.args(["-d", WSL_DISTRIBUTION, "--", "test", "-x", SOLVER_PATH]);
-        command.status().map(|status| status.success()).unwrap_or(false)
+        if !wsl_distribution_exists() { return false; }
+        let mut command = quiet_command("wsl.exe");
+        command.args(["-d", WSL_DISTRIBUTION, "--cd", "/", "--exec", "test", "-x", SOLVER_PATH]);
+        checked_output(command, 30).is_ok()
     } else {
         Path::new(SOLVER_PATH).is_file()
     }
@@ -188,38 +228,38 @@ fn bundled_solver_rootfs(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn ensure_wsl_available() -> Result<(), String> {
-    let mut status = Command::new("wsl.exe");
+    let mut status = quiet_command("wsl.exe");
     status.arg("--status");
-    if status.status().map(|value| value.success()).unwrap_or(false) {
-        return Ok(());
-    }
-    let mut install = Command::new("powershell.exe");
+    if checked_output(status, 30).is_ok() { return Ok(()); }
+    let mut install = quiet_command("powershell.exe");
     install.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Start-Process wsl.exe -Verb RunAs -ArgumentList '--install','--no-distribution' -Wait",
+        "-NoProfile", "-NonInteractive", "-Command",
+        "$ErrorActionPreference='Stop'; try { $p = Start-Process wsl.exe -Verb RunAs -ArgumentList '--install','--no-distribution' -Wait -PassThru; if ($p.ExitCode -eq 3010) { exit 0 }; exit $p.ExitCode } catch { Write-Error $_; exit 1 }",
     ]);
-    let installed = install.status().map(|value| value.success()).unwrap_or(false);
-    if installed {
-        Err("Windows enabled the local solver subsystem. Restart the computer, reopen Kythros, and choose Install Full 3D runtime again.".to_string())
-    } else {
-        Err("Windows Subsystem for Linux 2 is required. Enable WSL2 in Windows Features, restart, and try again.".to_string())
-    }
+    checked_output(install, 1200).map_err(|error| format!("Windows setup did not complete. Approve the Windows permission prompt and choose Set up and run again.\n{error}"))?;
+    let mut recheck = quiet_command("wsl.exe");
+    recheck.arg("--status");
+    if checked_output(recheck, 30).is_ok() { return Ok(()); }
+    Err("RESTART_REQUIRED: Windows setup completed. Save your work and restart your computer, then reopen Kythros and press Run Full 3D.".to_string())
 }
 
-fn wsl_path(path: &Path) -> Result<String, String> {
+// Resolve and test both paths in the actual WSL environment, without depending
+// on a separately installed wslpath utility or an already-existing result file.
+fn solver_job_paths(request: &Path, result: &Path) -> Result<(String, String), String> {
     if !cfg!(target_os = "windows") {
-        return Ok(path.to_string_lossy().to_string());
+        return Ok((request.to_string_lossy().to_string(), result.to_string_lossy().to_string()));
     }
-    let native = path.to_string_lossy().to_string();
-    let mut command = Command::new("wsl.exe");
-    command.args(["-d", WSL_DISTRIBUTION, "--", "wslpath", "-a", &native]);
-    command_output(command).ok_or_else(|| format!("Could not translate the Kythros job path for {WSL_DISTRIBUTION}."))
+    let mut command = quiet_command("wsl.exe");
+    command.args(["-d", WSL_DISTRIBUTION, "--cd", "/", "--exec", "python3", "-c", include_str!("job_paths.py")]);
+    command.arg(request).arg(result);
+    let output = checked_output(command, 60).map_err(|error| format!("The solver cannot access its run files. Retry after restarting Kythros.\n{error}"))?;
+    let paths: Vec<String> = serde_json::from_str(output.lines().last().unwrap_or(""))
+        .map_err(|error| format!("The solver returned an invalid file-access check: {error}. {output}"))?;
+    if paths.len() != 2 { return Err("The solver did not return both run paths.".to_string()); }
+    Ok((paths[0].clone(), paths[1].clone()))
 }
 
-#[tauri::command]
-fn local_runtime_status() -> RuntimeStatus {
+fn inspect_runtime() -> RuntimeStatus {
     let installed = runtime_installed();
     let identity = installed.then(solver_version).flatten();
     let runtime_version = identity.as_ref().and_then(|value| {
@@ -235,7 +275,7 @@ fn local_runtime_status() -> RuntimeStatus {
         details.push(format!("Solver runtime: {SOLVER_PATH}"));
     }
     if !installed {
-        details.push("Install the signed Kythros Solver Runtime before starting a Full 3D job.".to_string());
+        details.push("Choose Set up and run. Kythros will install the included solver and check the connection.".to_string());
     }
     RuntimeStatus {
         api_version: API_VERSION,
@@ -256,41 +296,54 @@ fn local_runtime_status() -> RuntimeStatus {
             gpu_memory_gb,
         },
         details,
+        desktop_version: env!("CARGO_PKG_VERSION").to_string(),
+        setup_message: None,
     }
 }
 
-#[tauri::command]
-fn install_local_solver_runtime(app: AppHandle) -> Result<RuntimeStatus, String> {
+fn install_runtime(app: AppHandle) -> Result<RuntimeStatus, String> {
     if !cfg!(target_os = "windows") {
         return Err("The one-click solver installer currently supports Windows. Linux packages use the signed runtime installation script.".to_string());
     }
     if runtime_installed() {
-        return Ok(local_runtime_status());
+        return Ok(inspect_runtime());
     }
-    ensure_wsl_available()?;
     let rootfs = bundled_solver_rootfs(&app)?;
+    ensure_wsl_available()?;
     if !wsl_distribution_exists() {
         let install_directory = app.path().app_local_data_dir()
             .map_err(|error| format!("Kythros could not create its solver directory: {error}"))?
             .join("solver-wsl");
         fs::create_dir_all(&install_directory)
             .map_err(|error| format!("Kythros could not create its solver directory: {error}"))?;
-        let status = Command::new("wsl.exe")
-            .args(["--import", WSL_DISTRIBUTION])
-            .arg(&install_directory)
-            .arg(&rootfs)
-            .args(["--version", "2"])
-            .status()
-            .map_err(|error| format!("Kythros could not start the local solver installation: {error}"))?;
-        if !status.success() {
-            return Err("Windows could not install the packaged Full 3D solver runtime.".to_string());
-        }
+        let mut command = quiet_command("wsl.exe");
+        command.args(["--import", WSL_DISTRIBUTION]).arg(&install_directory).arg(&rootfs).args(["--version", "2"]);
+        checked_output(command, 1200).map_err(|error| format!("Windows could not finish installing the solver. Choose Set up and run to retry.\n{error}"))?;
     }
-    let status = local_runtime_status();
+    let status = inspect_runtime();
     if !status.runtime_installed || !status.solver_installed {
-        return Err("The solver package was installed but did not pass its executable check.".to_string());
+        return Err("The existing solver installation is incomplete. Your saved engines are safe. Download the latest Kythros update and retry; if this persists, copy these details for support.".to_string());
     }
     Ok(status)
+}
+
+#[tauri::command]
+async fn local_runtime_status() -> Result<RuntimeStatus, String> {
+    tauri::async_runtime::spawn_blocking(inspect_runtime).await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn install_local_solver_runtime(app: AppHandle) -> Result<RuntimeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || install_runtime(app)).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn open_desktop_update() -> Result<(), String> {
+    // Open a fixed download URL in the user's authenticated browser. No token
+    // is embedded in the app and no arbitrary URL or command is accepted.
+    let mut command = quiet_command("powershell.exe");
+    command.args(["-NoProfile", "-NonInteractive", "-Command", "Start-Process 'https://github.com/Aydin4371/Caelus/releases/latest/download/Kythros-Setup.exe'"]);
+    checked_output(command, 30).map(|_| ())
 }
 
 fn update_status(record: &JobRecord, state: &str, progress: f64, message: &str) {
@@ -310,7 +363,12 @@ fn fail_job(record: &JobRecord, message: String) {
 }
 
 #[tauri::command]
-fn start_local_cfd(app: AppHandle, store: State<'_, JobStore>, request: Value) -> Result<JobStatus, String> {
+async fn start_local_cfd(app: AppHandle, store: State<'_, JobStore>, request: Value) -> Result<JobStatus, String> {
+    let jobs = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || start_job(app, jobs, request)).await.map_err(|error| error.to_string())?
+}
+
+fn start_job(app: AppHandle, store: JobStore, request: Value) -> Result<JobStatus, String> {
     let decoded: RunRequest = serde_json::from_value(request.clone()).map_err(|error| format!("Invalid Full 3D run request: {error}"))?;
     if decoded.schema != "kythros-local-rde-3d-request" || decoded.format_version != API_VERSION {
         return Err("Kythros desktop received an incompatible Full 3D run request.".to_string());
@@ -328,8 +386,7 @@ fn start_local_cfd(app: AppHandle, store: State<'_, JobStore>, request: Value) -
     let request_path = job_dir.join("request.json");
     let result_path = job_dir.join("kythros-volume-result.json");
     fs::write(&request_path, serde_json::to_vec_pretty(&request).map_err(|error| error.to_string())?).map_err(|error| format!("Kythros could not save the run request: {error}"))?;
-    let solver_request_path = wsl_path(&request_path)?;
-    let solver_result_path = wsl_path(&result_path)?;
+    let (solver_request_path, solver_result_path) = solver_job_paths(&request_path, &result_path)?;
     let record = Arc::new(JobRecord {
         status: Mutex::new(JobStatus {
             run_id: decoded.run_id.clone(),
@@ -355,7 +412,12 @@ fn start_local_cfd(app: AppHandle, store: State<'_, JobStore>, request: Value) -
         update_status(&thread_record, "preparing", 0.03, "Preparing the engine geometry and solver case.");
         let mut command = solver_command();
         command.args(["--request", &solver_request_path, "--result", &solver_result_path]);
-        command.stdout(Stdio::null()).stderr(Stdio::piped());
+        let log_path = job_dir.join("desktop-solver.log");
+        let log = match fs::File::create(&log_path) {
+            Ok(log) => log,
+            Err(error) => { fail_job(&thread_record, format!("Could not open solver log: {error}")); return; }
+        };
+        command.stdout(Stdio::null()).stderr(Stdio::from(log));
         let Ok(mut child) = command.spawn() else {
             fail_job(&thread_record, "The verified PeleC RDRE solver executable could not be started.".to_string());
             return;
@@ -371,12 +433,8 @@ fn start_local_cfd(app: AppHandle, store: State<'_, JobStore>, request: Value) -
             match child.try_wait() {
                 Ok(Some(exit)) if exit.success() => break,
                 Ok(Some(exit)) => {
-                    let error = child.stderr.take().and_then(|stderr| {
-                        use std::io::Read;
-                        let mut reader = stderr;
-                        let mut value = String::new();
-                        reader.read_to_string(&mut value).ok().map(|_| value.trim().to_string())
-                    }).filter(|value| !value.is_empty()).unwrap_or_else(|| format!("Solver process exited with {exit}."));
+                    let error = fs::read_to_string(&log_path).ok().filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| format!("Solver process exited with {exit}."));
                     fail_job(&thread_record, error);
                     return;
                 }
@@ -450,6 +508,7 @@ pub fn run() {
         .manage(JobStore::default())
         .invoke_handler(tauri::generate_handler![
             local_runtime_status,
+            open_desktop_update,
             install_local_solver_runtime,
             start_local_cfd,
             local_cfd_job_status,

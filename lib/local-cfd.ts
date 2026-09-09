@@ -21,7 +21,7 @@ export const LOCAL_CFD_PRESETS: LocalCfdPreset[] = [
   {
     id: "development",
     label: "Development",
-    purpose: "Check setup and initial wave development on one local GPU.",
+    purpose: "Check setup and initial wave development on this computer.",
     approximateCells: 3_000_000,
     minimumRamGb: 24,
     recommendedGpuMemoryGb: 8,
@@ -65,6 +65,8 @@ export type LocalHardwareSnapshot = {
 
 export type LocalRunnerStatus = {
   apiVersion: number;
+  desktopVersion?: string;
+  setupMessage?: string | null;
   desktop: boolean;
   runtimeInstalled: boolean;
   runtimeVersion: string | null;
@@ -208,13 +210,21 @@ export function supportsInitialLocal3dCase(design: EngineDesign) {
   return design.application === "Rocket" && hydrogen && supportedOxidizer;
 }
 
+export function availableLocalCfdPresets(status: LocalRunnerStatus | null) {
+  return LOCAL_CFD_PRESETS.filter((preset) => preset.id === "development" || Boolean(
+    status?.solverAccelerator === "cuda" && status.hardware.cudaAvailable &&
+    status.hardware.memoryGb !== null && status.hardware.memoryGb >= preset.minimumRamGb &&
+    status.hardware.gpuMemoryGb !== null && status.hardware.gpuMemoryGb >= preset.recommendedGpuMemoryGb
+  ));
+}
+
 export function assessLocalCfdReadiness(status: LocalRunnerStatus, presetId: LocalCfdPresetId, design: EngineDesign): LocalCfdReadiness {
   const preset = LOCAL_CFD_PRESETS.find((item) => item.id === presetId) ?? LOCAL_CFD_PRESETS[0];
   const blockingIssues: string[] = [];
   const warnings: string[] = [];
   if (!status.desktop) blockingIssues.push("Install and open the Kythros desktop app to run Full 3D on this computer.");
   if (!["windows", "linux"].includes(status.hardware.platform)) blockingIssues.push("The first local solver release supports 64-bit Windows and Linux workstations.");
-  if (!status.runtimeInstalled) blockingIssues.push("Install the Kythros Solver Runtime from Desktop setup.");
+  if (!status.runtimeInstalled) blockingIssues.push("Choose Set up and run. Kythros will install the included solver first.");
   if (!status.solverInstalled) blockingIssues.push("The verified PeleC RDRE solver pack is not installed.");
   if (!supportsInitialLocal3dCase(design)) blockingIssues.push("The first Full 3D solver pack supports rocket-fed hydrogen/air and hydrogen/oxygen annular engines.");
   if (status.hardware.memoryGb !== null && status.hardware.memoryGb < preset.minimumRamGb) blockingIssues.push(`${preset.label} requires at least ${preset.minimumRamGb} GB of system memory.`);

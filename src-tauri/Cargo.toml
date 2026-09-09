@@ -1,6 +1,6 @@
 [package]
 name = "kythros-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Kythros local RDRE design and CFD desktop application"
 authors = ["Caelus"]
 edition = "2021"
