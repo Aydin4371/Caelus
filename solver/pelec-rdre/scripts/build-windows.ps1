@@ -122,7 +122,19 @@ cmake -S $Source -B $Build -G $Generator -A x64 -T ClangCL "-DCMAKE_GENERATOR_IN
     "-DOpenMP_omp_LIBRARY=$OpenMpLibrary" "-DOpenMP_CXX_INCLUDE_DIR=$OpenMpInstall/include" `
     "-DCMAKE_EXE_LINKER_FLAGS=/MAP:$Build/native-solver.map" `
     '-DCMAKE_CXX_FLAGS=/std:c++20 /bigobj /D_USE_MATH_DEFINES'
-Get-Content "$Build/Exec/KythrosRDRE/PeleC-KythrosRDRE.vcxproj" | Select-String -Pattern "MapFile|GenerateMap|AdditionalOptions"
+# The ClangCL MSBuild task ignores the structured GenerateMapFile setting.
+# Preserve it as an explicit linker argument in AdditionalOptions.
+$ProjectFile = "$Build/Exec/KythrosRDRE/PeleC-KythrosRDRE.vcxproj"
+[xml]$Project = Get-Content $ProjectFile -Raw
+foreach ($LinkNode in $Project.SelectNodes("//*[local-name()='ItemDefinitionGroup']/*[local-name()='Link']")) {
+    $Options = $LinkNode.SelectSingleNode("*[local-name()='AdditionalOptions']")
+    if (-not $Options) {
+        $Options = $Project.CreateElement('AdditionalOptions', $Project.DocumentElement.NamespaceURI)
+        $LinkNode.AppendChild($Options) | Out-Null
+    }
+    $Options.InnerText += " /MAP:$Build/native-solver.map"
+}
+$Project.Save($ProjectFile)
 cmake --build $Build --config Release --target PeleC-KythrosRDRE --parallel $Parallel
 $Binary = "$Build/Exec/KythrosRDRE/Release/PeleC-KythrosRDRE.exe"
 if (-not (Test-Path $Binary)) { throw 'Native solver executable was not produced.' }
