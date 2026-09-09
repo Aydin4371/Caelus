@@ -8,6 +8,10 @@
 void pc_prob_close() {}
 
 namespace {
+// Explicitly register the case geometry: clang-cl may defer the template's
+// implicit static registration until after the factory's first lookup.
+const bool annulus_registered = KythrosAnnulus::add_sub_type();
+
 void
 parse_problem(ProbParmDevice* problem)
 {
