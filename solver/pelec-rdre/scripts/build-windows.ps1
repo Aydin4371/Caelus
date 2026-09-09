@@ -74,6 +74,31 @@ if (-not $Flags.Contains($NativeWarnings)) {
     Set-Content $FlagsFile $Flags.Replace($GnuWarnings, $NativeWarnings) -Encoding utf8
 }
 
+# A registered object's destructor must not read the factory's static table:
+# Windows may destroy that table before static parameter objects. The factory
+# never unregisters types, so this lookup has no required cleanup effect.
+$FactoryFile = "$Source/Submodules/PelePhysics/Source/Factory.H"
+$Factory = Get-Content $FactoryFile -Raw
+$OldDestructor = @'
+    ~Register() override
+    {
+      if (registered) {
+        const auto& tbl = Factory::table();
+        const auto& it = tbl.find(T::identifier());
+        registered = (it != tbl.end());
+      }
+    }
+'@
+$NewDestructor = '    ~Register() override = default;'
+# Normalize line endings for the pinned-source match on Windows.
+$Factory = $Factory.Replace("`r`n", "`n")
+$OldDestructor = $OldDestructor.Replace("`r`n", "`n")
+if ($Factory.Contains($OldDestructor)) {
+    Set-Content $FactoryFile $Factory.Replace($OldDestructor, $NewDestructor) -Encoding utf8
+} elseif (-not $Factory.Contains($NewDestructor)) {
+    throw 'Upstream factory destructor changed; review the Windows lifetime adaptation.'
+}
+
 $VsWhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
 $Vs = (& $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | ConvertFrom-Json)[0]
 $VsRoot = $Vs.installationPath
@@ -170,7 +195,7 @@ $Manifest = [ordered]@{
     platform = 'windows-x64'; compiler = 'clang-cl'; accelerator = 'cpu-openmp'; peleC = $Lock.peleC.commit
     pelePhysics = $PhysicsCommit.Trim(); executable = 'kythros-pelec-rdre.exe'
     llvmOpenMP = $LlvmCommit
-    windowsAdaptationVersion = 1
+    windowsAdaptationVersion = 2
     sha256 = (Get-FileHash "$Output/kythros-pelec-rdre.exe" -Algorithm SHA256).Hash.ToLower()
     validationStatus = 'development-unvalidated'
 }
