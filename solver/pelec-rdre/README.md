@@ -61,6 +61,16 @@ before the existing app download can stop using WSL. The one-step test
 establishes portability; it does not establish convergence, physical
 accuracy, sustained detonation, or GPU support.
 
+Windows adaptations are checked against the pinned sources: timestamp APIs,
+compiler options, explicit annulus/CVODE registration, and factory destruction
+that does not access an already-destroyed static registry. Crash diagnostics
+retain native addresses and linker symbols for failed CI runs.
+
+The current smoke case also needs physical investigation: its final temperature
+range is approximately 10.27–14.15 K on both Linux and Windows. Matching that
+existing result is a portability observation, not an acceptable physical
+validation result. Do not use this case as engineering evidence.
+
 ## Required before evidence claims
 
 - Pass shock-tube, reacting-shock, CJ/ZND, conservation, mesh-convergence,
