@@ -24,7 +24,14 @@ if ($PhysicsCommit.Trim() -ne $Lock.pelePhysics.commit) { throw 'PelePhysics doe
 
 # Build only the Kythros case. Upstream's other cases and shell-based test suite
 # are not needed in a native runtime; the reacting annulus is tested separately.
-Copy-Item "$SolverRoot/Exec/KythrosRDRE" "$Source/Exec/" -Recurse -Force
+$CaseTarget = "$Source/Exec/KythrosRDRE"
+New-Item -ItemType Directory -Force $CaseTarget | Out-Null
+foreach ($CaseFile in (Get-ChildItem "$SolverRoot/Exec/KythrosRDRE" -File)) {
+    $Destination = Join-Path $CaseTarget $CaseFile.Name
+    if (-not (Test-Path $Destination) -or (Get-FileHash $CaseFile.FullName).Hash -ne (Get-FileHash $Destination).Hash) {
+        Copy-Item $CaseFile.FullName $Destination -Force
+    }
+}
 Set-Content "$Source/Exec/CMakeLists.txt" 'add_subdirectory(KythrosRDRE)' -Encoding utf8
 Set-Content "$Source/Tests/CMakeLists.txt" '# Kythros uses test-native-solver.py.' -Encoding utf8
 # Only the plotfile metadata timestamp uses this POSIX API. Microsoft's
@@ -37,6 +44,15 @@ if ($IoSource.Contains($PosixTime)) {
     Set-Content $IoFile $IoSource.Replace($PosixTime, $WindowsTime) -Encoding utf8
 } elseif (-not $IoSource.Contains($WindowsTime)) {
     throw 'Upstream output timestamp code changed; review the Windows adaptation.'
+}
+$MainFile = "$Source/Source/main.cpp"
+$MainSource = Get-Content $MainFile -Raw
+$PosixUtc = 'gmtime_r(&time_type, &time_now);'
+$WindowsUtc = 'gmtime_s(&time_now, &time_type);'
+if ($MainSource.Contains($PosixUtc)) {
+    Set-Content $MainFile $MainSource.Replace($PosixUtc, $WindowsUtc) -Encoding utf8
+} elseif (-not $MainSource.Contains($WindowsUtc)) {
+    throw 'Upstream startup timestamp code changed; review the Windows adaptation.'
 }
 # Upstream adds GNU warning switches unconditionally; /Wextra is invalid in
 # MSVC. Change compiler diagnostics only, without altering numerical source.
