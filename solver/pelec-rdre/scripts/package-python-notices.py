@@ -8,7 +8,7 @@ destination = Path(sys.argv[1])
 for distribution in importlib.metadata.distributions():
     target = destination / distribution.metadata['Name']
     target.mkdir(parents=True, exist_ok=True)
-    (target / 'METADATA.txt').write_text(str(distribution.metadata), encoding='utf-8')
+    (target / 'METADATA.txt').write_text((distribution.read_text('METADATA') or distribution.read_text('PKG-INFO') or ''), encoding='utf-8')
     for entry in distribution.files or []:
         if any(word in str(entry).lower() for word in ('license', 'copying', 'notice')):
             source = Path(distribution.locate_file(entry))
