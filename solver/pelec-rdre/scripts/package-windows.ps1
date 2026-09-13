@@ -13,7 +13,7 @@ python -m venv "$WorkDirectory/venv"
 $Python = "$WorkDirectory/venv/Scripts/python.exe"
 & $Python -m pip install --only-binary=:all: -r "$SolverRoot/runtime/requirements.txt" 'pyinstaller==6.22.2'
 & $Python -m PyInstaller --noconfirm --clean --onedir --console --name kythros-runtime `
-    --collect-all yt --collect-all unyt --collect-all cmyt --copy-metadata yt --copy-metadata unyt `
+    --collect-all yt --collect-all unyt --collect-all cmyt --collect-all ewah_bool_utils --copy-metadata yt --copy-metadata unyt `
     --distpath "$WorkDirectory/dist" --workpath "$WorkDirectory/build" --specpath $WorkDirectory `
     "$SolverRoot/runtime/kythros_pelec_rdre.py"
 New-Item -ItemType Directory -Force (Split-Path $Destination) | Out-Null
