@@ -47,16 +47,20 @@ jobs:
       - name: Run reacting annulus and convert result
         run: python solver/pelec-rdre/scripts/test-native-solver.py "$env:RUNNER_TEMP/kythros-native/output/kythros-pelec-rdre.exe" "$env:RUNNER_TEMP/native smoke case"
       - name: Upload tested native solver
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: Kythros-Native-Windows-CPU
+          retention-days: 3
           path: ${{ runner.temp }}/kythros-native/output/
           if-no-files-found: error
       - name: Upload diagnostics
+        continue-on-error: true
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: native-windows-diagnostics
+          retention-days: 3
           path: |
             ${{ runner.temp }}/kythros-native/build/CMakeFiles/CMakeConfigureLog.yaml
             ${{ runner.temp }}/native smoke case/pelec.log
@@ -64,6 +68,7 @@ jobs:
             ${{ runner.temp }}/native smoke case/plt*
             ${{ runner.temp }}/kythros-native/output/native-solver.map
       - name: Preserve compiled dependencies
+        continue-on-error: true
         if: ${{ !cancelled() && steps.build-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
