@@ -16,10 +16,11 @@ sys.path.insert(0, os.environ.get("KYTHROS_PYTHON_PATH", "/opt/kythros/lib/kythr
 from kythros_case import CaseError, load_request, render_inputs, request_to_parameters
 from postprocess_volume import convert_plotfile
 
-RUNTIME_VERSION = "0.1.0"
-DEFAULT_BINARY = Path("/opt/kythros/libexec/kythros-pelec-rdre.bin")
-DEFAULT_TEMPLATE = Path("/opt/kythros/share/kythros/inputs.template")
-DEFAULT_ACCELERATOR_FILE = Path("/opt/kythros/share/kythros/accelerator.txt")
+RUNTIME_VERSION = "0.2.0"
+NATIVE_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+DEFAULT_BINARY = NATIVE_ROOT / "kythros-pelec-rdre.exe" if os.name == "nt" else Path("/opt/kythros/libexec/kythros-pelec-rdre.bin")
+DEFAULT_TEMPLATE = NATIVE_ROOT / "inputs.template" if os.name == "nt" else Path("/opt/kythros/share/kythros/inputs.template")
+DEFAULT_ACCELERATOR_FILE = NATIVE_ROOT / "accelerator.txt" if os.name == "nt" else Path("/opt/kythros/share/kythros/accelerator.txt")
 
 
 def _accelerator() -> str:
@@ -54,15 +55,23 @@ def _latest_plotfile(job_directory: Path) -> Path:
     return candidates[-1]
 
 
-def run(request_path: Path, result_path: Path) -> None:
+def run(request_path: Path, result_path: Path, *, self_test: bool = False) -> None:
     request = load_request(request_path)
     parameters = request_to_parameters(request)
+    if self_test:
+        # Exercise the production request/render/solve/convert path at CI scale.
+        # This explicit command is never used by the desktop Run action.
+        from kythros_case import CaseParameters
+        values = {**parameters.values, "AXIAL_CELLS": "8", "TRANSVERSE_CELLS": "64",
+                  "DOMAIN_LOW_CM": "-4.8", "DOMAIN_HIGH_CM": "4.8", "AMR_LEVELS": "0",
+                  "STOP_TIME_S": "1e-8"}
+        parameters = CaseParameters(values, (2, 32, 4))
     binary = Path(os.environ.get("KYTHROS_PELEC_BINARY", str(DEFAULT_BINARY)))
     template_path = Path(os.environ.get("KYTHROS_PELEC_TEMPLATE", str(DEFAULT_TEMPLATE)))
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise RuntimeError(f"the packaged PeleC executable is missing at {binary}")
     if not template_path.is_file():
-        raise RuntimeError(f"the signed PeleC input template is missing at {template_path}")
+        raise RuntimeError(f"the packaged PeleC input template is missing at {template_path}")
 
     job_directory = request_path.resolve().parent
     generated_input = job_directory / "inputs.generated"
@@ -92,8 +101,18 @@ def run(request_path: Path, result_path: Path) -> None:
             stdout=log,
             stderr=subprocess.STDOUT,
             text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         while process.poll() is None:
+            if (job_directory / "cancel.flag").exists():
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                _progress(job_directory, "cancelled", 0.0, "The simulation was cancelled.")
+                return
             elapsed = time.monotonic() - started
             fraction = min(0.90, 0.08 + 0.82 * (1.0 - pow(2.718281828, -elapsed / 1800.0)))
             _progress(job_directory, "solving", fraction, "PeleC is advancing the reacting flow.")
@@ -102,6 +121,9 @@ def run(request_path: Path, result_path: Path) -> None:
         tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:])
         raise RuntimeError(f"PeleC exited with code {process.returncode}.\n{tail}")
 
+    if (job_directory / "cancel.flag").exists():
+        _progress(job_directory, "cancelled", 0.0, "The simulation was cancelled.")
+        return
     _progress(job_directory, "post-processing", 0.94, "Sampling the computed 3D flow volume.")
     result = convert_plotfile(
         _latest_plotfile(job_directory), request, binary, parameters.visualization_shape
@@ -110,9 +132,42 @@ def run(request_path: Path, result_path: Path) -> None:
     _progress(job_directory, "completed", 1.0, "Full 3D result is ready.")
 
 
+def self_test(directory: Path) -> int:
+    directory.mkdir(parents=True, exist_ok=False)
+    request = {
+        "schema": "kythros-local-rde-3d-request", "formatVersion": 1, "runId": "native-package-test",
+        "caseDefinition": {"id": "gas-fed-annular-hydrogen-v1"},
+        "engine": {"designId": "native-package-test", "application": "rocket", "fuel": "hydrogen", "oxidizer": "air",
+                   "annulusInnerDiameterMm": 77, "annulusOuterDiameterMm": 85, "chamberLengthMm": 12,
+                   "injectorDiameterMm": 1.6, "injectorCount": 24, "injectorAngleDeg": 0},
+        "operatingCondition": {"id": "native-package-test", "inletPressureBar": 2, "backPressureBar": 1,
+                               "inletTemperatureK": 300, "equivalenceRatio": 1, "massFlowKgS": 0.01},
+        "numerics": {"presetId": "development", "amrLevels": 1, "maximumCfl": 0.15, "endTimeMs": 0.00001},
+    }
+    request_path = directory / "request.json"
+    result_path = directory / "result.json"
+    _write_json(request_path, request)
+    run(request_path, result_path, self_test=True)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    import math
+    if result.get("schema") != "kythros-rde-3d-volume" or not result.get("fields"):
+        raise RuntimeError("Packaged runtime returned an invalid result")
+    for name, values in result["fields"].items():
+        if len(values) != 256 or not all(math.isfinite(value) for value in values):
+            raise RuntimeError(f"Packaged runtime returned invalid {name}")
+    log = (directory / "pelec.log").read_text(errors="replace")
+    if "STEP = 1" not in log:
+        raise RuntimeError("Packaged solver did not advance a flow step")
+    _write_json(directory / "package-test-passed.json", {"native": os.name == "nt", "runtime": RUNTIME_VERSION,
+                "requestRoundTrip": True, "cleanExit": True, "finiteFields": True, "physicalValidation": False})
+    print("PASS: packaged native request, reacting solver, clean exit, and result conversion")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="kythros-pelec-rdre")
     parser.add_argument("--version", action="store_true")
+    parser.add_argument("--self-test", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--request", type=Path)
     parser.add_argument("--result", type=Path)
     arguments = parser.parse_args()
@@ -123,6 +178,8 @@ def main() -> int:
             "case=gas-fed-annular-hydrogen-v1"
         )
         return 0
+    if arguments.self_test is not None:
+        return self_test(arguments.self_test)
     if arguments.request is None or arguments.result is None:
         parser.error("--request and --result are required")
     try:
@@ -135,3 +192,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

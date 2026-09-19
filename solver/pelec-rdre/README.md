@@ -30,9 +30,8 @@ solver/pelec-rdre/scripts/build-solver.sh cpu /tmp/kythros-solver
 solver/pelec-rdre/scripts/test-smoke.sh /tmp/kythros-solver/output/kythros-pelec-rdre.bin /tmp/kythros-smoke
 ```
 
-The installer workflow performs those steps, constructs an isolated WSL2
-runtime, bundles it into the Windows desktop installer, and uploads the
-installer as a workflow artifact.
+These scripts maintain the Linux developer build. Windows releases use the
+native build and bundled result reader described below.
 
 ## Native Windows solver build
 
@@ -55,10 +54,12 @@ converts its final plotfile into finite Kythros volume fields. The package
 includes the executable, C++/OpenMP redistributable DLLs, inputs, dependency
 notices, upstream pins, and an executable hash. Keep these files together.
 
-This artifact is the solver backend, not the Kythros desktop installer. The
-desktop launcher and bundled postprocessor still need native integration
-before the existing app download can stop using WSL. The one-step test
-establishes portability; it does not establish convergence, physical
+The standalone artifact is the solver backend. The Full 3D installer workflow
+also freezes the Python result reader, bundles both components with the desktop
+app, installs it into a Windows path containing spaces, and invokes the installed
+app to test request rendering, reacting flow, clean exit, and result conversion
+with Python removed from PATH. Users install Kythros and select Run Full 3D;
+there is no WSL setup step. The one-step test establishes portability; it does not establish convergence, physical
 accuracy, sustained detonation, or GPU support.
 
 Windows adaptations are checked against the pinned sources: timestamp APIs,

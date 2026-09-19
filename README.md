@@ -67,11 +67,14 @@ prove the cause of a discrepancy.
 - `npm run desktop:dev` opens the existing application inside the Tauri shell.
 - The Rust command layer owns hardware detection, fixed-path solver execution,
   progress polling, cancellation, per-job storage, and volumetric result return.
-- Windows uses the `KythrosSolver` WSL2 distribution; Linux uses the same
-  runtime at `/opt/kythros/bin/kythros-pelec-rdre`.
+- Windows runs the bundled native solver and result reader directly. WSL and
+  a separate Python installation are not required. Linux developer builds use
+  `/opt/kythros/bin/kythros-pelec-rdre`.
 - `.github/workflows/kythros-desktop-installer.yml` builds the pinned CPU
   PeleC case, executes a real three-dimensional annulus smoke run, constructs
-  the isolated solver runtime, and bundles it into a Windows NSIS installer.
+  the native solver and frozen result reader, and bundles them into a Windows
+  NSIS installer. CI installs that package and tests its request-to-result path
+  with Python removed from PATH.
 - The initial case contract is intentionally narrow: rocket-fed annular
   hydrogen/air or hydrogen/oxygen designs using the reviewed PeleC RDRE pack.
 - Full 3D engine advice is withheld until solver completion, mass conservation,
