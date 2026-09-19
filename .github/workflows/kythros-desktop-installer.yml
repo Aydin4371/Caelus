@@ -38,9 +38,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  solver-runtime:
+  windows-installer:
+    outputs:
+      installer-uploaded: ${{ steps.installer-artifact.outcome == 'success' }}
     runs-on: windows-2025
-    timeout-minutes: 90
+    timeout-minutes: 120
     defaults:
       run:
         shell: pwsh
@@ -69,41 +71,10 @@ jobs:
           $env:OMP_NUM_THREADS = '2'
           & "$env:RUNNER_TEMP/native-runtime/kythros-runtime.exe" --self-test "$env:RUNNER_TEMP/packaged CFD test"
           if ($LASTEXITCODE -ne 0) { throw 'Packaged solver test failed.' }
-      - name: Upload native runtime
-        uses: actions/upload-artifact@v4
-        with:
-          name: kythros-native-runtime
-          path: ${{ runner.temp }}/native-runtime/
-          if-no-files-found: error
-          retention-days: 14
-      - name: Preserve native diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: packaged-runtime-diagnostics
-          path: |
-            ${{ runner.temp }}/packaged CFD test/
-            ${{ runner.temp }}/runtime-package-build/build/kythros-runtime/warn-kythros-runtime.txt
-      - name: Preserve compiled dependencies
-        if: ${{ !cancelled() && steps.build-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ runner.temp }}/kythros-native
-          key: ${{ steps.build-cache.outputs.cache-primary-key }}
-
-  windows-installer:
-    needs: solver-runtime
-    runs-on: windows-2025
-    timeout-minutes: 45
-    steps:
-      - name: Check out Kythros
-        uses: actions/checkout@v4
-
-      - name: Download packaged Full 3D runtime
-        uses: actions/download-artifact@v4
-        with:
-          name: kythros-native-runtime
-          path: src-tauri/resources/native-runtime
+      - name: Stage native runtime directly for the installer
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/resources/native-runtime | Out-Null
+          Copy-Item "$env:RUNNER_TEMP/native-runtime/*" src-tauri/resources/native-runtime -Recurse -Force
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -124,23 +95,40 @@ jobs:
         shell: pwsh
         run: ./solver/pelec-rdre/scripts/test-windows-installer.ps1
 
-      - name: Preserve installed-app diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: installed-native-diagnostics
-          path: ${{ runner.temp }}/Kythros installed CFD test/
-
-      - name: Upload installable application
+      - name: Upload installable application (optional copy)
+        id: installer-artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: Kythros-Windows-Installer
           path: src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
+
+      - name: Preserve diagnostics
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-installer-diagnostics
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/packaged CFD test/*.log
+            ${{ runner.temp }}/packaged CFD test/package-test-passed.json
+            ${{ runner.temp }}/Kythros installed CFD test/*.log
+            ${{ runner.temp }}/Kythros installed CFD test/package-test-passed.json
+            ${{ runner.temp }}/runtime-package-build/build/kythros-runtime/warn-kythros-runtime.txt
+
+      - name: Preserve compiled dependencies
+        if: ${{ !cancelled() && steps.build-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/kythros-native
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
 
   publish-release:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.windows-installer.outputs.installer-uploaded == 'true'
     needs: windows-installer
     runs-on: ubuntu-24.04
     timeout-minutes: 10
