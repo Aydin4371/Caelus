@@ -64,6 +64,11 @@ jobs:
             native-clang-v1-${{ steps.image.outputs.version }}-${{ hashFiles('solver/pelec-rdre/upstream-lock.json') }}-
       - name: Build native Windows solver
         run: ./solver/pelec-rdre/scripts/build-windows.ps1 -WorkDirectory "$env:RUNNER_TEMP/kythros-native"
+      - name: Test native AMR and reacting flow across thread counts
+        run: |
+          python -m pip install --only-binary=:all: -r solver/pelec-rdre/runtime/requirements.txt
+          python solver/pelec-rdre/scripts/test-native-solver.py "$env:RUNNER_TEMP/kythros-native/output/kythros-pelec-rdre.exe" "$env:RUNNER_TEMP/native regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native AMR regression failed.' }
       - name: Package native solver and result reader
         run: ./solver/pelec-rdre/scripts/package-windows.ps1 -SolverDirectory "$env:RUNNER_TEMP/kythros-native/output" -Destination "$env:RUNNER_TEMP/native-runtime" -WorkDirectory "$env:RUNNER_TEMP/runtime-package-build"
       - name: Test packaged request-to-result workflow
@@ -113,6 +118,8 @@ jobs:
           name: native-installer-diagnostics
           retention-days: 3
           path: |
+            ${{ runner.temp }}/native regression/**/*.log
+            ${{ runner.temp }}/native regression/pelec.log
             ${{ runner.temp }}/packaged CFD test/*.log
             ${{ runner.temp }}/packaged CFD test/package-test-passed.json
             ${{ runner.temp }}/Kythros installed CFD test/*.log
@@ -174,4 +181,5 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" Kythros-Setup.exe SHA256SUMS.txt --clobber
           gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file release-notes.md
+
 
