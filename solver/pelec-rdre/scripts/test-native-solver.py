@@ -72,6 +72,25 @@ pelec.diffuse_enth = 1
         raise RuntimeError(f"Thread-dependent temperature extrema: {temperatures}")
 
 
+def chemistry_failure_regression(binary: Path, work: Path) -> None:
+    case = work / "chemistry-failure"
+    case.mkdir()
+    # Deliberately exceed the integration budget in a hot homogeneous mixture.
+    # This must fail promptly, never return a partially integrated result.
+    with (case / "pelec.log").open("w") as log:
+        result = subprocess.run(
+            [str(binary), str(work / "smoke.inp"), "cvode.max_substeps=1",
+             "prob.chamber_temperature=4000", "pelec.fixed_dt=1e-3",
+             "stop_time=1e-3", "pelec.init_shrink=1", "ode.rtol=1e-12", "ode.atol=1e-16"],
+            cwd=case, env={**os.environ, "OMP_NUM_THREADS": "2"},
+            stdout=log, stderr=subprocess.STDOUT, timeout=60,
+        )
+    log_text = (case / "pelec.log").read_text(errors="replace")
+    if result.returncode == 0 or "Kythros: CVODE failed" not in log_text:
+        raise RuntimeError("CPU chemistry failure was not propagated")
+    print("PASS: chemistry failure stops the solver instead of flooding logs")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
@@ -130,10 +149,10 @@ def main() -> None:
     if min(volume["fields"]["temperatureK"]) < 200:
         raise RuntimeError("Cold reactant energy was reset toward zero temperature")
     amr_regression(binary, work, source)
+    chemistry_failure_regression(binary, work)
     (work / "result.json").write_text(json.dumps(volume, allow_nan=False), encoding="utf-8")
     print("PASS: native reacting-flow step and Kythros volume conversion; not physical validation.")
 
 
 if __name__ == "__main__":
     main()
-
