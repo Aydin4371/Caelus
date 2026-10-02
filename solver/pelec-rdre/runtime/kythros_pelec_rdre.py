@@ -63,7 +63,7 @@ def run(request_path: Path, result_path: Path, *, self_test: bool = False) -> No
         # This explicit command is never used by the desktop Run action.
         from kythros_case import CaseParameters
         values = {**parameters.values, "AXIAL_CELLS": "8", "TRANSVERSE_CELLS": "64",
-                  "DOMAIN_LOW_CM": "-4.8", "DOMAIN_HIGH_CM": "4.8", "AMR_LEVELS": "0",
+                  "DOMAIN_LOW_CM": "-4.8", "DOMAIN_HIGH_CM": "4.8", "AMR_LEVELS": "1",
                   "STOP_TIME_S": "1e-8"}
         parameters = CaseParameters(values, (2, 32, 4))
     binary = Path(os.environ.get("KYTHROS_PELEC_BINARY", str(DEFAULT_BINARY)))
@@ -119,6 +119,7 @@ def run(request_path: Path, result_path: Path, *, self_test: bool = False) -> No
             time.sleep(2.0)
     if process.returncode != 0:
         tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:])
+        _progress(job_directory, "failed", 0.0, f"PeleC stopped with exit code {process.returncode}. See pelec.log.")
         raise RuntimeError(f"PeleC exited with code {process.returncode}.\n{tail}")
 
     if (job_directory / "cancel.flag").exists():
@@ -158,6 +159,10 @@ def self_test(directory: Path) -> int:
     log = (directory / "pelec.log").read_text(errors="replace")
     if "STEP = 1" not in log:
         raise RuntimeError("Packaged solver did not advance a flow step")
+    if "[Level 1 step" not in log:
+        raise RuntimeError("Packaged solver did not exercise coarse/fine boundaries")
+    if min(result["fields"]["temperatureK"]) < 200:
+        raise RuntimeError("Packaged solver corrupted cold reactant temperature")
     _write_json(directory / "package-test-passed.json", {"native": os.name == "nt", "runtime": RUNTIME_VERSION,
                 "requestRoundTrip": True, "cleanExit": True, "finiteFields": True, "physicalValidation": False})
     print("PASS: packaged native request, reacting solver, clean exit, and result conversion")
