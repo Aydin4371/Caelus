@@ -99,6 +99,48 @@ if ($Factory.Contains($OldDestructor)) {
     throw 'Upstream factory destructor changed; review the Windows lifetime adaptation.'
 }
 
+# Native ClangCL crashes in PC_local_cpu's OpenMP region when FillPatcher
+# copies coarse/fine boundary data. Serialize only this copy operation; hydro,
+# diffusion and chemistry remain parallel. Keep the workaround scoped to the
+# pinned implementation and fail if upstream changes it. The AMR regression
+# runs with 1, 2 and 27 threads to cover the previously untested path.
+$CopyFile = "$Source/Submodules/PelePhysics/Submodules/amrex/Src/Base/AMReX_PCI.H"
+$CopySource = (Get-Content $CopyFile -Raw).Replace("`r`n", "`n")
+$CopyStart = $CopySource.IndexOf('FabArray<FAB>::PC_local_cpu (')
+if ($CopyStart -lt 0) {
+    throw 'Upstream local copy implementation changed; review the Windows workaround.'
+}
+$CopyEnd = $CopySource.IndexOf("#ifdef AMREX_USE_GPU", $CopyStart)
+if ($CopyEnd -le $CopyStart) {
+    throw 'Upstream local copy implementation changed; review the Windows workaround.'
+}
+$CopyBody = $CopySource.Substring($CopyStart, $CopyEnd - $CopyStart)
+$CopyGuard = '#if defined(AMREX_USE_OMP) && !defined(_WIN32) // Kythros native copy workaround'
+if (-not $CopyBody.Contains($CopyGuard)) {
+    if ([regex]::Matches($CopyBody, '#ifdef AMREX_USE_OMP').Count -ne 2) {
+        throw 'Upstream local copy OpenMP regions changed; review the Windows workaround.'
+    }
+    $CopyBody = $CopyBody.Replace('#ifdef AMREX_USE_OMP', $CopyGuard)
+    Set-Content $CopyFile ($CopySource.Substring(0, $CopyStart) + $CopyBody + $CopySource.Substring($CopyEnd)) -Encoding utf8
+}
+
+# The pinned CPU cell-by-cell reactor ignores CVode's return code. Abort on
+# failure instead of flooding logs and using a partially integrated state.
+$ReactorFile = "$Source/Submodules/PelePhysics/Source/Reactions/ReactorCvode.cpp"
+$ReactorSource = (Get-Content $ReactorFile -Raw).Replace("`r`n", "`n")
+$UncheckedCvode = '        CVode(cvode_mem, time_final, y, &CvodeActual_time_final, CV_NORMAL);'
+$CheckedCvode = @'
+        const int kythros_cvode_status = CVode(cvode_mem, time_final, y, &CvodeActual_time_final, CV_NORMAL);
+        if (kythros_cvode_status < 0) {
+          amrex::Abort("Kythros: CVODE failed; refusing to use an incomplete chemistry state.");
+        }
+'@
+if ($ReactorSource.Contains($UncheckedCvode)) {
+    Set-Content $ReactorFile $ReactorSource.Replace($UncheckedCvode, $CheckedCvode.Replace("`r`n", "`n")) -Encoding utf8
+} elseif (-not $ReactorSource.Contains('const int kythros_cvode_status')) {
+    throw 'Upstream CPU reactor changed; review its CVODE error handling.'
+}
+
 $VsWhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
 $Vs = (& $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | ConvertFrom-Json)[0]
 $VsRoot = $Vs.installationPath
@@ -195,7 +237,7 @@ $Manifest = [ordered]@{
     platform = 'windows-x64'; compiler = 'clang-cl'; accelerator = 'cpu-openmp'; peleC = $Lock.peleC.commit
     pelePhysics = $PhysicsCommit.Trim(); executable = 'kythros-pelec-rdre.exe'
     llvmOpenMP = $LlvmCommit
-    windowsAdaptationVersion = 2
+    windowsAdaptationVersion = 3
     sha256 = (Get-FileHash "$Output/kythros-pelec-rdre.exe" -Algorithm SHA256).Hash.ToLower()
     validationStatus = 'development-unvalidated'
 }

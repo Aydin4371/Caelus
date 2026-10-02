@@ -10,7 +10,8 @@ pelec.hi_bc = "UserBC" "FOExtrap" "FOExtrap"
 pelec.do_hydro = 1
 pelec.do_mol = 0
 pelec.do_react = 1
-pelec.allow_negative_energy = 0
+# Fuego's formation-energy reference permits negative internal energy.
+pelec.allow_negative_energy = 1
 pelec.diffuse_temp = 0
 pelec.diffuse_vel = 0
 pelec.diffuse_spec = 0
