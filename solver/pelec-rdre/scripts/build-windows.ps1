@@ -107,8 +107,11 @@ if ($Factory.Contains($OldDestructor)) {
 $CopyFile = "$Source/Submodules/PelePhysics/Submodules/amrex/Src/Base/AMReX_PCI.H"
 $CopySource = (Get-Content $CopyFile -Raw).Replace("`r`n", "`n")
 $CopyStart = $CopySource.IndexOf('FabArray<FAB>::PC_local_cpu (')
+if ($CopyStart -lt 0) {
+    throw 'Upstream local copy implementation changed; review the Windows workaround.'
+}
 $CopyEnd = $CopySource.IndexOf("#ifdef AMREX_USE_GPU", $CopyStart)
-if ($CopyStart -lt 0 -or $CopyEnd -le $CopyStart) {
+if ($CopyEnd -le $CopyStart) {
     throw 'Upstream local copy implementation changed; review the Windows workaround.'
 }
 $CopyBody = $CopySource.Substring($CopyStart, $CopyEnd - $CopyStart)
@@ -119,6 +122,23 @@ if (-not $CopyBody.Contains($CopyGuard)) {
     }
     $CopyBody = $CopyBody.Replace('#ifdef AMREX_USE_OMP', $CopyGuard)
     Set-Content $CopyFile ($CopySource.Substring(0, $CopyStart) + $CopyBody + $CopySource.Substring($CopyEnd)) -Encoding utf8
+}
+
+# The pinned CPU cell-by-cell reactor ignores CVode's return code. Abort on
+# failure instead of flooding logs and using a partially integrated state.
+$ReactorFile = "$Source/Submodules/PelePhysics/Source/Reactions/ReactorCvode.cpp"
+$ReactorSource = (Get-Content $ReactorFile -Raw).Replace("`r`n", "`n")
+$UncheckedCvode = '        CVode(cvode_mem, time_final, y, &CvodeActual_time_final, CV_NORMAL);'
+$CheckedCvode = @'
+        const int kythros_cvode_status = CVode(cvode_mem, time_final, y, &CvodeActual_time_final, CV_NORMAL);
+        if (kythros_cvode_status < 0) {
+          amrex::Abort("Kythros: CVODE failed; refusing to use an incomplete chemistry state.");
+        }
+'@
+if ($ReactorSource.Contains($UncheckedCvode)) {
+    Set-Content $ReactorFile $ReactorSource.Replace($UncheckedCvode, $CheckedCvode.Replace("`r`n", "`n")) -Encoding utf8
+} elseif (-not $ReactorSource.Contains('const int kythros_cvode_status')) {
+    throw 'Upstream CPU reactor changed; review its CVODE error handling.'
 }
 
 $VsWhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
