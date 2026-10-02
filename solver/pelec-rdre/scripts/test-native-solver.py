@@ -14,6 +14,64 @@ import numpy as np
 import yt
 
 
+def check_log(log_text: str) -> None:
+    if re.search(r"CVODE.*ERROR|\[ERROR\]|corrector convergence test failed|Native exception", log_text, re.I):
+        raise RuntimeError("Solver reported a native or chemistry error")
+
+
+def amr_regression(binary: Path, work: Path, source: Path) -> None:
+    """Exercise coarse/fine copies and reactions with more threads than boxes."""
+    inputs = (source / "Exec/KythrosRDRE/smoke.inp").read_text()
+    # Short physical interval, but multiple coarse steps and fine subcycles.
+    inputs += """
+max_step = 3
+stop_time = 3.e-8
+pelec.fixed_dt = 1.e-8
+amr.max_level = 1
+amr.ref_ratio = 2
+amr.max_grid_size = 16
+amr.regrid_int = 2
+tagging.tempgrad = 0.1
+tagging.max_tempgrad_lev = 1
+pelec.diffuse_temp = 1
+pelec.diffuse_vel = 1
+pelec.diffuse_spec = 1
+pelec.diffuse_enth = 1
+"""
+    temperatures = []
+    for threads in (1, 2, 27):
+        case = work / f"amr-{threads}-threads"
+        case.mkdir()
+        (case / "inputs").write_text(inputs)
+        with (case / "pelec.log").open("w") as log:
+            result = subprocess.run(
+                [str(binary), "inputs"], cwd=case,
+                env={**os.environ, "OMP_NUM_THREADS": str(threads)},
+                stdout=log, stderr=subprocess.STDOUT, timeout=600,
+            )
+        log_text = (case / "pelec.log").read_text(errors="replace")
+        if result.returncode:
+            print(log_text[-12000:])
+            raise RuntimeError(f"AMR regression ({threads} threads) exited with {result.returncode}")
+        check_log(log_text)
+        if "[Level 1 step" not in log_text or "STEP = 3" not in log_text:
+            raise RuntimeError("AMR regression did not complete refinement and three steps")
+        plots = sorted(p for p in case.glob("plt*") if (p / "Header").is_file())
+        dataset = yt.load(str(plots[-1]))
+        if float(dataset.current_time) <= 0:
+            raise RuntimeError("AMR regression did not advance")
+        data = dataset.all_data()
+        # Covered EB cells contain body states: inspect fluid cells only.
+        fluid = np.asarray(data[("boxlib", "vfrac")]) > 0
+        temp = np.asarray(data[("boxlib", "Temp")])[fluid]
+        if not temp.size or not np.isfinite(temp).all() or temp.min() < 200 or temp.max() > 10000:
+            raise RuntimeError(f"AMR regression corrupted fluid temperature ({threads} threads)")
+        temperatures.append((float(temp.min()), float(temp.max())))
+        print(f"PASS: AMR with {threads} threads; temperature range {temperatures[-1]}")
+    if not np.allclose(temperatures, temperatures[0], rtol=1.e-5, atol=1.e-3):
+        raise RuntimeError(f"Thread-dependent temperature extrema: {temperatures}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
@@ -46,6 +104,7 @@ def main() -> None:
                     nearest = max(preceding)
                     print(f"Native symbol: {nearest[1]} + {address-nearest[0]:x}")
         raise RuntimeError(f"Native solver exited with {result.returncode}")
+    check_log((work / "pelec.log").read_text(errors="replace"))
     plots = sorted(p for p in work.glob("plt*") if (p / "Header").is_file())
     if not plots:
         raise RuntimeError("Solver produced no readable plotfile")
@@ -68,9 +127,13 @@ def main() -> None:
     for name in ("pressurePa", "temperatureK"):
         if min(volume["fields"][name]) <= 0:
             raise RuntimeError(f"Nonpositive {name}")
+    if min(volume["fields"]["temperatureK"]) < 200:
+        raise RuntimeError("Cold reactant energy was reset toward zero temperature")
+    amr_regression(binary, work, source)
     (work / "result.json").write_text(json.dumps(volume, allow_nan=False), encoding="utf-8")
     print("PASS: native reacting-flow step and Kythros volume conversion; not physical validation.")
 
 
 if __name__ == "__main__":
     main()
+
