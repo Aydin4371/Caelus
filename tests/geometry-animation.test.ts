@@ -45,9 +45,7 @@ test("keeps the RDE animation controllable, accessible, and explicitly schematic
   assert.match(assembly, /Ablative liner/);
   assert.match(assembly, /filmInjectionGeometry/);
   assert.match(assembly, /ablativeThicknessMm/);
-  assert.match(planner, /Material tradeoff guide/);
-  assert.match(planner, /item\.advantages/);
-  assert.match(planner, /item\.tradeoffs/);
+  assert.match(planner, /MaterialComparison design=\{draft\}/);
   assert.match(planner, /Film mass flow/);
   assert.match(planner, /Thermal mass/);
   assert.match(planner, /Ablative liner material/);

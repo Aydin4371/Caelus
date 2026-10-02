@@ -15,6 +15,7 @@ import {
   type OperatingPoint,
   type PlannedOperatingPoint,
 } from "@/lib/design-workspace";
+import { MaterialComparison } from "@/components/material-comparison";
 import { RDE_MATERIALS, calculateRdeBuildScreening } from "@/lib/rde-build";
 import { buildEngineManifest, engineRevisionLabel, normalizedEngineRevision } from "@/lib/engine-manifest";
 
@@ -68,11 +69,11 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
   const setBuild = <Key extends keyof EngineBuildDefinition>(key: Key, value: EngineBuildDefinition[Key]) => setDraft((current) => ({ ...current, build: { ...(current.build ?? EMPTY_ENGINE_DESIGN.build!), [key]: value } }));
   const setBuildNumber = (key: keyof EngineBuildDefinition, value: string) => setDraft((current) => ({ ...current, build: { ...(current.build ?? EMPTY_ENGINE_DESIGN.build!), [key]: value === "" ? Number.NaN : Number(value) } as EngineBuildDefinition }));
   const build = draft.build!;
-  const selectedMaterialIds = new Set([build.hotWallMaterial, build.outerWallMaterial, build.injectorMaterial, build.centerbodyMaterial, build.nozzleMaterial]);
+  const [step, setStep] = useState(0);
 
   function submit() {
     const issues = validateEngineDesign(draft);
-    if (issues.length) return setError(issues[0]);
+    if (issues.length) { setStep(3); return setError(issues[0]); }
     const id = draft.id || `design-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     onSave({ ...draft, id, source: "user" });
   }
@@ -80,6 +81,8 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
   return <section className="design-editor" aria-label="Preliminary RDE build inputs">
     <div className="design-editor-heading"><div><span className="workspace-label">Preliminary RDE builder</span><h1>{draft.id ? "Refine the RDE build" : "Build an RDE concept"}</h1><p>Define the engine, hot-section materials, and cooling circuit in one traceable record. Kythros performs direct geometry and first-order screening calculations, not CFD, combustion prediction, stress analysis, or design certification.</p></div></div>
 
+    <nav className="design-stepper" aria-label="Design steps">{["Geometry", "Materials & cooling", "Operating range", "Review"].map((label, index) => <button key={label} type="button" aria-current={step === index ? "step" : undefined} onClick={() => setStep(index)}><span>{index + 1}</span>{label}</button>)}</nav>
+    <div hidden={step !== 0}>
     <div className="design-form-section"><h2>Identity and propellants</h2><div className={`application-definition ${draft.application === "Air-breathing" ? "air-breathing" : "rocket"}`}><strong>{draft.application} RDE variant</strong><span>{draft.application === "Air-breathing" ? "Air is supplied by the selected upstream inlet architecture. This preliminary build defines the annular combustor and fuel delivery, not the external inlet or compressor." : "Fuel and oxidizer are supplied through the entered onboard feed system and injector face."}</span></div><div className="design-form-grid four">
       <label><span>Design name</span><input value={draft.name} onChange={(event) => setText("name", event.target.value)} placeholder="Annular demonstrator A" /></label>
       <label><span>Application</span><select value={draft.application} onChange={(event) => setText("application", event.target.value)}><option>Rocket</option><option>Air-breathing</option></select></label>
@@ -103,6 +106,8 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
       <label><span>Exhaust configuration</span><input value={draft.exhaustConfiguration} onChange={(event) => setText("exhaustConfiguration", event.target.value)} /></label>
     </div></div>
 
+    </div>
+    <div hidden={step !== 1}>
     <div className="design-form-section"><h2>Structure and materials</h2><p className="design-form-help">The material library contains nominal screening properties only. Select the actual material family for every major component; grades, heat treatment, joints, fatigue, oxidation, and certified allowables remain outside this calculation.</p><div className="design-form-grid three">
       {([
         ["hotWallMaterial", "Hot-wall liner"],
@@ -113,7 +118,7 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
       ] as const).map(([key, label]) => <label key={key}><span>{label}</span><select value={build[key]} onChange={(event) => setBuild(key, event.target.value as EngineBuildDefinition[typeof key])}>{RDE_MATERIALS.map((item) => <option key={item.id} value={item.id}>{item.id}</option>)}</select></label>)}
       <label><span>Hot-wall coating</span><select value={build.hotWallCoating} onChange={(event) => setBuild("hotWallCoating", event.target.value as EngineBuildDefinition["hotWallCoating"])}><option>None</option><option>YSZ-class thermal-barrier coating</option></select></label>
       <label><span>Hot-wall thickness (mm)</span><input type="number" step="0.1" min="0" value={numberValue(build.wallThicknessMm)} onChange={(event) => setBuildNumber("wallThicknessMm", event.target.value)} /></label>
-    </div><div className="material-tradeoff-guide"><div className="material-tradeoff-heading"><strong>Material tradeoff guide</strong><span>Selected materials are highlighted. Values are nominal screening references, not certified allowables.</span></div><div className="material-tradeoff-grid">{RDE_MATERIALS.filter((item) => item.id !== "Not selected").map((item) => <article key={item.id} className={selectedMaterialIds.has(item.id) ? "selected" : ""}><header><div><span>{item.family}</span><strong>{item.id}</strong></div>{selectedMaterialIds.has(item.id) && <b>USED</b>}</header><dl><div><dt>Density</dt><dd>{compactNumber(item.densityKgM3 ?? Number.NaN, 0)} kg/m³</dd></div><div><dt>Conductivity</dt><dd>{compactNumber(item.thermalConductivityWMK ?? Number.NaN, 1)} W/m/K</dd></div><div><dt>Temperature reference</dt><dd>{item.referenceTemperatureK ? `${compactNumber(item.referenceTemperatureK, 0)} K` : "Not assigned"}</dd></div></dl><p className="material-pro"><b>PRO</b>{item.advantages[0]}</p><p className="material-con"><b>WATCH</b>{item.tradeoffs[0]}</p><footer>{item.propertyBasis} · <a href={item.sourceUrl} target="_blank" rel="noreferrer">Source</a></footer></article>)}</div></div></div>
+    </div><MaterialComparison design={draft} onSelect={(key, material) => setBuild(key, material)} /></div>
 
     <div className="design-form-section"><h2>Thermal management</h2><p className="design-form-help">Choose the actual method. Each defined method saves its own hardware inputs, appears differently in the 3D assembly, and receives a transparent direct screen from your assumptions.</p><div className="design-form-grid four">
       <label><span>Cooling method</span><select value={build.coolingMethod} onChange={(event) => setBuild("coolingMethod", event.target.value as EngineBuildDefinition["coolingMethod"])}><option>Regenerative</option><option>Film</option><option>Heat sink</option><option>Ablative</option><option>Not defined</option></select></label>
@@ -159,6 +164,8 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
     </div>}
     </div>
 
+    </div>
+    <div hidden={step !== 2}>
     <div className="design-form-section"><h2>Operating range</h2><div className="design-form-grid four">
       <label><span>Minimum equivalence ratio</span><input type="number" step="0.01" value={numberValue(draft.equivalenceRatioMin)} onChange={(event) => setNumber("equivalenceRatioMin", event.target.value)} /></label>
       <label><span>Maximum equivalence ratio</span><input type="number" step="0.01" value={numberValue(draft.equivalenceRatioMax)} onChange={(event) => setNumber("equivalenceRatioMax", event.target.value)} /></label>
@@ -170,8 +177,10 @@ function DesignEditor({ initial, onCancel, onSave }: { initial: EngineDesign; on
       <label><span>Back pressure (bar)</span><input type="number" step="0.1" value={numberValue(draft.backPressureBar)} onChange={(event) => setNumber("backPressureBar", event.target.value)} /></label>
     </div></div>
 
+    </div>
+    {step === 3 && <div className="design-review"><h2>Review your concept</h2><p>{draft.name || "Untitled engine"} · {draft.fuel} / {draft.oxidizer}</p><dl><div><dt>Annulus</dt><dd>{compactNumber(draft.annulusInnerDiameterMm)}–{compactNumber(draft.annulusOuterDiameterMm)} mm · {compactNumber(draft.chamberLengthMm)} mm long</dd></div><div><dt>Hot wall</dt><dd>{build.hotWallMaterial}</dd></div><div><dt>Cooling</dt><dd>{build.coolingMethod}</dd></div></dl>{validateEngineDesign(draft).length ? <><h3>Complete before saving</h3><ul>{validateEngineDesign(draft).map((issue) => <li key={issue}>{issue}</li>)}</ul></> : <p>Inputs are complete. Save this revision to use it in simulation.</p>}<p>Material screening uses entered heat loads. The local Full 3D solver does not model solid walls or cooling circuits.</p></div>}
     {error && <p className="error-message" role="alert">{error}</p>}
-    <div className="design-editor-actions"><button className="button secondary" onClick={onCancel}>Cancel</button><button className="button primary" onClick={submit}>Save preliminary build</button></div>
+    <div className="design-editor-actions"><button className="button secondary" onClick={onCancel}>Cancel</button>{step > 0 && <button className="button secondary" onClick={() => setStep(step - 1)}>Back</button>}{step < 3 ? <button className="button primary" onClick={() => setStep(step + 1)}>Continue →</button> : <button className="button primary" onClick={submit}>Save preliminary build</button>}</div>
   </section>;
 }
 

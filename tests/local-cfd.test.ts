@@ -109,7 +109,7 @@ test("Full 3D parser accepts only complete finite volumetric fields with provena
   assert.match(validateRde3dVolumeResult(nonPhysical).join(" "), /Pressure must remain positive/);
 });
 
-test("Full 3D advice waits for numerical evidence then names one engine change", () => {
+test("Full 3D advice waits for numerical and physical evidence", () => {
   const condition = midpointCondition(design);
   const unconverged = volumeResult();
   unconverged.summary.adjacentGridChangePct = null;
@@ -117,7 +117,37 @@ test("Full 3D advice waits for numerical evidence then names one engine change",
   assert.equal(recommendLocalRde3dChange(design, condition, unconverged).resultUsable, false);
   assert.match(recommendLocalRde3dChange(design, condition, unconverged).simulation.title, /adjacent grid/);
   const recommendation = recommendLocalRde3dChange(design, condition, volumeResult());
-  assert.equal(recommendation.resultUsable, true);
-  assert.match(recommendation.engine.title, /Raise inlet pressure/);
-  assert.match(recommendation.engine.action, /Change only inlet pressure/);
+  assert.equal(recommendation.resultUsable, false);
+  assert.match(recommendation.status, /validation needed/);
+  assert.equal(recommendation.engine.target, "none");
+});
+
+
+test("both spatial and temporal sensitivity are required independently", () => {
+  for (const key of ["adjacentGridChangePct", "adjacentTimeStepChangePct"] as const) {
+    const result = volumeResult();
+    result.summary[key] = null;
+    assert.match(recommendLocalRde3dChange(design, midpointCondition(design), result).status, /Convergence evidence/);
+  }
+});
+
+test("malformed arrays and negative error magnitudes are rejected without throwing", () => {
+  const malformed = JSON.parse(JSON.stringify(volumeResult()));
+  malformed.fields.pressurePa = "not an array";
+  assert.ok(validateRde3dVolumeResult(malformed).length);
+  for (const key of ["massConservationErrorPct", "adjacentGridChangePct", "adjacentTimeStepChangePct"] as const) {
+    const result = volumeResult();
+    result.summary[key] = -3;
+    assert.match(validateRde3dVolumeResult(result).join(" "), /non-negative/);
+    assert.equal(recommendLocalRde3dChange(design, midpointCondition(design), result).resultUsable, false);
+  }
+});
+
+test("foreign revisions and a validation label cannot unlock unsupported native advice", () => {
+  const result = volumeResult();
+  result.designFingerprint = "another-revision";
+  assert.match(recommendLocalRde3dChange(design, midpointCondition(design), result).detail, /different engine/);
+  result.designFingerprint = design.revision.fingerprint;
+  result.provenance.validationStatus = "experiment-validated";
+  assert.equal(recommendLocalRde3dChange(design, midpointCondition(design), result).engine.target, "none");
 });
