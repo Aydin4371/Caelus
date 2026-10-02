@@ -304,14 +304,18 @@ export function validateRde3dVolumeResult(value: unknown): string[] {
     if (!Array.isArray(array) || array.length !== expected) issues.push(`The ${name} field must contain exactly ${expected.toLocaleString()} volume-cell values.`);
     else if (!array.every((item) => typeof item === "number" && Number.isFinite(item))) issues.push(`The ${name} field contains a non-finite value.`);
   }
-  if (fields?.pressurePa?.some((item) => item <= 0)) issues.push("Pressure must remain positive in every exported volume cell.");
-  if (fields?.temperatureK?.some((item) => item <= 0)) issues.push("Temperature must remain positive in every exported volume cell.");
-  if (fields?.reactionProgress?.some((item) => item < 0 || item > 1)) issues.push("Reaction progress must remain between zero and one.");
+  if (Array.isArray(fields?.pressurePa) && fields.pressurePa.some((item) => item <= 0)) issues.push("Pressure must remain positive in every exported volume cell.");
+  if (Array.isArray(fields?.temperatureK) && fields.temperatureK.some((item) => item <= 0)) issues.push("Temperature must remain positive in every exported volume cell.");
+  if (Array.isArray(fields?.reactionProgress) && fields.reactionProgress.some((item) => item < 0 || item > 1)) issues.push("Reaction progress must remain between zero and one.");
   if (!result.solver?.name || !result.solver.version || !result.solver.executableHash) issues.push("The result must identify the solver, version, and executable hash.");
   if (!result.provenance?.computedAt || result.provenance.host !== "local-desktop" || !result.provenance.caseDefinitionId) issues.push("The result must retain local execution and case-definition provenance.");
+  if (!result.provenance || !["development-unvalidated", "benchmark-passed", "experiment-validated"].includes(result.provenance.validationStatus)) issues.push("The result must declare a recognized validation status.");
   const summary = result.summary;
   if (!summary) issues.push("The result does not contain a numerical summary.");
   else {
+    if (typeof summary.solverConverged !== "boolean") issues.push("Solver completion must be reported as a boolean.");
+    const errors = [summary.massConservationErrorPct, summary.adjacentGridChangePct, summary.adjacentTimeStepChangePct];
+    if (errors.some((error) => error !== null && (typeof error !== "number" || !Number.isFinite(error) || error < 0))) issues.push("Numerical error magnitudes must be null or finite non-negative percentages.");
     const optional = [summary.massConservationErrorPct, summary.peakPressureBar, summary.peakTemperatureK, summary.dominantFrequencyKHz, summary.injectorBackflowPct, summary.estimatedThrustN, summary.peakWallHeatFluxMWm2, summary.adjacentGridChangePct, summary.adjacentTimeStepChangePct];
     if (!optional.every(nullableFinite)) issues.push("The result summary contains a non-finite value.");
     if (!(summary.waveCount === null || Number.isInteger(summary.waveCount) && summary.waveCount >= 0)) issues.push("Wave count must be null or a non-negative integer.");
@@ -334,10 +338,18 @@ export function parseRde3dVolumeResult(content: string): Rde3dVolumeResult {
 
 export function recommendLocalRde3dChange(design: EngineDesign, condition: Rde2dCondition, result: Rde3dVolumeResult): LocalRde3dRecommendation {
   const summary = result.summary;
+  const invalid = validateRde3dVolumeResult(result);
+  const paired = result.designId === design.id && result.operatingConditionId === condition.id &&
+    result.designFingerprint === (design.revision?.fingerprint ?? null);
+  if (invalid.length || !paired) return {
+    resultUsable: false, status: "Result needs review", detail: invalid[0] ?? "This result belongs to a different engine revision or operating condition.",
+    engine: { title: "Keep this engine unchanged", action: "Load the matching run before interpreting the result.", reason: "Advice must use a valid result from this exact case.", target: "none" },
+    simulation: { title: "Check the result identity", action: "Verify the saved engine revision, operating condition, and exported result.", reason: "A mismatched result cannot support this design." },
+  };
   if (!summary.solverConverged) return {
     resultUsable: false,
     status: "Engine advice withheld",
-    detail: "The Full 3D solver did not meet its completion and residual gates.",
+    detail: "The Full 3D run did not report successful completion.",
     engine: { title: "Do not change the engine", action: "Keep geometry and operating conditions fixed until the numerical run completes cleanly.", reason: "A failed numerical run cannot distinguish an engine problem from a solver problem.", target: "none" },
     simulation: { title: "Resolve the solver failure", action: "Open the run log, correct the first failing numerical gate, and repeat this exact case.", reason: "The same inputs must complete before the design can be assessed." },
   };
@@ -346,16 +358,16 @@ export function recommendLocalRde3dChange(design: EngineDesign, condition: Rde2d
     status: "Engine advice withheld",
     detail: summary.massConservationErrorPct === null ? "The result does not report mass conservation." : `Mass conservation error is ${summary.massConservationErrorPct.toFixed(2)}%, above the 1% screening gate.`,
     engine: { title: "Do not change the engine", action: "Keep the engine and operating point fixed.", reason: "Conservation must pass before interpreting flow structures as an engine response.", target: "none" },
-    simulation: { title: "Reduce the maximum CFL", action: "Repeat this exact case with the next lower CFL preset; keep the mesh, chemistry, geometry, and boundaries unchanged.", reason: "This isolates temporal stability without mixing a design change into the numerical check." },
+    simulation: { title: "Establish the mass balance", action: "Review time-resolved domain mass and integrated inlet/outlet fluxes in the solver output. The packaged volume export does not yet supply this check.", reason: "A missing mass balance is an evidence gap; changing CFL alone does not establish conservation." },
   };
   const gridChange = summary.adjacentGridChangePct;
   const timeChange = summary.adjacentTimeStepChangePct;
-  if (gridChange === null && timeChange === null) return {
+  if (gridChange === null || timeChange === null) return {
     resultUsable: false,
-    status: "One convergence run required",
-    detail: "The computed volume is inspectable, but an adjacent grid or time-step result is required before engine advice.",
+    status: "Convergence evidence required",
+    detail: "The computed volume is inspectable, but both grid and time-step sensitivity results are required before engine advice.",
     engine: { title: "Keep this engine unchanged", action: "Do not alter hardware or operating conditions for the next run.", reason: "The next run must measure whether the calculated answer still depends on numerical resolution.", target: "none" },
-    simulation: { title: "Run the next adjacent grid", action: "Choose Evidence run and keep the engine, chemistry, boundary conditions, and CFL fixed.", reason: "Kythros will compare the two computed volumes before recommending a physical engine change." },
+    simulation: { title: gridChange === null ? "Check an adjacent grid" : "Check an adjacent time step", action: "Compare otherwise identical cases, varying mesh spacing and time step separately. Record changes in the same targeted outputs over the same sampling interval.", reason: "Packaged presets change multiple numerical settings and are not an automatic convergence study." },
   };
   const numericalChange = Math.max(gridChange ?? 0, timeChange ?? 0);
   if (numericalChange > 2) return {
@@ -364,6 +376,12 @@ export function recommendLocalRde3dChange(design: EngineDesign, condition: Rde2d
     detail: `The adjacent numerical result changed targeted outputs by ${numericalChange.toFixed(1)}%, above the 2% screening gate.`,
     engine: { title: "Keep this engine unchanged", action: "Do not change geometry or the operating condition yet.", reason: "The CFD result still responds to numerical resolution.", target: "none" },
     simulation: { title: "Continue numerical convergence", action: "Run one more adjacent resolution level, changing only the same numerical parameter.", reason: "Engine guidance waits until numerical changes stop materially moving the answer." },
+  };
+  if (result.provenance.validationStatus === "development-unvalidated" || result.provenance.caseDefinitionId === "gas-fed-annular-hydrogen-v1") return {
+    resultUsable: false, status: "Development result · validation needed",
+    detail: "Numerical screening alone does not establish that this case predicts the physical engine.",
+    engine: { title: "Keep this engine unchanged", action: "Use this volume to inspect flow features, not to prescribe hardware changes.", reason: "The packaged case does not model pressure-fed plenum or wall/coolant response.", target: "none" },
+    simulation: { title: "Compare against a reference case", action: "Compare matched geometry, boundaries, and measured outputs against a documented benchmark or experiment.", reason: "Passing execution tests is distinct from validating the reacting-flow model." },
   };
   if (summary.injectorBackflowPct !== null && summary.injectorBackflowPct > 5) {
     const nextPressure = condition.inletPressureBar * 1.05;
@@ -378,11 +396,11 @@ export function recommendLocalRde3dChange(design: EngineDesign, condition: Rde2d
   const heatLimit = design.build?.designHeatFluxMWM2;
   if (summary.peakWallHeatFluxMWm2 !== null && finitePositive(heatLimit ?? Number.NaN) && summary.peakWallHeatFluxMWm2 > heatLimit!) {
     return {
-      resultUsable: true,
-      status: "Provisional engine change ready",
-      detail: "The result passed the numerical screening gates. The next change remains a testable hypothesis until experiment validation.",
-      engine: { title: "Increase coolant mass flow by 10%", action: "Change only coolant mass flow by +10%; retain the hot-wall material, channel geometry, propellant condition, and chamber geometry.", reason: `Computed peak wall heat flux is ${summary.peakWallHeatFluxMWm2.toFixed(2)} MW/m² versus the entered ${heatLimit!.toFixed(2)} MW/m² design load.`, target: "engine" },
-      simulation: { title: "Recalculate conjugate heat transfer", action: "Repeat the converged case with only coolant mass flow changed by +10%.", reason: "This isolates cooling response before changing wall or channel geometry." },
+      resultUsable: false,
+      status: "Thermal analysis required",
+      detail: "The reported heat load exceeds the entered assumption; the local solver does not model a cooling circuit.",
+      engine: { title: "Review the thermal model", action: "Review the heat-flux basis and wall/coolant boundary conditions before changing cooling hardware.", reason: "An adiabatic flow calculation cannot predict the effect of changing coolant flow.", target: "none" },
+      simulation: { title: "Use a coupled thermal analysis", action: "Transfer supported heat loads to a separate solid-wall and coolant analysis.", reason: "Conjugate heat transfer is not implemented in the packaged local case." },
     };
   }
   const nextMassFlow = condition.massFlowKgS * 1.05;
@@ -395,3 +413,18 @@ export function recommendLocalRde3dChange(design: EngineDesign, condition: Rde2d
   };
 }
 
+
+
+export function localCfdEvidence(result: Rde3dVolumeResult) {
+  const s = result.summary;
+  const check = (value: number | null, threshold: number) => value === null ? "Not reported" :
+    !Number.isFinite(value) || value < 0 ? "Invalid magnitude" :
+    `${value.toFixed(2)}% · ${value <= threshold ? "within" : "above"} ${threshold}% screening threshold`;
+  return [
+    { label: "Execution", detail: s.solverConverged ? "Completed · not a convergence proof" : "Completion not established" },
+    { label: "Mass conservation", detail: check(s.massConservationErrorPct, 1) },
+    { label: "Grid sensitivity", detail: check(s.adjacentGridChangePct, 2) },
+    { label: "Time-step sensitivity", detail: check(s.adjacentTimeStepChangePct, 2) },
+    { label: "Validation claim in export", detail: result.provenance.validationStatus.replaceAll("-", " ") },
+  ];
+}

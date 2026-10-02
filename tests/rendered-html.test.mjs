@@ -82,7 +82,7 @@ test("connects design, the CFD suite, operating envelopes, and validation", asyn
   assert.match(page, /INPUT → SIMULATE → 3D FLOW → IMPROVE/);
   assert.match(page, /Select the engine, operating condition, and simulation quality/);
   assert.match(page, /Calculate the reacting flow and velocity field/);
-  assert.match(page, /Inspect 3D streamlines/);
+  assert.match(page, /Inspect flow fields, check numerical evidence/);
   assert.match(page, /RAPID 2D/);
   assert.match(page, /DETAILED 2D/);
   assert.match(page, /FULL 3D/);
@@ -166,7 +166,7 @@ test("connects design, the CFD suite, operating envelopes, and validation", asyn
   assert.match(envelope, /not accepted RDE standards/);
   assert.match(design, /RDE geometry/);
   assert.match(design, /Regenerative thermal and hydraulic screen/);
-  assert.match(design, /Material tradeoff guide/);
+  assert.match(design, /MaterialComparison design=\{draft\}/);
   assert.match(design, /film-flow allocation/i);
   assert.match(design, /Sensible-energy capacity/);
   assert.match(design, /Ablative inventory/);
@@ -332,3 +332,4 @@ test("uses clear graph labels and a shared legend for every case", async () => {
   assert.match(page, /PROBE POSITION \(deg\)/);
   assert.match(css, /\.series-cfd[^}]*stroke-dasharray: 7 5/);
 });
+
