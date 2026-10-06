@@ -33,10 +33,24 @@ export type FastRde2dDiagnostics = {
   estimatedThrustN: number;
 };
 
+export type FastRde2dRecording = {
+  nx: number;
+  ny: number;
+  requestedProbeAxialMm: number;
+  sampledProbeAxialMm: number;
+  probeAzimuthDeg: 0;
+  averagingStartMs: number;
+  averagingEndMs: number;
+  meanProbePressureBar: number | null;
+  frames: Array<{ timeMs: number; pressureBar: number[] }>;
+  probeHistory: Array<{ timeMs: number; pressureBar: number }>;
+};
+
 export type FastRde2dResult = Rde2dResultSummary & {
   evidenceClass: "browser-screening";
   screeningDiagnostics: FastRde2dDiagnostics;
   field: FastRde2dField;
+  recording?: FastRde2dRecording;
   limitation: string;
 };
 
@@ -52,6 +66,7 @@ export type FastRde2dRunOptions = {
   onProgress?: (progress: FastRde2dProgress) => void;
   maxSteps?: number;
   yieldEverySteps?: number;
+  recording?: { frameCount: number; probeAxialMm: number; averagingStartMs: number };
 };
 
 type ChemistryParameters = {
@@ -221,6 +236,57 @@ export async function runFastRde2d(
   let unwrappedPeakIndex = 0;
   const peakTrack: Array<{ timeS: number; positionM: number }> = [];
 
+  const recordOptions = options.recording;
+  if (recordOptions && (!Number.isInteger(recordOptions.frameCount) || recordOptions.frameCount < 2 || recordOptions.frameCount > 120 ||
+    !Number.isFinite(recordOptions.probeAxialMm) || recordOptions.probeAxialMm < 0 || recordOptions.probeAxialMm > chamberLengthM * 1000 ||
+    !Number.isFinite(recordOptions.averagingStartMs) || recordOptions.averagingStartMs < 0 || recordOptions.averagingStartMs >= targetTimeS * 1000)) {
+    throw new Error("Recording requires 2–120 frames, a probe inside the chamber, and an averaging start before the run ends.");
+  }
+  const recordingY = recordOptions ? Math.max(0, Math.min(ny - 1, recordOptions.probeAxialMm / (dy * 1000) - 0.5)) : 0;
+  const recordingJ = Math.floor(recordingY);
+  const recording: FastRde2dRecording | undefined = recordOptions ? {
+    nx, ny, requestedProbeAxialMm: recordOptions.probeAxialMm, sampledProbeAxialMm: (recordingY + 0.5) * dy * 1000,
+    probeAzimuthDeg: 0, averagingStartMs: recordOptions.averagingStartMs, averagingEndMs: 0,
+    meanProbePressureBar: null, frames: [], probeHistory: [],
+  } : undefined;
+  const statePressureBar = (index: number) => {
+    const density = Math.max(DENSITY_FLOOR, rho[index]);
+    return (GAMMA - 1) * (energy[index] - 0.5 * (mx[index] ** 2 + my[index] ** 2) / density - heatRelease * rhoFuel[index]) / 1e5;
+  };
+  // Interpolate at the same physical location on every mesh. Azimuth zero lies
+  // between the first/last periodic cell centers; the axial position is also interpolated.
+  const stateProbePressure = () => {
+    const atRow = (j: number) => 0.5 * (statePressureBar(j * nx) + statePressureBar(j * nx + nx - 1));
+    const low = atRow(recordingJ);
+    return low + (recordingY - recordingJ) * (atRow(Math.min(ny - 1, recordingJ + 1)) - low);
+  };
+  let pressureIntegralBarS = 0;
+  let previousProbePressure = recording ? stateProbePressure() : 0;
+  let previousRecordTime = 0;
+  let nextFrameTime = 0;
+  let nextProbeTime = 0;
+  const capture = (force = false) => {
+    if (!recording || !recordOptions) return;
+    const probePressure = stateProbePressure();
+    const start = Math.max(previousRecordTime, recordOptions.averagingStartMs * 1e-3);
+    if (simulatedTime > start) {
+      const fraction = (start - previousRecordTime) / (simulatedTime - previousRecordTime);
+      const pressureAtStart = previousProbePressure + fraction * (probePressure - previousProbePressure);
+      pressureIntegralBarS += 0.5 * (pressureAtStart + probePressure) * (simulatedTime - start);
+    }
+    previousProbePressure = probePressure;
+    previousRecordTime = simulatedTime;
+    if ((simulatedTime >= nextProbeTime || force) && recording.probeHistory.at(-1)?.timeMs !== simulatedTime * 1000) {
+      recording.probeHistory.push({ timeMs: simulatedTime * 1000, pressureBar: probePressure });
+      nextProbeTime = simulatedTime + targetTimeS / 1000;
+    }
+    if ((simulatedTime >= nextFrameTime || force) && recording.frames.at(-1)?.timeMs !== simulatedTime * 1000) {
+      recording.frames.push({ timeMs: simulatedTime * 1000, pressureBar: Array.from({ length: cellCount }, (_, index) => statePressureBar(index)) });
+      nextFrameTime = simulatedTime + targetTimeS / (recordOptions.frameCount - 1);
+    }
+  };
+  capture();
+
   const rusanov = (
     direction: "x" | "y",
     left: [number, number, number, number, number, number, number, number],
@@ -346,6 +412,7 @@ export async function runFastRde2d(
     [rhoFuel, nextFuel] = [nextFuel, rhoFuel];
     simulatedTime += dt;
     step += 1;
+    capture();
 
     if (step % 4 === 0 || simulatedTime >= targetTimeS) {
       const probeJ = Math.min(ny - 1, Math.max(1, Math.round(0.35 * ny)));
@@ -377,6 +444,12 @@ export async function runFastRde2d(
 
   abortIfRequested(options.signal);
   options.onProgress?.({ fraction: 0.99, step, simulatedTimeMs: simulatedTime * 1e3, stage: "analyzing" });
+  capture(true);
+  if (recording) {
+    recording.averagingEndMs = simulatedTime * 1000;
+    const durationS = simulatedTime - recording.averagingStartMs * 1e-3;
+    recording.meanProbePressureBar = durationS > 0 ? pressureIntegralBarS / durationS : null;
+  }
   const finalPressure = new Float64Array(cellCount);
   const finalTemperature = new Float64Array(cellCount);
   const finalProgress = new Float64Array(cellCount);
@@ -451,6 +524,7 @@ export async function runFastRde2d(
     peakWallHeatFluxMWm2: null,
     peakWallTemperatureK: null,
     evidenceClass: "browser-screening",
+    ...(recording ? { recording } : {}),
     screeningDiagnostics: {
       model: "2D reactive Euler · single-step heat release",
       scheme: "first-order finite volume · Rusanov flux",
@@ -486,4 +560,5 @@ export async function runFastRde2d(
   options.onProgress?.({ fraction: 1, step, simulatedTimeMs: simulatedTime * 1e3, stage: "analyzing" });
   return result;
 }
+
 

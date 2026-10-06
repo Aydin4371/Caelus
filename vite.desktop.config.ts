@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   root: "desktop",
+  publicDir: "../public",
   plugins: [react()],
   resolve: {
     alias: {
@@ -20,3 +21,4 @@ export default defineConfig({
     strictPort: true,
   },
 });
+
