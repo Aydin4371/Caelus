@@ -78,7 +78,7 @@ test("connects design, the CFD suite, operating envelopes, and validation", asyn
   const desktop = await readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
   const simulationLogic = await readFile(new URL("../lib/rde-2d-workflow.ts", import.meta.url), "utf8");
   assert.match(page, /productView/);
-  assert.match(page, /useState<"home" \| "design" \| "simulation" \| "envelope" \| "comparison">\("home"\)/);
+  assert.match(page, /useState<"home" \| "design" \| "simulation" \| "envelope" \| "comparison" \| "benchmark">\("home"\)/);
   assert.match(page, /INPUT → SIMULATE → 3D FLOW → IMPROVE/);
   assert.match(page, /Select the engine, operating condition, and simulation quality/);
   assert.match(page, /Calculate the reacting flow and velocity field/);

@@ -2218,3 +2218,32 @@ body { font-size: 14px; line-height: 1.5; }
 .cfd-evidence li span { color: #657082; text-align: right; }
 .cfd-evidence p { font-size: 13px; line-height: 1.6; color: #657082; }
 @media (max-width: 700px) { .design-stepper { flex-wrap: wrap; } .design-stepper button { flex: 1 1 40%; } .material-candidates { grid-template-columns: 1fr; } .material-comparison > header { align-items: stretch; flex-direction: column; } }
+
+.experiment-benchmark { max-width: 1100px; margin: 30px auto 80px; color: #202b3c; }
+.experiment-benchmark > header { margin-bottom: 26px; }
+.experiment-benchmark h1 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -.03em; margin: 12px 0; }
+.experiment-benchmark h2 { font-size: 19px; margin: 0 0 12px; }
+.experiment-benchmark p, .experiment-benchmark li { font-size: 14px; line-height: 1.7; }
+.experiment-benchmark a { color: #2262a7; }
+.benchmark-context { display: grid; grid-template-columns: 1fr 1.4fr; gap: 18px; }
+.benchmark-context article, .benchmark-playback, .benchmark-comparison, .benchmark-source { padding: 24px; border: 1px solid #dde4ec; border-radius: 16px; background: white; margin-bottom: 20px; }
+.benchmark-context article > strong { font-size: 34px; }
+.benchmark-source summary { cursor: pointer; font-size: 15px; font-weight: 600; }
+.benchmark-source dl { display: grid; gap: 12px; font-size: 14px; }
+.benchmark-source dd { margin: 3px 0 0; color: #596579; }
+.benchmark-run-controls { display: flex; align-items: end; gap: 12px; margin: 24px 0; flex-wrap: wrap; }
+.benchmark-run-controls label { display: grid; gap: 8px; font-size: 13px; }
+.benchmark-run-controls select { padding: 11px; border: 1px solid #cbd4df; border-radius: 8px; background: white; }
+.benchmark-playback > header { display: flex; justify-content: space-between; align-items: start; gap: 14px; }
+.benchmark-playback header strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.benchmark-canvas-wrap { background: #10192b; padding: 18px; border-radius: 12px; color: #d1daeb; }
+.benchmark-canvas-wrap span { display: block; font-size: 12px; padding: 8px 0; }
+.benchmark-canvas-wrap canvas { width: 100%; height: auto; display: block; image-rendering: pixelated; }
+.benchmark-colorbar { display: flex; align-items: center; gap: 12px; margin: 15px 0; font-size: 12px; }
+.benchmark-colorbar i { height: 10px; flex: 1; background: linear-gradient(90deg,#0000ff,#4080bf,#80dc80,#bf8040,#ff0000); border-radius: 6px; }
+.benchmark-player-controls { display: flex; gap: 12px; align-items: center; }
+.benchmark-player-controls input { flex: 1; min-width: 60px; }
+.experiment-benchmark table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.experiment-benchmark th, .experiment-benchmark td { padding: 12px 10px; border-bottom: 1px solid #e3e8ef; text-align: left; }
+.experiment-benchmark th { font-weight: 600; }
+@media (max-width: 700px) { .benchmark-context { grid-template-columns: 1fr; } .benchmark-player-controls { flex-wrap: wrap; } .benchmark-comparison { overflow-x: auto; } .experiment-benchmark > header { padding: 0 10px; } }
