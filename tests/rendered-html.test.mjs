@@ -105,9 +105,9 @@ test("connects design, the CFD suite, operating envelopes, and validation", asyn
   assert.match(simulation, /Choose local run quality/);
   assert.match(simulation, /RdeVolumeFlow3d/);
   assert.match(simulation, /Resolved discrete injectors/);
-  assert.match(computedFlow, /Flow through the RDRE/);
+  assert.match(computedFlow, /Computed flow snapshot/);
   assert.match(computedFlow, /Interactive three-dimensional/);
-  assert.match(computedFlow, /Streamlines/);
+  assert.doesNotMatch(computedFlow, /detonationGroup|playbackPhase|tracerPoints/);
   assert.match(computedFlow, /Screening CFD shown inside the entered annular engine geometry/i);
   assert.match(volumeFlow, /radial, circumferential, and axial solver fields/);
   assert.match(volumeFlow, /velocityRadialMps/);
@@ -224,12 +224,12 @@ test("separates the case conclusion from the next-run recommendation", async () 
   assert.match(page, /Result of this rerun/);
   assert.match(page, /What this rerun concluded/);
   assert.match(page, /What this operating point shows/);
-  assert.match(page, /Next CFD run at this operating point/);
+  assert.match(page, /Next step/);
   assert.match(page, /decision-conclusion-block/);
   assert.match(page, /decision-recommendation-block/);
-  assert.ok(page.indexOf("What this rerun concluded") < page.indexOf("Next CFD run at this operating point"));
+  assert.ok(page.indexOf("What this rerun concluded") < page.indexOf("Next step"));
   assert.doesNotMatch(page, /What this means:/);
-  assert.match(page, /Do this next/);
+  assert.match(page, /Run setup and downloads/);
   assert.match(page, /<strong>Change<\/strong>/);
   assert.match(page, /Keep unchanged/);
   assert.match(page, /<strong>Compare<\/strong>/);

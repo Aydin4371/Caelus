@@ -68,17 +68,10 @@ function setCamera(view: ViewPreset, camera: THREE.PerspectiveCamera, controls: 
 
 export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [playing, setPlaying] = useState(true);
   const [cutaway, setCutaway] = useState(true);
-  const [tracers, setTracers] = useState(true);
   const [view, setView] = useState<ViewPreset>("isometric");
-  const playingRef = useRef(playing);
   const values = useMemo(() => fieldValues(result, metric), [metric, result]);
   const [minimum, maximum] = useMemo(() => finiteRange(values), [values]);
-
-  useEffect(() => {
-    playingRef.current = playing;
-  }, [playing]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -250,89 +243,6 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
     }));
     scene.add(fieldSurface);
 
-    // A localized front spanning the annular gap is the defining visual feature of an RDRE.
-    const detonationGroup = new THREE.Group();
-    const frontMaterial = new THREE.MeshStandardMaterial({
-      color: 0xff334b,
-      emissive: 0xff132f,
-      emissiveIntensity: 1.6,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.96,
-      depthWrite: false,
-    });
-    const reactionMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffa12e,
-      emissive: 0xf06519,
-      emissiveIntensity: 0.9,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.68,
-      depthWrite: false,
-    });
-    const front = new THREE.Mesh(
-      new THREE.RingGeometry(innerRadius + 0.018, outerRadius - 0.018, 52, 1, -0.06, 0.16),
-      frontMaterial,
-    );
-    front.rotation.y = Math.PI / 2;
-    front.position.x = inletX + chamberLength * 0.23;
-    detonationGroup.add(front);
-    const reactionZone = new THREE.Mesh(
-      new THREE.RingGeometry(innerRadius + 0.03, outerRadius - 0.03, 52, 1, -0.28, 0.24),
-      reactionMaterial,
-    );
-    reactionZone.rotation.y = Math.PI / 2;
-    reactionZone.position.x = front.position.x + 0.24;
-    detonationGroup.add(reactionZone);
-    scene.add(detonationGroup);
-
-    const circumferentialVelocity = result.field.circumferentialVelocityMps ?? result.field.velocityMps.map(() => 0);
-    const axialVelocity = result.field.axialVelocityMps ?? result.field.velocityMps;
-    const velocityScale = Math.max(1, ...result.field.velocityMps.map((value) => Math.abs(value)));
-    const streamlineGroup = new THREE.Group();
-    const streamlineCount = 14;
-    const radialLayers = 3;
-    for (let radialLayer = 0; radialLayer < radialLayers; radialLayer += 1) {
-      const radius = innerRadius + (radialLayer + 1) / (radialLayers + 1) * (outerRadius - innerRadius);
-      for (let seed = 0; seed < streamlineCount; seed += 1) {
-        let theta = seed / streamlineCount * Math.PI * 2 + radialLayer * 0.08;
-        let axialFraction = 0;
-        const points: THREE.Vector3[] = [];
-        for (let sample = 0; sample < 86; sample += 1) {
-          const sourceX = (Math.floor(((theta % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * sourceNx) + sourceNx) % sourceNx;
-          const sourceY = Math.min(sourceNy - 1, Math.max(0, Math.floor(axialFraction * sourceNy)));
-          const sourceIndex = sourceY * sourceNx + sourceX;
-          const uTheta = circumferentialVelocity[sourceIndex] ?? 0;
-          const uAxial = axialVelocity[sourceIndex] ?? 0;
-          const localRadius = radius + 0.018 * Math.sin(sample * 0.24 + seed);
-          points.push(new THREE.Vector3(inletX + axialFraction * chamberLength, Math.cos(theta) * localRadius, Math.sin(theta) * localRadius));
-          const axialStep = 0.012 + 0.008 * Math.max(0.12, Math.abs(uAxial) / velocityScale);
-          theta += 0.11 * Math.tanh(uTheta / Math.max(1, Math.abs(uAxial)));
-          axialFraction += axialStep;
-          if (axialFraction > 1) break;
-        }
-        if (points.length < 3) continue;
-        const streamlineGeometry = new THREE.BufferGeometry().setFromPoints(points);
-        const streamlineMaterial = new THREE.LineBasicMaterial({ color: radialLayer === 1 ? 0xffffff : 0xbdebf0, transparent: true, opacity: radialLayer === 1 ? 0.72 : 0.48, depthWrite: false });
-        streamlineGroup.add(new THREE.Line(streamlineGeometry, streamlineMaterial));
-      }
-    }
-    streamlineGroup.visible = tracers;
-    scene.add(streamlineGroup);
-
-    const tracerCount = 220;
-    const tracerPositions = new Float32Array(tracerCount * 3);
-    const tracerPhase = new Float32Array(tracerCount);
-    for (let index = 0; index < tracerCount; index += 1) {
-      tracerPhase[index] = (Math.sin(index * 78.233) * 43758.5453) % 1;
-      if (tracerPhase[index] < 0) tracerPhase[index] += 1;
-    }
-    const tracerGeometry = new THREE.BufferGeometry();
-    tracerGeometry.setAttribute("position", new THREE.BufferAttribute(tracerPositions, 3));
-    const tracerPoints = new THREE.Points(tracerGeometry, new THREE.PointsMaterial({ color: 0xeaf9ff, size: 0.055, sizeAttenuation: true, transparent: true, opacity: 0.8, depthWrite: false }));
-    tracerPoints.visible = tracers;
-    scene.add(tracerPoints);
-
     const floor = new THREE.GridHelper(18, 18, 0xa9bfc0, 0xd9e4e2);
     floor.position.y = -3.2;
     scene.add(floor);
@@ -348,25 +258,9 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
     resizeObserver.observe(host);
     resize();
 
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const circumferenceM = Math.PI * 0.5 * (design.annulusInnerDiameterMm + design.annulusOuterDiameterMm) * 1e-3;
-    const waveRotationsPerSecond = result.screeningDiagnostics.estimatedWaveSpeedMps ? result.screeningDiagnostics.estimatedWaveSpeedMps / Math.max(0.01, circumferenceM) : 220;
-    let playbackPhase = 0;
-    let previousTime = performance.now();
+    // Display the computed snapshot without invented wave or particle motion.
     let frame = 0;
-    const animate = (time = performance.now()) => {
-      const elapsedSeconds = Math.min(0.05, Math.max(0, time - previousTime) / 1000);
-      previousTime = time;
-      if (playingRef.current && !reduceMotion) playbackPhase += elapsedSeconds * Math.min(2.4, Math.max(0.25, waveRotationsPerSecond / 800)) * Math.PI * 2;
-      fieldSurface.rotation.x = cutaway ? 0 : playbackPhase;
-      detonationGroup.rotation.x = playbackPhase;
-      const positionsAttribute = tracerGeometry.getAttribute("position") as THREE.BufferAttribute;
-      for (let index = 0; index < tracerCount; index += 1) {
-        const axial = (tracerPhase[index] + time * 0.00008 * (playingRef.current ? 1 : 0)) % 1;
-        const theta = index / tracerCount * Math.PI * 2 + playbackPhase * 0.45 + axial * 0.8;
-        positionsAttribute.setXYZ(index, inletX + axial * (chamberLength + 1.5), Math.cos(theta) * fieldRadius, Math.sin(theta) * fieldRadius);
-      }
-      positionsAttribute.needsUpdate = true;
+    const animate = () => {
       controls.update();
       renderer.render(scene, camera);
       frame = requestAnimationFrame(animate);
@@ -387,23 +281,24 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [cutaway, design, maximum, metric, minimum, result, tracers, values, view]);
+  }, [cutaway, design, maximum, metric, minimum, result, values, view]);
 
   return <section className="computed-flow-3d" aria-labelledby="computed-flow-title">
     <div className="computed-flow-heading">
-      <div><span>OUTPUT</span><h3 id="computed-flow-title">Flow through the RDRE</h3><p>Rotate the cutaway to see the annular chamber, rotating detonation front, streamlines, and exhaust.</p></div>
+      <div><span>OUTPUT</span><h3 id="computed-flow-title">Computed flow snapshot</h3><p>Drag to rotate. Colors show the final 2D solver field wrapped around your chamber.</p></div>
       <label><span>Display field</span><select value={metric} onChange={(event) => onMetricChange(event.target.value as ComputedFlowMetric)}><option value="pressure">Pressure</option><option value="temperature">Temperature</option><option value="reaction">Reaction progress</option><option value="velocity">Velocity magnitude</option></select></label>
     </div>
     <div className="computed-flow-toolbar" aria-label="3D flow controls">
-      <div><button className={playing ? "active" : ""} onClick={() => setPlaying((current) => !current)}>{playing ? "Pause" : "Play"}</button><button className={tracers ? "active" : ""} onClick={() => setTracers((current) => !current)}>Streamlines</button><button className={cutaway ? "active" : ""} onClick={() => setCutaway((current) => !current)}>{cutaway ? "Cutaway" : "Full annulus"}</button></div>
+      <div><button className={cutaway ? "active" : ""} onClick={() => setCutaway((current) => !current)}>{cutaway ? "Cutaway" : "Full annulus"}</button></div>
       <div><button className={view === "isometric" ? "active" : ""} onClick={() => setView("isometric")}>Isometric</button><button className={view === "side" ? "active" : ""} onClick={() => setView("side")}>Side</button><button className={view === "head-end" ? "active" : ""} onClick={() => setView("head-end")}>Head-end</button></div>
     </div>
     <div className="computed-flow-stage">
       <div ref={hostRef} className="computed-flow-host" />
-      <span className="computed-flow-wave-label"><strong>ROTATING DETONATION FRONT</strong><small>shock + reaction zone</small></span>
+      <span className="computed-flow-wave-label"><strong>2D SNAPSHOT</strong><small>Detonation not established by this view</small></span>
       <span className="computed-flow-inlet">PROPELLANT INJECTION</span><span className="computed-flow-outlet">NOZZLE / EXHAUST</span>
     </div>
     <div className="computed-flow-legend"><span>{minimum.toFixed(metric === "reaction" ? 2 : 1)} {fieldUnit(metric)}</span><i/><span>{maximum.toFixed(metric === "reaction" ? 2 : 1)} {fieldUnit(metric)}</span></div>
-    <p className="computed-flow-scope">Screening CFD shown inside the entered annular engine geometry.</p>
+    <p className="computed-flow-scope">Screening CFD shown inside the entered annular engine geometry. This is a final-state map, not time-resolved 3D playback. A pressure gradient alone does not establish detonation.</p>
   </section>;
 }
+

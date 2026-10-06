@@ -444,35 +444,39 @@ function EngineeringDecisionPanel({
     <div className="decision-quality" aria-label={`Recommendation evidence: ${decisionQuality.label}`}>
       <div className="decision-quality-verdict"><span>Recommendation evidence</span><strong>{decisionQuality.label}</strong></div>
       <div className="decision-quality-copy"><small>{decisionQuality.sourceLabel}</small><p>{decisionQuality.explanation}</p></div>
-      <div className="decision-quality-factors" aria-label="Evidence conditions">
-        {decisionQuality.gates.map((gate) => <span key={gate.id} className={`factor-${gate.status}`}><i aria-hidden="true">{gate.status === "passed" ? "✓" : gate.status === "blocked" ? "×" : gate.status === "review" ? "!" : "○"}</i><small>{gate.label}</small><strong>{gate.statusLabel}</strong></span>)}
-      </div>
+
     </div>
     <section className="decision-block decision-conclusion-block" aria-labelledby="decision-conclusion-heading">
       <div className="decision-block-heading"><b>1</b><h2 id="decision-conclusion-heading">{conclusionHeading}</h2></div>
       <header className="engineering-decision-heading">
-        <div><span>{summary.label}</span></div>
         <h3><span>{summary.lead}</span> {summary.title}</h3>
-        {summary.detail && <p className="decision-detail">{summary.detail}</p>}
+        {summary.detail && <details className="decision-detail"><summary>See comparison numbers</summary><p>{summary.detail}</p></details>}
         <p className="decision-meaning">{summary.meaning}</p>
       </header>
-      {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Latest result at this operating point: {latestResultLabel(nextRun.latestControlledResult.status, policy)}</strong><span>{nextRun.latestControlledResult.caseName}</span></div>}
+
     </section>
     <section className="decision-block decision-recommendation-block" aria-labelledby="decision-recommendation-heading">
-      <div className="decision-block-heading"><b>2</b><h2 id="decision-recommendation-heading">Next CFD run at this operating point</h2></div>
+      <div className="decision-block-heading"><b>2</b><h2 id="decision-recommendation-heading">Next step</h2></div>
       {planUsesDifferentCase && <div className="decision-scope">
         <strong>Starting point</strong>
         <span>Use <b>{planningCaseName}</b>. {startingPointReason}</span>
       </div>}
       <div className="decision-next-run">
-        <span>Do this next</span><h3>{nextRun.title}</h3>
+        <h3>{nextRun.title}</h3>
       </div>
       <div className="next-run-action">
         <p><strong>Change</strong><span>{nextRun.change}</span></p>
+      </div>
+      {onStartNextRun && <div className="next-run-buttons"><button className="button primary" onClick={onStartNextRun}>Start recommended rerun</button></div>}
+      <details className="validation-setup"><summary>Run setup and downloads</summary>
+      <div className="next-run-action">
         <p><strong>Keep unchanged</strong><span>{nextRun.holdFixed.join(" · ")}</span></p>
         <p><strong>Compare</strong><span>{nextRun.expectedOutcome}</span></p>
       </div>
-      {(onStartNextRun || onDownloadNextRun || onDownloadOpenFoam) && <div className="next-run-buttons">{onStartNextRun && <button className="button primary" onClick={onStartNextRun}>Start recommended rerun</button>}{onDownloadNextRun && <button className="button secondary" onClick={onDownloadNextRun}>Download frozen run spec</button>}{onDownloadOpenFoam && <button className="button secondary" onClick={onDownloadOpenFoam}>Download OpenFOAM handoff</button>}</div>}
+      {(onStartNextRun || onDownloadNextRun || onDownloadOpenFoam) && <div className="next-run-buttons">{onDownloadNextRun && <button className="button secondary" onClick={onDownloadNextRun}>Download frozen run spec</button>}{onDownloadOpenFoam && <button className="button secondary" onClick={onDownloadOpenFoam}>Download OpenFOAM handoff</button>}</div>}
+      </details>
+      <details className="validation-support"><summary>Evidence and decision rules</summary>
+      {showLatestResult && nextRun.latestControlledResult.status !== "Awaiting result" && <div className={`decision-latest-result outcome-${nextRun.latestControlledResult.status.toLowerCase()}`}><strong>Latest result at this operating point: {latestResultLabel(nextRun.latestControlledResult.status, policy)}</strong><span>{nextRun.latestControlledResult.caseName}</span></div>}
       <details className="decision-reasoning" aria-label="Why Kythros recommends this run">
         <summary>Why Kythros recommends this run</summary>
         <div className="decision-reasoning-heading">
@@ -531,8 +535,9 @@ function EngineeringDecisionPanel({
         <p><strong>Method support only:</strong> {publishedSources.length} published reference{publishedSources.length === 1 ? "" : "s"} support the method, and {publishedValidation.waveSpeedCases + publishedValidation.pressureFixtureCases} public validation cases test the analyzer. Neither confirms the explanation for this operating point.</p>
       </details>
       {precedent.matchedCount > 0 && <div className="decision-details"><details><summary>Show analyzed prior-case counts</summary><div className="precedent-outcomes"><span><b>{precedent.confirmedCount}</b> confirmed</span><span><b>{precedent.convergedCount}</b> converged</span><span><b>{precedent.rejectedCount}</b> rejected</span><span><b>{precedent.inconclusiveCount}</b> inconclusive</span></div><p>{precedent.matchedCount} comparable controlled rerun{precedent.matchedCount === 1 ? "" : "s"} analyzed. Metric means use confirmed cases only{precedent.runtimeCaseCount ? `; runtime uses ${precedent.runtimeCaseCount} confirmed case${precedent.runtimeCaseCount === 1 ? "" : "s"} with entered solver hours` : ""}.</p></details></div>}
+      </details>
     </section>
-    <div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit run</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View run history</button>}</div>
+    <details className="validation-files"><summary>Reports, history and editing</summary><div className="decision-actions"><button className="button secondary" onClick={onEdit}>Edit run</button><button className="button secondary" onClick={onDownloadReport}>Download evidence report</button><button className="button secondary" onClick={onSaveWorkspace}>Save complete workspace</button>{onViewHistory && <button className="button secondary" onClick={onViewHistory}>View run history</button>}</div></details>
   </section>;
 }
 export default function Home() {
