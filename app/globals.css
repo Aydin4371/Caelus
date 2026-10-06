@@ -2247,3 +2247,11 @@ body { font-size: 14px; line-height: 1.5; }
 .experiment-benchmark th, .experiment-benchmark td { padding: 12px 10px; border-bottom: 1px solid #e3e8ef; text-align: left; }
 .experiment-benchmark th { font-weight: 600; }
 @media (max-width: 700px) { .benchmark-context { grid-template-columns: 1fr; } .benchmark-player-controls { flex-wrap: wrap; } .benchmark-comparison { overflow-x: auto; } .experiment-benchmark > header { padding: 0 10px; } }
+
+/* Keep the validation decision readable; disclose its audit trail on demand. */
+.validation-setup, .validation-support, .validation-files { margin: 12px 0; border-top: 1px solid #d1e1e4; padding: 14px 16px; }
+.validation-setup > summary, .validation-support > summary, .validation-files > summary, details.decision-detail > summary { cursor: pointer; font-weight: 600; color: #21576a; }
+.validation-support[open] > summary, .validation-setup[open] > summary { margin-bottom: 16px; }
+.engineering-decision-heading .decision-meaning { font-size: 16px; line-height: 1.6; }
+.computed-flow-wave-label { border-color: #b9cfd5; }
+.computed-flow-wave-label strong::before { display: none; }
