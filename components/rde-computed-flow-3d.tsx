@@ -74,20 +74,21 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const frames = result.recording?.frames;
-  const playback = metric === "pressure" && !!frames?.length;
+  const frameField = metric === "pressure" ? "pressureBar" : metric === "temperature" ? "temperatureK" : metric === "velocity" ? "velocityMps" : null;
+  const playback = !!frameField && !!frames?.length && frames.every((frame) => frame[frameField]?.length === result.field.nx * result.field.ny);
   const currentFrame = frames?.[Math.min(frameIndex, frames.length - 1)];
-  const values = playback && currentFrame ? currentFrame.pressureBar : fieldValues(result, metric);
+  const values = playback && currentFrame ? currentFrame[frameField!]! : fieldValues(result, metric);
   const valuesRef = useRef(values);
   const colorUpdater = useRef<(() => void) | null>(null);
   const [minimum, maximum] = useMemo(() => {
-    if (metric !== "pressure" || !result.recording?.frames.length) return finiteRange(fieldValues(result, metric));
+    if (!playback || !frameField || !result.recording?.frames.length) return finiteRange(fieldValues(result, metric));
     let low = Infinity, high = -Infinity;
     for (const frame of result.recording.frames) {
-      const range = finiteRange(frame.pressureBar);
+      const range = finiteRange(frame[frameField]!);
       low = Math.min(low, range[0]); high = Math.max(high, range[1]);
     }
     return [low, high];
-  }, [metric, result]);
+  }, [metric, result, playback, frameField]);
   useEffect(() => { valuesRef.current = values; colorUpdater.current?.(); }, [values]);
   useEffect(() => {
     if (!playing || !playback || !frames || frameIndex >= frames.length - 1) return;
@@ -323,7 +324,7 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
 
   return <section className="computed-flow-3d" aria-labelledby="computed-flow-title">
     <div className="computed-flow-heading">
-      <div><span>OUTPUT</span><h3 id="computed-flow-title">2D flow on your engine</h3><p>Drag to rotate. Pressure playback shows saved 2D timesteps wrapped around the chamber.</p></div>
+      <div><span>OUTPUT</span><h3 id="computed-flow-title">2D flow on your engine</h3><p>Drag to rotate. Playback shows saved 2D timesteps wrapped around the chamber.</p></div>
       <label><span>Display field</span><select value={metric} onChange={(event) => { setPlaying(false); onMetricChange(event.target.value as ComputedFlowMetric); }}><option value="pressure">Pressure</option><option value="temperature">Temperature</option><option value="reaction">Reaction progress</option><option value="velocity">Velocity magnitude</option></select></label>
     </div>
     <div className="computed-flow-toolbar" aria-label="3D flow controls">
@@ -342,7 +343,7 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
       <output>{currentFrame!.timeMs.toFixed(4)} ms · frame {frameIndex + 1}/{frames.length}</output>
       <select aria-label="Playback speed" value={speed} onChange={(event) => setSpeed(Number(event.target.value))}><option value={0.5}>0.5× playback</option><option value={1}>1× playback</option><option value={2}>2× playback</option></select>
     </div>}
-    <p className="computed-flow-scope">Screening CFD shown inside the entered annular engine geometry. {playback ? "Saved pressure timesteps, slowed for viewing. The color scale stays fixed across the run. Other fields show the final snapshot only." : "This field has no saved playback; showing the final snapshot. Run a new 2D simulation to record pressure timesteps."} Wrapping does not add radial flow or establish physical accuracy.</p>
+    <p className="computed-flow-scope">Screening CFD shown inside the entered annular engine geometry. {playback ? "Saved pressure, temperature and velocity timesteps, slowed for viewing. Each field has a fixed scale across the run. Reaction progress is a final snapshot." : "This field has no saved playback; showing the final snapshot. Run a new 2D simulation to record pressure, temperature and velocity timesteps."} Wrapping does not add radial flow or establish physical accuracy.</p>
   </section>;
 }
 

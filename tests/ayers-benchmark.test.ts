@@ -36,6 +36,10 @@ test("recording preserves the numerical answer and physical timestamps without i
   assert.ok(Math.abs(r.sampledProbeAxialMm - 9.1) < 1e-12);
   const last = r.frames.at(-1)!.pressureBar;
   assert.ok(last.every((p, i) => Math.abs(p - recorded.field.pressureBar[i]) < 1e-10));
+  for (const key of ["temperatureK", "velocityMps"] as const) {
+    assert.ok(r.frames.every((frame) => frame[key]?.length === 32 * 12 && frame[key]!.every(Number.isFinite)));
+    assert.ok(r.frames.at(-1)![key]!.every((value, index) => Math.abs(value - recorded.field[key][index]) < 1e-10));
+  }
   assert.ok(r.meanProbePressureBar! > 0);
   assert.equal(compareAyersExperiment(recorded).executionCompleted, false);
   const close = structuredClone(recorded); close.recording!.meanProbePressureBar = 1.10;
