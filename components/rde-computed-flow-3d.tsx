@@ -70,8 +70,36 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
   const hostRef = useRef<HTMLDivElement>(null);
   const [cutaway, setCutaway] = useState(true);
   const [view, setView] = useState<ViewPreset>("isometric");
-  const values = useMemo(() => fieldValues(result, metric), [metric, result]);
-  const [minimum, maximum] = useMemo(() => finiteRange(values), [values]);
+  const [frameIndex, setFrameIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const frames = result.recording?.frames;
+  const frameField = metric === "pressure" ? "pressureBar" : metric === "temperature" ? "temperatureK" : metric === "velocity" ? "velocityMps" : null;
+  const playback = !!frameField && !!frames?.length && frames.every((frame) => frame[frameField]?.length === result.field.nx * result.field.ny);
+  const currentFrame = frames?.[Math.min(frameIndex, frames.length - 1)];
+  const values = playback && currentFrame ? currentFrame[frameField!]! : fieldValues(result, metric);
+  const valuesRef = useRef(values);
+  const colorUpdater = useRef<(() => void) | null>(null);
+  const [minimum, maximum] = useMemo(() => {
+    if (!playback || !frameField || !result.recording?.frames.length) return finiteRange(fieldValues(result, metric));
+    let low = Infinity, high = -Infinity;
+    for (const frame of result.recording.frames) {
+      const range = finiteRange(frame[frameField]!);
+      low = Math.min(low, range[0]); high = Math.max(high, range[1]);
+    }
+    return [low, high];
+  }, [metric, result, playback, frameField]);
+  useEffect(() => { valuesRef.current = values; colorUpdater.current?.(); }, [values]);
+  useEffect(() => {
+    if (!playing || !playback || !frames || frameIndex >= frames.length - 1) return;
+    const duration = Math.max(1e-9, frames[frames.length - 1].timeMs - frames[0].timeMs);
+    const delay = (frames[frameIndex + 1].timeMs - frames[frameIndex].timeMs) / duration * 8000 / speed;
+    const timer = window.setTimeout(() => {
+      setFrameIndex(frameIndex + 1);
+      if (frameIndex + 1 === frames.length - 1) setPlaying(false);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [playing, playback, frames, frameIndex, speed]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -205,6 +233,7 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
     const visibleFieldArc = cutaway ? shellArc : Math.PI * 2;
     const positions: number[] = [];
     const colors: number[] = [];
+    const sourceIndices: number[] = [];
     const indices: number[] = [];
     for (let axial = 0; axial < axialSegments; axial += 1) {
       const sourceY = Math.min(sourceNy - 1, Math.round(axial / Math.max(1, axialSegments - 1) * (sourceNy - 1)));
@@ -214,8 +243,9 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
         const normalizedTheta = ((theta % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
         const sourceX = Math.min(sourceNx - 1, Math.floor(normalizedTheta / (Math.PI * 2) * sourceNx));
         positions.push(x, Math.cos(theta) * fieldRadius, Math.sin(theta) * fieldRadius);
-        const displayColor = normalizedColor(values[sourceY * sourceNx + sourceX], minimum, maximum);
+        const displayColor = normalizedColor(valuesRef.current[sourceY * sourceNx + sourceX], minimum, maximum);
         colors.push(displayColor.r, displayColor.g, displayColor.b);
+        sourceIndices.push(sourceY * sourceNx + sourceX);
       }
     }
     for (let axial = 0; axial < axialSegments - 1; axial += 1) {
@@ -242,6 +272,14 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
       opacity: cutaway ? 0.86 : 0.72,
     }));
     scene.add(fieldSurface);
+    colorUpdater.current = () => {
+      const attribute = fieldGeometry.getAttribute("color") as THREE.BufferAttribute;
+      sourceIndices.forEach((sourceIndex, index) => {
+        const color = normalizedColor(valuesRef.current[sourceIndex], minimum, maximum);
+        attribute.setXYZ(index, color.r, color.g, color.b);
+      });
+      attribute.needsUpdate = true;
+    };
 
     const floor = new THREE.GridHelper(18, 18, 0xa9bfc0, 0xd9e4e2);
     floor.position.y = -3.2;
@@ -268,6 +306,7 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
     animate();
 
     return () => {
+      colorUpdater.current = null;
       cancelAnimationFrame(frame);
       resizeObserver.disconnect();
       controls.dispose();
@@ -281,12 +320,12 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [cutaway, design, maximum, metric, minimum, result, values, view]);
+  }, [cutaway, design, maximum, metric, minimum, result, view]);
 
   return <section className="computed-flow-3d" aria-labelledby="computed-flow-title">
     <div className="computed-flow-heading">
-      <div><span>OUTPUT</span><h3 id="computed-flow-title">Computed flow snapshot</h3><p>Drag to rotate. Colors show the final 2D solver field wrapped around your chamber.</p></div>
-      <label><span>Display field</span><select value={metric} onChange={(event) => onMetricChange(event.target.value as ComputedFlowMetric)}><option value="pressure">Pressure</option><option value="temperature">Temperature</option><option value="reaction">Reaction progress</option><option value="velocity">Velocity magnitude</option></select></label>
+      <div><span>OUTPUT</span><h3 id="computed-flow-title">2D flow on your engine</h3><p>Drag to rotate. Playback shows saved 2D timesteps wrapped around the chamber.</p></div>
+      <label><span>Display field</span><select value={metric} onChange={(event) => { setPlaying(false); onMetricChange(event.target.value as ComputedFlowMetric); }}><option value="pressure">Pressure</option><option value="temperature">Temperature</option><option value="reaction">Reaction progress</option><option value="velocity">Velocity magnitude</option></select></label>
     </div>
     <div className="computed-flow-toolbar" aria-label="3D flow controls">
       <div><button className={cutaway ? "active" : ""} onClick={() => setCutaway((current) => !current)}>{cutaway ? "Cutaway" : "Full annulus"}</button></div>
@@ -294,11 +333,17 @@ export function RdeComputedFlow3d({ design, result, metric, onMetricChange }: Pr
     </div>
     <div className="computed-flow-stage">
       <div ref={hostRef} className="computed-flow-host" />
-      <span className="computed-flow-wave-label"><strong>2D SNAPSHOT</strong><small>Detonation not established by this view</small></span>
+      <span className="computed-flow-wave-label"><strong>{playback ? "2D TIMESTEP" : "FINAL SNAPSHOT"}</strong><small>{playback ? `${currentFrame!.timeMs.toFixed(4)} ms` : "No recorded history for this field"}</small></span>
       <span className="computed-flow-inlet">PROPELLANT INJECTION</span><span className="computed-flow-outlet">NOZZLE / EXHAUST</span>
     </div>
     <div className="computed-flow-legend"><span>{minimum.toFixed(metric === "reaction" ? 2 : 1)} {fieldUnit(metric)}</span><i/><span>{maximum.toFixed(metric === "reaction" ? 2 : 1)} {fieldUnit(metric)}</span></div>
-    <p className="computed-flow-scope">Screening CFD shown inside the entered annular engine geometry. This is a final-state map, not time-resolved 3D playback. A pressure gradient alone does not establish detonation.</p>
+    {playback && frames && <div className="computed-flow-toolbar" aria-label="2D timestep playback">
+      <button onClick={() => { if (frameIndex >= frames.length - 1) setFrameIndex(0); setPlaying(!playing); }}>{playing ? "Pause" : frameIndex >= frames.length - 1 ? "Replay" : "Play"}</button>
+      <input style={{ flex: 1, minWidth: 100 }} aria-label="Simulation timestep" type="range" min={0} max={frames.length - 1} value={frameIndex} onChange={(event) => { setPlaying(false); setFrameIndex(Number(event.target.value)); }} />
+      <output>{currentFrame!.timeMs.toFixed(4)} ms · frame {frameIndex + 1}/{frames.length}</output>
+      <select aria-label="Playback speed" value={speed} onChange={(event) => setSpeed(Number(event.target.value))}><option value={0.5}>0.5× playback</option><option value={1}>1× playback</option><option value={2}>2× playback</option></select>
+    </div>}
+    <p className="computed-flow-scope">Screening CFD shown inside the entered annular engine geometry. {playback ? "Saved pressure, temperature and velocity timesteps, slowed for viewing. Each field has a fixed scale across the run. Reaction progress is a final snapshot." : "This field has no saved playback; showing the final snapshot. Run a new 2D simulation to record pressure, temperature and velocity timesteps."} Wrapping does not add radial flow or establish physical accuracy.</p>
   </section>;
 }
 

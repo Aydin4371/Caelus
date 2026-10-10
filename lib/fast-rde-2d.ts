@@ -42,7 +42,7 @@ export type FastRde2dRecording = {
   averagingStartMs: number;
   averagingEndMs: number;
   meanProbePressureBar: number | null;
-  frames: Array<{ timeMs: number; pressureBar: number[] }>;
+  frames: Array<{ timeMs: number; pressureBar: number[]; temperatureK?: number[]; velocityMps?: number[] }>;
   probeHistory: Array<{ timeMs: number; pressureBar: number }>;
 };
 
@@ -281,7 +281,10 @@ export async function runFastRde2d(
       nextProbeTime = simulatedTime + targetTimeS / 1000;
     }
     if ((simulatedTime >= nextFrameTime || force) && recording.frames.at(-1)?.timeMs !== simulatedTime * 1000) {
-      recording.frames.push({ timeMs: simulatedTime * 1000, pressureBar: Array.from({ length: cellCount }, (_, index) => statePressureBar(index)) });
+      const pressureBar = Array.from({ length: cellCount }, (_, index) => statePressureBar(index));
+      const temperatureK = pressureBar.map((pressure, index) => Math.max(PRESSURE_FLOOR_PA, pressure * 1e5) / (Math.max(DENSITY_FLOOR, rho[index]) * GAS_CONSTANT));
+      const velocityMps = Array.from({ length: cellCount }, (_, index) => Math.hypot(mx[index], my[index]) / Math.max(DENSITY_FLOOR, rho[index]));
+      recording.frames.push({ timeMs: simulatedTime * 1000, pressureBar, temperatureK, velocityMps });
       nextFrameTime = simulatedTime + targetTimeS / (recordOptions.frameCount - 1);
     }
   };
