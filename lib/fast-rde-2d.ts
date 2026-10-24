@@ -61,7 +61,13 @@ export type FastRde2dProgress = {
   stage: "initializing" | "solving" | "analyzing";
 };
 
+export type FastRde2dPreview = {
+  timeMs: number;
+  field: Pick<FastRde2dField, "nx" | "ny" | "pressureBar" | "temperatureK" | "velocityMps" | "reactionProgress">;
+};
+
 export type FastRde2dRunOptions = {
+  onFrame?: (preview: FastRde2dPreview) => void;
   signal?: AbortSignal;
   onProgress?: (progress: FastRde2dProgress) => void;
   maxSteps?: number;
@@ -285,6 +291,11 @@ export async function runFastRde2d(
       const temperatureK = pressureBar.map((pressure, index) => Math.max(PRESSURE_FLOOR_PA, pressure * 1e5) / (Math.max(DENSITY_FLOOR, rho[index]) * GAS_CONSTANT));
       const velocityMps = Array.from({ length: cellCount }, (_, index) => Math.hypot(mx[index], my[index]) / Math.max(DENSITY_FLOOR, rho[index]));
       recording.frames.push({ timeMs: simulatedTime * 1000, pressureBar, temperatureK, velocityMps });
+      // Independent copies keep display consumers from mutating recorded evidence.
+      options.onFrame?.({ timeMs: simulatedTime * 1000, field: { nx, ny,
+        pressureBar: pressureBar.slice(), temperatureK: temperatureK.slice(), velocityMps: velocityMps.slice(),
+        reactionProgress: Array.from({ length: cellCount }, (_, index) => Math.max(0, Math.min(1, 1 - rhoFuel[index] / Math.max(DENSITY_FLOOR, rho[index])))),
+      } });
       nextFrameTime = simulatedTime + targetTimeS / (recordOptions.frameCount - 1);
     }
   };

@@ -1,6 +1,6 @@
 {
   "schema": "kythros-ayers-benchmark-report-v1",
-  "generatedAt": "2026-10-10T14:07:41.046Z",
+  "generatedAt": "2026-10-24T21:42:58.252Z",
   "source": {
     "id": "ayers-2023-config-a-case-i",
     "title": "Purdue / NASA · premixed hydrogen–air RDE",
@@ -67,8 +67,8 @@
     "A 1 ms startup run is compared descriptively with a reported experimental mean. It does not reproduce the experiment’s established firing interval or CTAP sensor response.",
     "The paper provides a scalar mean and optical wave observations, not a raw pressure history for this case. No measured waveform or experimental movie is synthesized."
   ],
-  "solverSha256": "847a7481a740b0b0ddbf22bc871bd68380c25fea21f6351b827f0b2b111dbe81",
-  "replaySha256": "9b23604e287b74f7cd539743a827146a61908129982d6cc04ff270261455e3db",
+  "solverSha256": "f6423e1533813f8767fc82c2309677c8cd192497106271de1477b333c99af285",
+  "replaySha256": "7709d9db0df15ecc9cf4e7812976e647b84ccc1056591fb44a065e1d51eda1f3",
   "runs": {
     "baseline": {
       "settings": {
@@ -101,7 +101,7 @@
         "cfl": 0.42,
         "steps": 2001,
         "simulatedTimeMs": 1,
-        "elapsedMs": 3979.8590380000005,
+        "elapsedMs": 1392.251998,
         "massConservationErrorPct": 1.999104143681449e-12,
         "positivityRepairPct": 0,
         "peakPressureBar": 5.874853244524814,
@@ -143,7 +143,7 @@
         "cfl": 0.42,
         "steps": 2001,
         "simulatedTimeMs": 1,
-        "elapsedMs": 6355.748694000001,
+        "elapsedMs": 4528.977172,
         "massConservationErrorPct": 1.2822092877603326e-11,
         "positivityRepairPct": 0,
         "peakPressureBar": 5.930238944646944,
@@ -185,7 +185,7 @@
         "cfl": 0.42,
         "steps": 4000,
         "simulatedTimeMs": 1,
-        "elapsedMs": 2942.204944000001,
+        "elapsedMs": 2571.941919,
         "massConservationErrorPct": 1.567063321420623e-12,
         "positivityRepairPct": 0,
         "peakPressureBar": 5.875192621950306,

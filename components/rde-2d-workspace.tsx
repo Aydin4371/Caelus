@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import type { EngineDesign, OperatingPoint } from "@/lib/design-workspace";
-import { runFastRde2d, type FastRde2dProgress, type FastRde2dResult } from "@/lib/fast-rde-2d";
+import { runFastRde2d, type FastRde2dPreview, type FastRde2dProgress, type FastRde2dResult } from "@/lib/fast-rde-2d";
 import { RdeComputedFlow3d, type ComputedFlowMetric } from "@/components/rde-computed-flow-3d";
 import { RdeVolumeFlow3d } from "@/components/rde-volume-flow-3d";
 import { cancelLocalCfd, getLocalCfdJobStatus, getLocalRunnerStatus, startLocalCfd } from "@/lib/desktop-cfd-client";
@@ -77,7 +77,7 @@ function color(value: number) {
   return stops[index].map((channel, channelIndex) => Math.round(channel + fraction * (stops[index + 1][channelIndex] - channel)));
 }
 
-function FastRdeFieldCanvas({ result, metric }: { result: FastRde2dResult; metric: FieldMetric }) {
+function FastRdeFieldCanvas({ result, metric }: { result: { field: FastRde2dPreview["field"] }; metric: FieldMetric }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const field = result.field;
   const values = metric === "pressure" ? field.pressureBar : metric === "temperature" ? field.temperatureK : metric === "reaction" ? field.reactionProgress : field.velocityMps;
@@ -122,6 +122,7 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
   const [wallModel, setWallModel] = useState("Adiabatic wall");
   const [injectorTreatment, setInjectorTreatment] = useState("Distributed inlet boundary");
   const [exported, setExported] = useState(false);
+  const [livePreview, setLivePreview] = useState<FastRde2dPreview | null>(null);
   const [result, setResult] = useState<Rde2dResultSummary | null>(null);
   const [volumeResult, setVolumeResult] = useState<Rde3dVolumeResult | null>(null);
   const [volumeField, setVolumeField] = useState<Rde3dFieldName>("pressure");
@@ -187,7 +188,7 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     return () => { stopped = true; window.clearTimeout(timer); };
   }, [localJob]);
 
-  const resetResult = () => { setResult(null); setVolumeResult(null); setResultError(null); setExported(false); setProgress(null); setLocalJob(null); };
+  const resetResult = () => { setLivePreview(null); setResult(null); setVolumeResult(null); setResultError(null); setExported(false); setProgress(null); setLocalJob(null); };
   const setDiscrete = (patch: Partial<Rde2dSettings>) => { setPresetId("custom"); setSettings((current) => ({ ...current, ...patch })); resetResult(); };
   const choosePreset = (id: Rde2dPresetId) => {
     setPresetId(id);
@@ -243,15 +244,17 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
     const controller = new AbortController();
     abortController.current = controller;
     setRunning(true);
+    setLivePreview(null);
     setResult(null);
     setProgress({ fraction: 0, step: 0, simulatedTimeMs: 0, stage: "initializing" });
     try {
-      const computed = await runFastRde2d(activeDesign, condition!, settings, { signal: controller.signal, onProgress: setProgress, recording: { frameCount: 80, probeAxialMm: activeDesign.chamberLengthMm / 2, averagingStartMs: 0 } });
+      const computed = await runFastRde2d(activeDesign, condition!, settings, { signal: controller.signal, onProgress: setProgress, onFrame: setLivePreview, recording: { frameCount: 80, probeAxialMm: activeDesign.chamberLengthMm / 2, averagingStartMs: 0 } });
       setResult(computed);
     } catch (error) {
       setResultError(error instanceof DOMException && error.name === "AbortError" ? "The simulation was cancelled." : error instanceof Error ? error.message : "Kythros Rapid 2D could not complete this run.");
     } finally {
       abortController.current = null;
+      setLivePreview(null);
       setRunning(false);
     }
   };
@@ -386,7 +389,7 @@ export function Rde2dWorkspace({ designs, activeDesignId, operatingPoints, onSel
 
     <section className="simulation-results-card" aria-labelledby="simulation-results-title">
       <div className="simulation-results-heading"><div><span>OUTPUT</span><h2 id="simulation-results-title">Simulation result</h2><p>Inspect the flow, review the evidence, then choose the next supported step.</p></div><label className="result-upload button secondary">Import CFD result<input type="file" accept="application/json,.json" onChange={importResult}/></label></div>
-      {volumeResult && volumeRecommendation ? <>
+      {running && livePreview ? <section className="fast-field-panel"><RdeComputedFlow3d design={activeDesign} result={livePreview} liveTimeMs={livePreview.timeMs} metric={fieldMetric} onMetricChange={setFieldMetric}/><details className="flat-field-details"><summary>Inspect the live unwrapped 2D field</summary><FastRdeFieldCanvas result={livePreview} metric={fieldMetric}/></details></section> : volumeResult && volumeRecommendation ? <>
         <section className="cfd-evidence" aria-label="Full 3D evidence"><h3>What this run establishes</h3><ul>{localCfdEvidence(volumeResult).map((item) => <li key={item.label}><strong>{item.label}</strong><span>{item.detail}</span></li>)}</ul><p>Thresholds are screening checks, not proof of accuracy. The displayed grid is a sampled export; it is not the solver’s AMR mesh.</p></section>
         <RdeVolumeFlow3d design={activeDesign} result={volumeResult} field={volumeField} onFieldChange={setVolumeField}/>
         <div className="simulation-result-kpis"><span><small>Solver</small><strong>{volumeResult.solver.name}</strong></span><span><small>Peak pressure</small><strong>{formatMetric(volumeResult.summary.peakPressureBar, " bar")}</strong></span><span><small>Peak temperature</small><strong>{formatMetric(volumeResult.summary.peakTemperatureK, " K")}</strong></span><span><small>Backflow · snapshot area</small><strong>{formatMetric(volumeResult.summary.injectorBackflowPct, "%")}</strong></span><span><small>Wall heat flux</small><strong>{formatMetric(volumeResult.summary.peakWallHeatFluxMWm2, " MW/m²")}</strong></span></div>

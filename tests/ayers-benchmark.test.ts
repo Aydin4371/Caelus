@@ -62,3 +62,25 @@ test("committed benchmark is tied to the solver source and real replay bytes", a
     assert.equal(run.comparison.executionCompleted, true);
   }
 });
+
+
+test("live preview matches saved states and cannot mutate the solver or recording", async () => {
+  const { design, condition } = ayersBenchmarkCase();
+  const settings = { ...ayersRunSettings("baseline"), circumferentialCells: 32, axialCells: 12, endTimeMs: 0.01 };
+  const recording = { frameCount: 5, probeAxialMm: 9.1, averagingStartMs: 0.005 };
+  const baseline = await runFastRde2d(design, condition, settings, { recording });
+  const times: number[] = [];
+  const live = await runFastRde2d(design, condition, settings, { recording, onFrame: (preview) => {
+    const expected = baseline.recording!.frames[times.length];
+    assert.equal(preview.timeMs, expected.timeMs);
+    for (const key of ["pressureBar", "temperatureK", "velocityMps"] as const) {
+      assert.deepEqual(preview.field[key], expected[key]);
+      preview.field[key].fill(-999);
+    }
+    assert.ok(preview.field.reactionProgress.every(value => value >= 0 && value <= 1));
+    times.push(preview.timeMs);
+  } });
+  assert.ok(times.length > 1);
+  assert.deepEqual(live.field, baseline.field);
+  assert.deepEqual(live.recording, baseline.recording);
+});
